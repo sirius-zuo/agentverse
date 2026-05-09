@@ -1,13 +1,7 @@
 // avs-integration/src/webhook.rs
 use super::adapter::{IntegrationAdapter, IntegrationError};
 use agentverse::Agent;
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::Json,
-    routing::post,
-    Router,
-};
+use axum::{extract::State, http::StatusCode, response::Json, routing::post, Router};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;

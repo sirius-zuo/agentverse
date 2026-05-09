@@ -1,5 +1,5 @@
-use agentverse::{Memory, Message, ShortTermMemory};
 use agentverse::memory::MessageRole;
+use agentverse::{Memory, Message, ShortTermMemory};
 
 #[test]
 fn test_memory_append_and_last_n() {

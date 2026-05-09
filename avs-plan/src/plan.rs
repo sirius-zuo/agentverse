@@ -52,11 +52,7 @@ where
     /// A string containing the final synthesized answer
     pub async fn run(&mut self, input: String) -> Result<String, AgentError> {
         // Phase 1: Generate plan
-        let tool_names: Vec<String> = self
-            .tools
-            .iter()
-            .map(|t| t.name().to_string())
-            .collect();
+        let tool_names: Vec<String> = self.tools.iter().map(|t| t.name().to_string()).collect();
 
         let plan = generate_plan(&*self.model, &input, &tool_names).await?;
 
@@ -102,7 +98,11 @@ where
         }
 
         // Phase 3: Synthesize final answer
-        let conversation_history = self.memory.lock().unwrap().last_n(20)
+        let conversation_history = self
+            .memory
+            .lock()
+            .unwrap()
+            .last_n(20)
             .iter()
             .map(|m| {
                 let role_str = match m.role {
@@ -133,18 +133,17 @@ where
             conversation_history
         );
 
-        let answer = self.model.generate(&final_prompt, None).await
+        let answer = self
+            .model
+            .generate(&final_prompt, None)
+            .await
             .map_err(AgentError::Model)?;
 
         Ok(answer)
     }
 
     /// Execute a single tool by name.
-    fn execute_tool(
-        &self,
-        tool_name: &str,
-        args: serde_json::Value,
-    ) -> Result<String, AgentError> {
+    fn execute_tool(&self, tool_name: &str, args: serde_json::Value) -> Result<String, AgentError> {
         let tool = self
             .tools
             .iter()

@@ -22,7 +22,11 @@ impl IntegrationAdapter for SlackAdapter {
 
     async fn start(&self) -> Result<(), IntegrationError> {
         // In production: start Bolt app or HTTP server for Slack events
-        tracing::info!(adapter = "slack", port = self.port, "Starting Slack adapter");
+        tracing::info!(
+            adapter = "slack",
+            port = self.port,
+            "Starting Slack adapter"
+        );
         Ok(())
     }
 

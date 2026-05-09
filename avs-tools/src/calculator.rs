@@ -36,9 +36,9 @@ impl SyncTool for Calculator {
     }
 
     fn execute(&self, args: Value) -> ToolResult {
-        let op = args["operation"].as_str().ok_or_else(|| {
-            agentverse::ToolError::Execution("Missing 'operation'".to_string())
-        })?;
+        let op = args["operation"]
+            .as_str()
+            .ok_or_else(|| agentverse::ToolError::Execution("Missing 'operation'".to_string()))?;
 
         let a = args["a"].as_f64().ok_or_else(|| {
             agentverse::ToolError::Execution("Missing or invalid 'a'".to_string())
@@ -54,13 +54,18 @@ impl SyncTool for Calculator {
             "multiply" => a * b,
             "divide" => {
                 if b == 0.0 {
-                    return Err(agentverse::ToolError::Execution("Division by zero".to_string()));
+                    return Err(agentverse::ToolError::Execution(
+                        "Division by zero".to_string(),
+                    ));
                 }
                 a / b
             }
-            other => return Err(agentverse::ToolError::Execution(format!(
-                "Unknown operation: {}", other
-            ))),
+            other => {
+                return Err(agentverse::ToolError::Execution(format!(
+                    "Unknown operation: {}",
+                    other
+                )))
+            }
         };
 
         Ok(json!({ "result": result }))

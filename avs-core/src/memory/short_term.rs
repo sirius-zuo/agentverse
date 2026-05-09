@@ -18,7 +18,8 @@ impl Memory for ShortTermMemory {
     fn append(&mut self, message: Message) {
         self.messages.push(message);
         if self.messages.len() > self.max_messages {
-            self.messages.drain(0..self.messages.len() - self.max_messages);
+            self.messages
+                .drain(0..self.messages.len() - self.max_messages);
         }
     }
 

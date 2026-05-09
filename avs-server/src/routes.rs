@@ -29,18 +29,24 @@ pub async fn invoke(
 ) -> impl IntoResponse {
     // Rate limiting
     if let Err(e) = state.rate_limiter.check(&request.user_id) {
-        return (StatusCode::TOO_MANY_REQUESTS, Json(serde_json::json!({
-            "error": e.to_string()
-        })));  
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({
+                "error": e.to_string()
+            })),
+        );
     }
 
     // Prompt guardrail
     if state.guardrails_enabled {
         if let Err(e) = check_prompt(&request.message) {
             error!(error = %e, user_id = %request.user_id, "Prompt guardrail triggered");
-            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-                "error": e.to_string()
-            })));  
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": e.to_string()
+                })),
+            );
         }
     }
 
@@ -57,34 +63,49 @@ pub async fn invoke(
             if state.guardrails_enabled {
                 if let Err(e) = check_output(&response) {
                     error!(error = %e, user_id = %request.user_id, "Output guardrail triggered");
-                    return (StatusCode::FORBIDDEN, Json(serde_json::json!({
-                        "error": e.to_string()
-                    })));
+                    return (
+                        StatusCode::FORBIDDEN,
+                        Json(serde_json::json!({
+                            "error": e.to_string()
+                        })),
+                    );
                 }
             }
 
             info!(user_id = %request.user_id, "Request completed");
-            (StatusCode::OK, Json(serde_json::json!({
-                "message": response,
-                "user_id": request.user_id,
-            })))
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "message": response,
+                    "user_id": request.user_id,
+                })),
+            )
         }
         Err(e) => {
             error!(error = %e, user_id = %request.user_id, "Request failed");
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-                "error": e.to_string()
-            })))
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": e.to_string()
+                })),
+            )
         }
     }
 }
 
 pub async fn health() -> impl IntoResponse {
-    (StatusCode::OK, Json(serde_json::json!({
-        "status": "healthy",
-        "model": "gpt-4",
-    })))
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "status": "healthy",
+            "model": "gpt-4",
+        })),
+    )
 }
 
 pub async fn ready() -> impl IntoResponse {
-    (StatusCode::OK, Json(serde_json::json!({ "status": "ready" })))
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "status": "ready" })),
+    )
 }

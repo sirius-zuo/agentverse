@@ -13,21 +13,16 @@ async fn test_openai_compatible_generate() {
                 "model": "test-model",
                 "messages": [{"role": "user", "content": "hello"}]
             }));
-        then.status(200)
-            .json_body(serde_json::json!({
-                "choices": [{
-                    "message": {
-                        "content": "Hello! How can I help you?"
-                    }
-                }]
-            }));
+        then.status(200).json_body(serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "Hello! How can I help you?"
+                }
+            }]
+        }));
     });
 
-    let model = OpenAICompatible::new(
-        &server.base_url(),
-        "test-model",
-        "test-key",
-    );
+    let model = OpenAICompatible::new(&server.base_url(), "test-model", "test-key");
 
     let result = model.generate("hello", None).await;
     assert!(result.is_ok());

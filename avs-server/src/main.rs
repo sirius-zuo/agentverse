@@ -12,17 +12,18 @@ use axum::{
     Router,
 };
 use config::ServerConfig;
-use routes::{AppState, health, invoke, ready};
+use routes::{health, invoke, ready, AppState};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::info;
-use tracing_subscriber::{fmt::Layer, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{
+    fmt::Layer, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, EnvFilter,
+};
 
 #[tokio::main]
 async fn main() {
     // Initialize logging
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     tracing_subscriber::registry()
         .with(Layer::new().with_writer(std::io::stderr))

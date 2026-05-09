@@ -8,11 +8,14 @@ fn test_registry_register_and_execute() {
     registry.register(Calculator);
 
     assert!(registry.has_tool("calculator"));
-    let result = registry.execute("calculator", json!({
-        "operation": "add",
-        "a": 2.0,
-        "b": 3.0
-    }));
+    let result = registry.execute(
+        "calculator",
+        json!({
+            "operation": "add",
+            "a": 2.0,
+            "b": 3.0
+        }),
+    );
     assert!(result.is_ok());
     let val = result.unwrap();
     assert_eq!(val["result"], 5.0);
@@ -150,8 +153,14 @@ fn test_file_search_missing_params() {
 fn test_http_client_parameters() {
     let tool = HttpClient;
     let params = tool.parameters();
-    assert!(params["required"].as_array().unwrap().contains(&json!("method")));
-    assert!(params["required"].as_array().unwrap().contains(&json!("url")));
+    assert!(params["required"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("method")));
+    assert!(params["required"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("url")));
 }
 
 #[test]
@@ -197,9 +206,6 @@ fn test_http_client_invalid_url() {
 #[test]
 fn test_registry_register_many() {
     let mut registry = ToolRegistry::new();
-    registry.register_many(vec![
-        Box::new(Calculator),
-        Box::new(DateTimeTool),
-    ]);
+    registry.register_many(vec![Box::new(Calculator), Box::new(DateTimeTool)]);
     assert_eq!(registry.tool_names().len(), 2);
 }

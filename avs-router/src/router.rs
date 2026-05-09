@@ -87,8 +87,12 @@ where
 pub fn strategy_description(strategy: &StrategyName) -> &'static str {
     match strategy {
         StrategyName::ReAct => "Best for: simple Q&A, tool use, step-by-step reasoning",
-        StrategyName::PlanAndExecute => "Best for: tasks with clear steps that can be planned upfront",
-        StrategyName::Hierarchical => "Best for: complex tasks that need decomposition into sub-goals",
+        StrategyName::PlanAndExecute => {
+            "Best for: tasks with clear steps that can be planned upfront"
+        }
+        StrategyName::Hierarchical => {
+            "Best for: complex tasks that need decomposition into sub-goals"
+        }
     }
 }
 

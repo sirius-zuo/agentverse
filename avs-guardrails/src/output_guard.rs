@@ -7,8 +7,14 @@ use crate::GuardrailError;
 static PII_PATTERNS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
     vec![
         (Regex::new(r"\b\d{3}-\d{2}-\d{4}\b").unwrap(), "SSN"),
-        (Regex::new(r"\b\d{4}[\s-]\d{4}[\s-]\d{4}[\s-]\d{4}\b").unwrap(), "Credit Card"),
-        (Regex::new(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}").unwrap(), "Email"),
+        (
+            Regex::new(r"\b\d{4}[\s-]\d{4}[\s-]\d{4}[\s-]\d{4}\b").unwrap(),
+            "Credit Card",
+        ),
+        (
+            Regex::new(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}").unwrap(),
+            "Email",
+        ),
     ]
 });
 
@@ -17,7 +23,8 @@ pub fn check_output(output: &str) -> Result<(), GuardrailError> {
     for (pattern, pii_type) in PII_PATTERNS.iter() {
         if pattern.is_match(output) {
             return Err(GuardrailError::OutputFiltered(format!(
-                "PII detected: {} — output filtered", pii_type
+                "PII detected: {} — output filtered",
+                pii_type
             )));
         }
     }

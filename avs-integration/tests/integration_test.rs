@@ -57,7 +57,7 @@ async fn test_webhook_endpoint() {
 
     let adapter = WebhookAdapter::new(Arc::clone(&agent), port, None);
 
-    use agentverse_integration::webhook::{WebhookState, handle_webhook};
+    use agentverse_integration::webhook::{handle_webhook, WebhookState};
     use axum::routing::post;
 
     let app = Router::new()
@@ -105,7 +105,7 @@ async fn test_webhook_with_auth_token() {
 
     let adapter = WebhookAdapter::new(Arc::clone(&agent), port, Some("secret-token".to_string()));
 
-    use agentverse_integration::webhook::{WebhookState, handle_webhook};
+    use agentverse_integration::webhook::{handle_webhook, WebhookState};
     use axum::routing::post;
 
     let app = Router::new()

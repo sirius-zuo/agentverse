@@ -23,5 +23,8 @@ async fn main() {
         3000,
     );
 
-    adapter.start().await.expect("Failed to start Slack adapter");
+    adapter
+        .start()
+        .await
+        .expect("Failed to start Slack adapter");
 }

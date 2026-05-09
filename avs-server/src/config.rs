@@ -53,8 +53,8 @@ impl ServerConfig {
     pub fn from_file(path: &str) -> Result<Self, String> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| format!("Failed to read config file: {}", e))?;
-        let config: ServerConfig = serde_yaml::from_str(&content)
-            .map_err(|e| format!("Failed to parse config: {}", e))?;
+        let config: ServerConfig =
+            serde_yaml::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?;
         Ok(config)
     }
 

@@ -13,7 +13,12 @@ pub struct McpToolAdapter {
 }
 
 impl McpToolAdapter {
-    pub fn new(name: String, description: String, parameters: Value, client: Arc<McpClient>) -> Self {
+    pub fn new(
+        name: String,
+        description: String,
+        parameters: Value,
+        client: Arc<McpClient>,
+    ) -> Self {
         Self {
             name,
             description,
@@ -51,12 +56,14 @@ impl SyncTool for McpToolAdapter {
                 // SyncTool trait. In production, consider using AsyncTool
                 // for MCP tools.
                 rt.block_on(async {
-                    client.call_tool(&name, args).await
+                    client
+                        .call_tool(&name, args)
+                        .await
                         .map_err(|e| agentverse::ToolError::Execution(e.to_string()))
                 })
             }
             Err(_) => Err(agentverse::ToolError::Execution(
-                "No tokio runtime available for MCP tool execution".to_string()
+                "No tokio runtime available for MCP tool execution".to_string(),
             )),
         }
     }

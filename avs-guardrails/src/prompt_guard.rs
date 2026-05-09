@@ -16,7 +16,8 @@ pub fn check_prompt(prompt: &str) -> Result<(), GuardrailError> {
     for pattern in PROMPT_INJECTION_PATTERNS.iter() {
         if pattern.is_match(prompt) {
             return Err(GuardrailError::PromptInjection(format!(
-                "Potential prompt injection detected: {}", pattern.as_str()
+                "Potential prompt injection detected: {}",
+                pattern.as_str()
             )));
         }
     }

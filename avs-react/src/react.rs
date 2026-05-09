@@ -5,8 +5,8 @@
 
 use super::cycle::{CycleAction, CycleSkeleton};
 use super::parse::parse_response;
-use agentverse::{AgentError, Message, ModelProvider, PromptRegistry, SyncTool};
 use agentverse::model::ToolDefinition;
+use agentverse::{AgentError, Message, ModelProvider, PromptRegistry, SyncTool};
 use std::sync::{Arc, Mutex};
 
 /// The high-level ReAct strategy interface.

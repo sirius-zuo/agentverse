@@ -83,10 +83,12 @@ pub async fn generate_plan(
         .trim_start_matches('`')
         .trim();
 
-    let plan: Plan = serde_json::from_str(json_str)
-        .map_err(|e| agentverse::ModelError::InvalidResponse(format!(
-            "Failed to parse plan JSON: {}. Response was: {}", e, response
-        )))?;
+    let plan: Plan = serde_json::from_str(json_str).map_err(|e| {
+        agentverse::ModelError::InvalidResponse(format!(
+            "Failed to parse plan JSON: {}. Response was: {}",
+            e, response
+        ))
+    })?;
 
     Ok(plan)
 }
@@ -117,10 +119,12 @@ pub async fn decompose_request(
         .trim_start_matches('`')
         .trim();
 
-    let sub_goals: Vec<String> = serde_json::from_str(json_str)
-        .map_err(|e| agentverse::ModelError::InvalidResponse(format!(
-            "Failed to parse decomposition: {}. Response was: {}", e, response
-        )))?;
+    let sub_goals: Vec<String> = serde_json::from_str(json_str).map_err(|e| {
+        agentverse::ModelError::InvalidResponse(format!(
+            "Failed to parse decomposition: {}. Response was: {}",
+            e, response
+        ))
+    })?;
 
     Ok(sub_goals)
 }

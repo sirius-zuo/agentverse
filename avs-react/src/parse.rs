@@ -138,10 +138,7 @@ mod tests {
         let result = parse_response("I should first check the directory structure");
         match result {
             CycleAction::Continue { thought } => {
-                assert_eq!(
-                    thought,
-                    "I should first check the directory structure"
-                );
+                assert_eq!(thought, "I should first check the directory structure");
             }
             other => panic!("Expected Continue, got {:?}", other),
         }
@@ -169,9 +166,8 @@ mod tests {
     #[test]
     fn test_parse_thought_with_action_keyword_in_text() {
         // Action mentioned in thought text should not trigger tool call
-        let result = parse_response(
-            "I need to think about what the action should be.\nAnswer: it depends",
-        );
+        let result =
+            parse_response("I need to think about what the action should be.\nAnswer: it depends");
         match result {
             CycleAction::Done { answer } => assert_eq!(answer, "it depends"),
             other => panic!("Expected Done, got {:?}", other),

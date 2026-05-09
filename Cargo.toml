@@ -12,6 +12,11 @@ members = [
     "avs-tools",
     "avs-mcp",
     "avs-server",
+    "examples/hello-agent",
+    "examples/slack-hr-assistant",
+    "examples/rag-qa",
+    "examples/web-search-agent",
+    "examples/code-review-agent",
 ]
 resolver = "2"
 

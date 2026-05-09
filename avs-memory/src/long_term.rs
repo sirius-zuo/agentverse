@@ -25,7 +25,10 @@ pub trait LongTermMemory: Send + Sync {
     ) -> Result<Vec<MemoryEntry>, LongTermMemoryError>;
 
     /// Delete entries older than a timestamp.
-    async fn purge_old(&mut self, before: chrono::DateTime<chrono::Utc>) -> Result<usize, LongTermMemoryError>;
+    async fn purge_old(
+        &mut self,
+        before: chrono::DateTime<chrono::Utc>,
+    ) -> Result<usize, LongTermMemoryError>;
 
     /// Check if the backend is healthy.
     async fn health_check(&self) -> Result<(), LongTermMemoryError>;

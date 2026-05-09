@@ -1,9 +1,9 @@
 //! Tests for the agentverse-react crate.
 
-use agentverse::{Memory, Message, ModelProvider, PromptRegistry, ShortTermMemory};
 use agentverse::model::ToolDefinition;
 use agentverse::SyncTool;
-use agentverse_react::{CycleAction, ReActStrategy, parse::parse_response};
+use agentverse::{Memory, Message, ModelProvider, PromptRegistry, ShortTermMemory};
+use agentverse_react::{parse::parse_response, CycleAction, ReActStrategy};
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -74,9 +74,8 @@ fn test_parse_response_answer() {
 
 #[test]
 fn test_parse_response_tool_call() {
-    let result = parse_response(
-        "Thought: searching.\nAction: search\nAction Input: {\"q\": \"test\"}",
-    );
+    let result =
+        parse_response("Thought: searching.\nAction: search\nAction Input: {\"q\": \"test\"}");
     match result {
         CycleAction::ToolCall { tool_name, args } => {
             assert_eq!(tool_name, "search");
@@ -131,7 +130,9 @@ fn test_cycle_skeleton_execute_tool() {
         10,
     );
 
-    let result = skeleton.execute_tool("echo", json!({"text": "hello"})).unwrap();
+    let result = skeleton
+        .execute_tool("echo", json!({"text": "hello"}))
+        .unwrap();
     assert!(result.contains("Executed echo"));
 }
 
@@ -189,11 +190,13 @@ async fn test_cycle_run_with_answer() {
         10,
     );
 
-    let result = skeleton.run("test input".to_string(), |_s| async {
-        Ok(CycleAction::Done {
-            answer: "immediate".to_string(),
+    let result = skeleton
+        .run("test input".to_string(), |_s| async {
+            Ok(CycleAction::Done {
+                answer: "immediate".to_string(),
+            })
         })
-    }).await;
+        .await;
 
     assert_eq!(result.unwrap(), "immediate");
 }
@@ -211,11 +214,13 @@ async fn test_cycle_run_max_iterations() {
         2,
     );
 
-    let result = skeleton.run("test".to_string(), |_s| async {
-        Ok(CycleAction::Continue {
-            thought: "looping".to_string(),
+    let result = skeleton
+        .run("test".to_string(), |_s| async {
+            Ok(CycleAction::Continue {
+                thought: "looping".to_string(),
+            })
         })
-    }).await;
+        .await;
 
     assert!(result.is_err());
     match result.unwrap_err() {

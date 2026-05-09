@@ -30,22 +30,13 @@ where
 #[derive(Debug)]
 pub enum CycleAction {
     /// LLM said "think" — continue the loop with a thought.
-    Continue {
-        thought: String,
-    },
+    Continue { thought: String },
     /// LLM decided to call a tool.
-    ToolCall {
-        tool_name: String,
-        args: Value,
-    },
+    ToolCall { tool_name: String, args: Value },
     /// LLM provided a final answer.
-    Done {
-        answer: String,
-    },
+    Done { answer: String },
     /// LLM indicated an error.
-    Error {
-        message: String,
-    },
+    Error { message: String },
 }
 
 impl<P, M> CycleSkeleton<P, M>
@@ -74,7 +65,11 @@ where
     /// Run the strategy loop (async).
     ///
     /// Each strategy provides its own `step` closure that returns a `CycleAction`.
-    pub async fn run<F, Fut>(&mut self, initial_message: String, mut step: F) -> Result<String, AgentError>
+    pub async fn run<F, Fut>(
+        &mut self,
+        initial_message: String,
+        mut step: F,
+    ) -> Result<String, AgentError>
     where
         F: FnMut(&mut Self) -> Fut,
         Fut: std::future::Future<Output = Result<CycleAction, AgentError>>,
@@ -96,7 +91,10 @@ where
                         role: agentverse::memory::MessageRole::Assistant,
                         content: format!("Thought: {}", thought),
                     });
-                    info!(iteration = self.current_iteration, "Thought only, continuing");
+                    info!(
+                        iteration = self.current_iteration,
+                        "Thought only, continuing"
+                    );
                 }
                 CycleAction::ToolCall { tool_name, args } => {
                     let result = self.execute_tool(&tool_name, args)?;
@@ -104,7 +102,11 @@ where
                         role: agentverse::memory::MessageRole::Tool,
                         content: format!("Tool: {}\nResult: {}", tool_name, result),
                     });
-                    info!(iteration = self.current_iteration, tool = tool_name, "Tool executed");
+                    info!(
+                        iteration = self.current_iteration,
+                        tool = tool_name,
+                        "Tool executed"
+                    );
                 }
                 CycleAction::Done { answer } => {
                     self.memory.lock().unwrap().append(Message {

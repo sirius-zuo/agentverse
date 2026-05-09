@@ -33,7 +33,9 @@ impl ToolRegistry {
 
     /// Execute a tool by name.
     pub fn execute(&self, tool_name: &str, args: serde_json::Value) -> ToolResult {
-        let tool = self.tools.get(tool_name)
+        let tool = self
+            .tools
+            .get(tool_name)
             .ok_or_else(|| agentverse::ToolError::NotFound(tool_name.to_string()))?;
         tool.execute(args)
     }

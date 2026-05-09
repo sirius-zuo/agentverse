@@ -38,9 +38,7 @@ impl RateLimiter {
         let window = std::time::Duration::from_secs(self.default_window_seconds);
 
         // Remove old requests outside the window
-        state
-            .requests
-            .retain(|t| now.duration_since(*t) < window);
+        state.requests.retain(|t| now.duration_since(*t) < window);
 
         if state.requests.len() >= self.default_max_requests {
             return Err(GuardrailError::RateLimited(format!(

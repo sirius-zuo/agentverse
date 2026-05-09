@@ -59,7 +59,10 @@ fn test_mcp_tool_adapter_trait_methods() {
 
     assert_eq!(adapter.name(), "web_search");
     assert_eq!(adapter.description(), "Search the web for information");
-    assert_eq!(adapter.parameters()["required"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        adapter.parameters()["required"].as_array().unwrap().len(),
+        1
+    );
 }
 
 #[test]

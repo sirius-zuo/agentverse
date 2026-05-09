@@ -86,11 +86,7 @@ where
             }
 
             // Generate a plan for this sub-goal
-            let tool_names: Vec<String> = self
-                .tools
-                .iter()
-                .map(|t| t.name().to_string())
-                .collect();
+            let tool_names: Vec<String> = self.tools.iter().map(|t| t.name().to_string()).collect();
 
             let sub_plan = generate_plan(&*self.model, sub_goal, &tool_names).await?;
 
@@ -100,10 +96,7 @@ where
                 if step.id > self.max_iterations {
                     self.memory.lock().unwrap().append(agentverse::Message {
                         role: agentverse::memory::MessageRole::System,
-                        content: format!(
-                            "Sub-goal {} step {}: max iterations reached",
-                            i, step.id
-                        ),
+                        content: format!("Sub-goal {} step {}: max iterations reached", i, step.id),
                     });
                     break;
                 }
@@ -124,7 +117,10 @@ where
                     role: agentverse::memory::MessageRole::System,
                     content: format!(
                         "Sub-goal {} step {} ({}): {}",
-                        i, step.id, step.tool.as_deref().unwrap_or("reasoning"), result
+                        i,
+                        step.id,
+                        step.tool.as_deref().unwrap_or("reasoning"),
+                        result
                     ),
                 });
             }
@@ -139,7 +135,11 @@ where
         }
 
         // Phase 3: Synthesize final answer from all sub-goal results
-        let conversation_history = self.memory.lock().unwrap().last_n(30)
+        let conversation_history = self
+            .memory
+            .lock()
+            .unwrap()
+            .last_n(30)
             .iter()
             .map(|m| {
                 let role_str = match m.role {
@@ -167,18 +167,17 @@ where
             conversation_history
         );
 
-        let answer = self.model.generate(&final_prompt, None).await
+        let answer = self
+            .model
+            .generate(&final_prompt, None)
+            .await
             .map_err(AgentError::Model)?;
 
         Ok(answer)
     }
 
     /// Execute a single tool by name.
-    fn execute_tool(
-        &self,
-        tool_name: &str,
-        args: serde_json::Value,
-    ) -> Result<String, AgentError> {
+    fn execute_tool(&self, tool_name: &str, args: serde_json::Value) -> Result<String, AgentError> {
         let tool = self
             .tools
             .iter()

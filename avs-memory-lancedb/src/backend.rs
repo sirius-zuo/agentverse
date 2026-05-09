@@ -127,11 +127,15 @@ impl LongTermMemory for LanceDBBackend {
             .map_err(|e| LongTermMemoryError::Query(e.to_string()))?;
 
         let mut entries = Vec::new();
-        while let Some(batch) = results.next().await.transpose().map_err(|e| LongTermMemoryError::Query(e.to_string()))? {
-            if let (Some(id_arr), Some(content_arr)) = (
-                batch.column_by_name("id"),
-                batch.column_by_name("content"),
-            ) {
+        while let Some(batch) = results
+            .next()
+            .await
+            .transpose()
+            .map_err(|e| LongTermMemoryError::Query(e.to_string()))?
+        {
+            if let (Some(id_arr), Some(content_arr)) =
+                (batch.column_by_name("id"), batch.column_by_name("content"))
+            {
                 let id_array = id_arr
                     .as_any()
                     .downcast_ref::<arrow_array::StringArray>()
@@ -157,7 +161,10 @@ impl LongTermMemory for LanceDBBackend {
         Ok(entries)
     }
 
-    async fn purge_old(&mut self, _before: chrono::DateTime<chrono::Utc>) -> Result<usize, LongTermMemoryError> {
+    async fn purge_old(
+        &mut self,
+        _before: chrono::DateTime<chrono::Utc>,
+    ) -> Result<usize, LongTermMemoryError> {
         // LanceDB doesn't have native time-based deletion in MVP
         // Implement via query filter in production
         Ok(0)

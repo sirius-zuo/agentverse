@@ -1,4 +1,6 @@
 // examples/web-search-agent/src/main.rs
+#![allow(unused_imports)]
+
 use agentverse::{Agent, Config};
 use agentverse_tools::{FileSearch, HttpClient};
 // Tools: HttpClient + FileSearch for web research

@@ -39,11 +39,7 @@ impl PromptRegistry {
         self.env.add_template(name, source).unwrap();
     }
 
-    pub fn render(
-        &self,
-        name: &str,
-        context: HashMap<String, Value>,
-    ) -> Result<String, String> {
+    pub fn render(&self, name: &str, context: HashMap<String, Value>) -> Result<String, String> {
         let tmpl = self.env.get_template(name).map_err(|e| e.to_string())?;
         // Build minijinja context from the HashMap
         let entries: Vec<(String, minijinja::value::Value)> = context

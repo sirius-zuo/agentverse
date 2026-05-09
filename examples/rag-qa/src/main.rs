@@ -1,4 +1,6 @@
 // examples/rag-qa/src/main.rs
+#![allow(unused_imports)]
+
 use agentverse::{Agent, Config};
 use agentverse_tools::HttpClient;
 use std::sync::Arc;
@@ -20,6 +22,10 @@ async fn main() {
     println!("Use case: Query documents stored in LanceDB via HTTP tool");
 
     // Example: Query the agent about stored knowledge
-    let result = agent.lock().await.invoke("user1", "What is the project architecture?").await;
+    let result = agent
+        .lock()
+        .await
+        .invoke("user1", "What is the project architecture?")
+        .await;
     println!("Agent: {}", result.unwrap());
 }

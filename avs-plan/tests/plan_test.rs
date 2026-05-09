@@ -2,8 +2,8 @@
 //!
 //! Tests the PlanStep, Plan, and strategy structures with mock models.
 
-use agentverse::{ModelError, ModelProvider, SyncTool};
 use agentverse::model::ToolDefinition;
+use agentverse::{ModelError, ModelProvider, SyncTool};
 use agentverse_plan::{Plan, PlanStep};
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -243,6 +243,7 @@ fn test_plan_step_complex_args() {
         depends_on: vec![],
     };
 
-    let deserialized: PlanStep = serde_json::from_str(&serde_json::to_string(&step).unwrap()).unwrap();
+    let deserialized: PlanStep =
+        serde_json::from_str(&serde_json::to_string(&step).unwrap()).unwrap();
     assert_eq!(deserialized.args, Some(args));
 }

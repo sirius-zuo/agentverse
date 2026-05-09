@@ -121,14 +121,11 @@ impl ModelProvider for OpenAICompatible {
             .map_err(|e| ModelError::ApiError(e.to_string()))?;
 
         if !status.is_success() {
-            return Err(ModelError::ApiError(format!(
-                "HTTP {}: {}",
-                status, body
-            )));
+            return Err(ModelError::ApiError(format!("HTTP {}: {}", status, body)));
         }
 
-        let chat_response: ChatResponse = serde_json::from_str(&body)
-            .map_err(|e| ModelError::InvalidResponse(e.to_string()))?;
+        let chat_response: ChatResponse =
+            serde_json::from_str(&body).map_err(|e| ModelError::InvalidResponse(e.to_string()))?;
 
         chat_response
             .choices

@@ -75,9 +75,12 @@ impl SyncTool for HttpClient {
             "POST" => HTTP_CLIENT.post(url),
             "PUT" => HTTP_CLIENT.put(url),
             "DELETE" => HTTP_CLIENT.delete(url),
-            other => return Err(agentverse::ToolError::Execution(format!(
-                "Unsupported method: {}", other
-            ))),
+            other => {
+                return Err(agentverse::ToolError::Execution(format!(
+                    "Unsupported method: {}",
+                    other
+                )))
+            }
         };
 
         let request = if let Some(headers) = args["headers"].as_object() {
@@ -92,11 +95,13 @@ impl SyncTool for HttpClient {
             request
         };
 
-        let response = request.send()
+        let response = request
+            .send()
             .map_err(|e| agentverse::ToolError::Execution(e.to_string()))?;
 
         let status = response.status().as_u16();
-        let body = response.text()
+        let body = response
+            .text()
             .map_err(|e| agentverse::ToolError::Execution(e.to_string()))?;
 
         Ok(json!({

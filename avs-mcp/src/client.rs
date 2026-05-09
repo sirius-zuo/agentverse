@@ -50,7 +50,8 @@ impl McpClient {
             })),
         };
 
-        let response = self.client
+        let response = self
+            .client
             .post(format!("{}/message", self.server_url))
             .json(&request)
             .send()
@@ -73,14 +74,17 @@ impl McpClient {
             params: None,
         };
 
-        let response = self.client
+        let response = self
+            .client
             .post(format!("{}/message", self.server_url))
             .json(&request)
             .send()
             .await
             .map_err(|e| McpError::Connection(e.to_string()))?;
 
-        let body: Value = response.json().await
+        let body: Value = response
+            .json()
+            .await
             .map_err(|e| McpError::Parse(e.to_string()))?;
 
         let tools = body["result"]["tools"]
@@ -111,29 +115,38 @@ impl McpClient {
             })),
         };
 
-        let response = self.client
+        let response = self
+            .client
             .post(format!("{}/message", self.server_url))
             .json(&request)
             .send()
             .await
             .map_err(|e| McpError::Connection(e.to_string()))?;
 
-        let body: Value = response.json().await
+        let body: Value = response
+            .json()
+            .await
             .map_err(|e| McpError::Parse(e.to_string()))?;
 
         if let Some(error) = body.get("error") {
-            return Err(McpError::ToolCall(error["message"].as_str()
-                .unwrap_or("Unknown error").to_string()));
+            return Err(McpError::ToolCall(
+                error["message"]
+                    .as_str()
+                    .unwrap_or("Unknown error")
+                    .to_string(),
+            ));
         }
 
-        let content = body["result"]["content"].as_array()
+        let content = body["result"]["content"]
+            .as_array()
             .ok_or_else(|| McpError::Parse("No content array in response".to_string()))?;
         if content.is_empty() {
             return Err(McpError::Parse("Tool returned empty content".to_string()));
         }
 
         // Find the first text content item
-        let text = content.iter()
+        let text = content
+            .iter()
             .find_map(|c| c["text"].as_str())
             .ok_or_else(|| McpError::Parse("No text content in response".to_string()))?;
 

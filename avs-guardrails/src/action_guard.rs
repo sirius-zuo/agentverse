@@ -9,9 +9,15 @@ use crate::GuardrailError;
 
 /// Dangerous tool names that require human approval.
 static DANGEROUS_TOOLS: LazyLock<HashSet<&str>> = LazyLock::new(|| {
-    ["file_write", "file_delete", "exec_command", "system_shutdown", "database_delete"]
-        .into_iter()
-        .collect()
+    [
+        "file_write",
+        "file_delete",
+        "exec_command",
+        "system_shutdown",
+        "database_delete",
+    ]
+    .into_iter()
+    .collect()
 });
 
 /// Callback type for human approval.

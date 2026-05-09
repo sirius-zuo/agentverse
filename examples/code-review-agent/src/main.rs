@@ -1,4 +1,6 @@
 // examples/code-review-agent/src/main.rs
+#![allow(unused_imports)]
+
 use agentverse::{Agent, Config};
 use agentverse_tools::{Calculator, FileSearch};
 // Tools: FileSearch + Calculator for code analysis
