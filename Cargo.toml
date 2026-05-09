@@ -1,17 +1,6 @@
 [workspace]
 members = [
     "avs-core",
-    "avs-react",
-    "avs-plan",
-    "avs-router",
-    "avs-memory",
-    "avs-memory-lancedb",
-    "avs-memory-pgvector",
-    "avs-tools",
-    "avs-mcp",
-    "avs-guardrails",
-    "avs-integration",
-    "avs-server",
 ]
 resolver = "2"
 
