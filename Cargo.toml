@@ -1,0 +1,34 @@
+[workspace]
+members = [
+    "avs-core",
+    "avs-react",
+    "avs-plan",
+    "avs-router",
+    "avs-memory",
+    "avs-memory-lancedb",
+    "avs-memory-pgvector",
+    "avs-tools",
+    "avs-mcp",
+    "avs-guardrails",
+    "avs-integration",
+    "avs-server",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+async-trait = "0.1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+minijinja = "2.0"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
