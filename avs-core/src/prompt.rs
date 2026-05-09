@@ -1,18 +1,15 @@
-use minijinja::{context, Environment};
+use minijinja::Environment;
+use serde_json::Value;
 use std::collections::HashMap;
 
 const DEFAULT_REACT_TEMPLATE: &str = r#"
 You are a helpful assistant. Think step by step.
 
 Current conversation:
-{% for message in conversation %}
-{{ message.role }}: {{ message.content }}
-{% endfor %}
+{{ conversation }}
 
 Available tools:
-{% for tool in tools %}
-- {{ tool.name }}: {{ tool.description }}
-{% endfor %}
+{{ tools }}
 
 Respond in the following format:
 Thought: [your reasoning]
@@ -45,12 +42,15 @@ impl PromptRegistry {
     pub fn render(
         &self,
         name: &str,
-        context: HashMap<String, String>,
+        context: HashMap<String, Value>,
     ) -> Result<String, String> {
         let tmpl = self.env.get_template(name).map_err(|e| e.to_string())?;
-        let ctx = context! {
-            name => context.get("name").map(|s| s.as_str()).unwrap_or(""),
-        };
+        // Build minijinja context from the HashMap
+        let entries: Vec<(String, minijinja::value::Value)> = context
+            .into_iter()
+            .map(|(k, v)| (k, minijinja::value::Value::from_serialize(&v)))
+            .collect();
+        let ctx = minijinja::value::Value::from_iter(entries);
         tmpl.render(ctx).map_err(|e| e.to_string())
     }
 }

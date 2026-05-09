@@ -3,9 +3,10 @@ use std::collections::HashMap;
 
 #[test]
 fn test_prompt_registry_has_default_react_template() {
+    use serde_json::json;
     let registry = PromptRegistry::new();
     let mut ctx = HashMap::new();
-    ctx.insert("name".to_string(), "AgentVerse".to_string());
+    ctx.insert("name".to_string(), json!("AgentVerse"));
     let result = registry.render("react", ctx);
     assert!(result.is_ok());
     let rendered = result.unwrap();
@@ -15,6 +16,7 @@ fn test_prompt_registry_has_default_react_template() {
 
 #[test]
 fn test_prompt_registry_unknown_template() {
+    use serde_json::json;
     let registry = PromptRegistry::new();
     let result = registry.render("nonexistent", HashMap::new());
     assert!(result.is_err());
@@ -22,10 +24,11 @@ fn test_prompt_registry_unknown_template() {
 
 #[test]
 fn test_prompt_registry_add_custom_template() {
+    use serde_json::json;
     let mut registry = PromptRegistry::new();
     registry.add_template("custom", "Hello {{ name }}!");
     let mut ctx = HashMap::new();
-    ctx.insert("name".to_string(), "World".to_string());
+    ctx.insert("name".to_string(), json!("World"));
     let result = registry.render("custom", ctx);
     assert!(result.is_ok());
     assert!(result.unwrap().contains("Hello World"));
@@ -33,7 +36,10 @@ fn test_prompt_registry_add_custom_template() {
 
 #[test]
 fn test_prompt_registry_default() {
+    use serde_json::json;
     let registry = PromptRegistry::default();
-    let result = registry.render("react", HashMap::new());
+    let mut ctx = HashMap::new();
+    ctx.insert("name".to_string(), json!(""));
+    let result = registry.render("react", ctx);
     assert!(result.is_ok());
 }
