@@ -1,0 +1,32 @@
+[package]
+name = "agentverse"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Lightweight, extensible AI Agent framework"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+tracing.workspace = true
+minijinja.workspace = true
+reqwest.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+tokio.workspace = true
+serde_yaml = "0.9"
+
+# Optional tracing
+opentelemetry = { version = "0.22", optional = true }
+opentelemetry-otlp = { version = "0.15", optional = true }
+
+[features]
+default = ["tracing"]
+tracing = ["opentelemetry", "opentelemetry-otlp"]
+
+[dev-dependencies]
+tokio.workspace = true
+httpmock = "0.7"
+mockall = "0.13"
