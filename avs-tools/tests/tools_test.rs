@@ -174,6 +174,27 @@ fn test_http_client_unsupported_method() {
 }
 
 #[test]
+fn test_http_client_file_scheme_blocked() {
+    let tool = HttpClient;
+    let result = tool.execute(json!({
+        "method": "GET",
+        "url": "file:///etc/passwd"
+    }));
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("http and https"));
+}
+
+#[test]
+fn test_http_client_invalid_url() {
+    let tool = HttpClient;
+    let result = tool.execute(json!({
+        "method": "GET",
+        "url": "not a valid url"
+    }));
+    assert!(result.is_err());
+}
+
+#[test]
 fn test_registry_register_many() {
     let mut registry = ToolRegistry::new();
     registry.register_many(vec![

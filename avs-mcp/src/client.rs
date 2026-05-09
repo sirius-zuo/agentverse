@@ -126,7 +126,18 @@ impl McpClient {
                 .unwrap_or("Unknown error").to_string()));
         }
 
-        Ok(body["result"]["content"][0]["text"].clone())
+        let content = body["result"]["content"].as_array()
+            .ok_or_else(|| McpError::Parse("No content array in response".to_string()))?;
+        if content.is_empty() {
+            return Err(McpError::Parse("Tool returned empty content".to_string()));
+        }
+
+        // Find the first text content item
+        let text = content.iter()
+            .find_map(|c| c["text"].as_str())
+            .ok_or_else(|| McpError::Parse("No text content in response".to_string()))?;
+
+        Ok(text.to_string().into())
     }
 }
 

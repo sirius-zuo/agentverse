@@ -1,6 +1,16 @@
 use agentverse::{SyncTool, ToolResult};
 use reqwest::blocking::Client;
 use serde_json::{json, Value};
+use std::sync::LazyLock;
+use url::Url;
+
+/// Shared HTTP client with timeout and connection pooling.
+static HTTP_CLIENT: LazyLock<Client> = LazyLock::new(|| {
+    Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .expect("failed to build HTTP client")
+});
 
 /// HTTP client tool for making REST API calls.
 pub struct HttpClient;
@@ -49,12 +59,22 @@ impl SyncTool for HttpClient {
             agentverse::ToolError::Execution("Missing 'url' parameter".to_string())
         })?;
 
-        let client = Client::new();
+        // Validate URL scheme for security (prevent SSRF via file://, etc.)
+        let parsed = Url::parse(url)
+            .map_err(|e| agentverse::ToolError::Execution(format!("Invalid URL: {e}")))?;
+        if !"http".eq_ignore_ascii_case(parsed.scheme())
+            && !"https".eq_ignore_ascii_case(parsed.scheme())
+        {
+            return Err(agentverse::ToolError::Execution(
+                "Only http and https URLs are allowed".to_string(),
+            ));
+        }
+
         let request = match method.to_uppercase().as_str() {
-            "GET" => client.get(url),
-            "POST" => client.post(url),
-            "PUT" => client.put(url),
-            "DELETE" => client.delete(url),
+            "GET" => HTTP_CLIENT.get(url),
+            "POST" => HTTP_CLIENT.post(url),
+            "PUT" => HTTP_CLIENT.put(url),
+            "DELETE" => HTTP_CLIENT.delete(url),
             other => return Err(agentverse::ToolError::Execution(format!(
                 "Unsupported method: {}", other
             ))),
