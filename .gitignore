@@ -1,0 +1,15 @@
+# Rust
+/target/
+Cargo.lock
+
+# Worktrees
+.worktrees/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
