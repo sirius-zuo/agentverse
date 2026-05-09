@@ -14,7 +14,7 @@ pub enum MessageRole {
     Tool,
 }
 
-pub trait Memory {
+pub trait Memory: Send + Sync {
     fn append(&mut self, message: Message);
     fn last_n(&self, n: usize) -> Vec<Message>;
     fn clear(&mut self);
