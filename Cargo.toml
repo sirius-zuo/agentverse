@@ -11,6 +11,7 @@ members = [
     "avs-router",
     "avs-tools",
     "avs-mcp",
+    "avs-server",
 ]
 resolver = "2"
 
@@ -34,3 +35,5 @@ uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 regex = "1.10"
 axum = { version = "0.7", features = ["tokio"] }
+utoipa = { version = "4", features = ["axum_extras"] }
+utoipa-swagger-ui = { version = "6", features = ["axum"] }

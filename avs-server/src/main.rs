@@ -1,0 +1,102 @@
+// avs-server/src/main.rs
+mod auth;
+mod config;
+mod routes;
+
+use agentverse::{Agent, Config};
+use agentverse_guardrails::RateLimiter;
+use agentverse_tools::{Calculator, DateTimeTool, FileSearch, HttpClient, ToolRegistry};
+use axum::{
+    middleware,
+    routing::{get, post},
+    Router,
+};
+use config::ServerConfig;
+use routes::{AppState, health, invoke, ready};
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use tracing::info;
+use tracing_subscriber::{fmt::Layer, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, EnvFilter};
+
+#[tokio::main]
+async fn main() {
+    // Initialize logging
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info"));
+
+    tracing_subscriber::registry()
+        .with(Layer::new().with_writer(std::io::stderr))
+        .with(env_filter)
+        .init();
+
+    // Load configuration
+    let server_config = if let Ok(path) = std::env::var("CONFIG_PATH") {
+        ServerConfig::from_file(&path).unwrap_or_else(|e| {
+            eprintln!("Failed to load config from {}: {}", path, e);
+            ServerConfig::from_env()
+        })
+    } else {
+        ServerConfig::from_env()
+    };
+
+    info!(
+        host = %server_config.host,
+        port = server_config.port,
+        model = %server_config.agent.model_name,
+        strategy = ?server_config.agent.strategy,
+        "Starting AgentVerse server"
+    );
+
+    // Build agent
+    let agent_config = Config {
+        model_api_key: server_config.agent.model_api_key.clone(),
+        model_name: server_config.agent.model_name.clone(),
+        max_messages: 100,
+        tools: vec![],
+    };
+
+    let agent = Agent::from_config(agent_config).unwrap_or_else(|e| {
+        panic!("Failed to build agent: {}", e);
+    });
+
+    // Build tool registry (infrastructure for future tool use)
+    let _tool_registry = ToolRegistry::new();
+    let _tools: Vec<Box<dyn agentverse::SyncTool>> = vec![
+        Box::new(FileSearch),
+        Box::new(HttpClient),
+        Box::new(Calculator),
+        Box::new(DateTimeTool),
+    ];
+
+    // Build rate limiter
+    let rate_limiter = Arc::new(RateLimiter::new(
+        server_config.guardrails.max_requests_per_minute as usize,
+        60,
+    ));
+
+    // Build app state
+    let state = AppState {
+        agent: Arc::new(Mutex::new(agent)),
+        rate_limiter,
+        guardrails_enabled: server_config.guardrails.enabled,
+    };
+
+    // Build routes
+    let app = Router::new()
+        .route("/health", get(health))
+        .route("/ready", get(ready))
+        .route("/invoke", post(invoke))
+        .layer(middleware::from_fn(auth::auth_middleware))
+        .with_state(state);
+
+    // Start server
+    let addr = format!("{}:{}", server_config.host, server_config.port);
+    let listener = tokio::net::TcpListener::bind(&addr)
+        .await
+        .unwrap_or_else(|e| panic!("Failed to bind to {}: {}", addr, e));
+
+    info!("Listening on {}", addr);
+    axum::serve(listener, app)
+        .await
+        .unwrap_or_else(|e| panic!("Server error: {}", e));
+}
