@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Architecture Review — AgentVerse</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <script>mermaid.initialize({ startOnLoad: true, theme: 'default' });</script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: #f5f5f7;
+      color: #1d1d1f;
+      line-height: 1.6;
+      display: flex;
+      min-height: 100vh;
+    }
+
+    nav {
+      width: 220px;
+      min-width: 220px;
+      background: #fff;
+      border-right: 1px solid #e5e5ea;
+      padding: 2rem 1.25rem;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
+    }
+
+    nav h2 {
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #8e8e93;
+      margin-bottom: 1rem;
+    }
+
+    nav a {
+      display: block;
+      padding: 0.4rem 0.75rem;
+      border-radius: 6px;
+      color: #3a3a3c;
+      text-decoration: none;
+      font-size: 0.875rem;
+      margin-bottom: 0.25rem;
+      transition: background 0.15s;
+    }
+
+    nav a:hover { background: #f2f2f7; }
+
+    main {
+      flex: 1;
+      padding: 2.5rem 3rem;
+      max-width: 960px;
+    }
+
+    header {
+      margin-bottom: 2.5rem;
+      padding-bottom: 1.5rem;
+      border-bottom: 1px solid #e5e5ea;
+    }
+
+    header h1 { font-size: 1.75rem; font-weight: 700; }
+    header p { margin-top: 0.5rem; color: #6e6e73; font-size: 0.95rem; }
+    header .meta { margin-top: 0.75rem; font-size: 0.8rem; color: #8e8e93; }
+
+    section { margin-bottom: 3rem; scroll-margin-top: 2rem; }
+
+    section h2 {
+      font-size: 1.2rem;
+      font-weight: 600;
+      margin-bottom: 1.25rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 2px solid #e5e5ea;
+    }
+
+    .card {
+      background: #fff;
+      border: 1px solid #e5e5ea;
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 1.25rem;
+    }
+
+    .card h3 { font-size: 1rem; font-weight: 600; margin-bottom: 0.75rem; }
+    .card p { color: #3a3a3c; font-size: 0.9rem; }
+
+    .diagram-card {
+      background: #fff;
+      border: 1px solid #e5e5ea;
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 1.25rem;
+      overflow-x: auto;
+    }
+
+    .diagram-card h3 { font-size: 1rem; font-weight: 600; margin-bottom: 0.4rem; }
+    .diagram-desc { color: #6e6e73; font-size: 0.85rem; margin-bottom: 1rem; }
+    .mermaid { min-height: 80px; }
+
+    .findings { display: flex; flex-direction: column; gap: 0.75rem; }
+
+    .finding {
+      display: flex;
+      gap: 0.75rem;
+      align-items: flex-start;
+      padding: 0.875rem 1rem;
+      border-radius: 8px;
+      font-size: 0.9rem;
+    }
+
+    .finding.strength { background: #f0faf4; border-left: 3px solid #30d158; }
+    .finding.concern  { background: #fffbf0; border-left: 3px solid #ff9f0a; }
+    .finding.risk     { background: #fff5f5; border-left: 3px solid #ff3b30; }
+
+    .badge {
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 0.2rem 0.6rem;
+      border-radius: 4px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .badge-strength { background: #30d158; color: #fff; }
+    .badge-concern  { background: #ff9f0a; color: #fff; }
+    .badge-risk     { background: #ff3b30; color: #fff; }
+
+    .finding-text strong { display: block; margin-bottom: 0.2rem; }
+    .finding-text p { color: #3a3a3c; }
+
+    .recommendations ol { padding-left: 1.5rem; }
+    .recommendations li { margin-bottom: 0.75rem; color: #3a3a3c; font-size: 0.9rem; }
+    .recommendations li strong { color: #1d1d1f; }
+  </style>
+</head>
+<body>
+
+  <nav>
+    <h2>Architecture Review</h2>
+    <a href="#summary">Executive Summary</a>
+    <a href="#diagrams">Diagrams</a>
+    <a href="#architecture">Architecture</a>
+    <a href="#security">Security</a>
+    <a href="#scalability">Scalability</a>
+    <a href="#reliability">Reliability</a>
+    <a href="#recommendations">Recommendations</a>
+  </nav>
+
+  <main>
+    <header>
+      <h1>AgentVerse Architecture Review</h1>
+      <p>A lightweight, extensible Rust AI Agent framework with pluggable orchestration strategies, tools, memory, and enterprise-grade security features.</p>
+      <p class="meta">Generated 2026-05-08 · Design Review</p>
+    </header>
+
+    <section id="summary">
+      <h2>Executive Summary</h2>
+      <div class="card">
+        <p>AgentVerse is a Rust-based AI Agent framework organized as a Cargo workspace with ~12 crates. It follows a layered architecture where avs-core provides foundational abstractions (Agent, Tool, ModelProvider, Config) that all other crates depend on. The design embraces hexagonal architecture principles through pluggable interfaces (IntegrationAdapter, Tool, LongTermMemory), making the core independent of external systems. Key strengths include clear crate boundaries, phase-aware strategy execution, and security-by-default (Guardrails integrated, not opt-in). Concerns include the heavy reliance on RwLock for concurrency (potential bottleneck under high read/write contention) and the ambitious MVP scope (~12 crates, 26 decisions) which increases coordination complexity.</p>
+      </div>
+    </section>
+
+    <section id="diagrams">
+      <h2>Architecture Diagrams</h2>
+
+      <div class="diagram-card">
+        <h3>System Context</h3>
+        <p class="diagram-desc">Shows AgentVerse as a black box: developers build agents, end users interact via Slack/REST, and the framework connects to LLM APIs and vector databases.</p>
+        <div class="mermaid">
+graph TB
+  Dev["Developer\n(builds agents)"] --> AVS["AgentVerse\nFramework / Server"]
+  EndUser["End User\n(Slack / REST)"] --> AVS
+  AVS --> OpenAI["OpenAI API"]
+  AVS --> Anthropic["Anthropic API"]
+  AVS --> Ollama["Ollama / vLLM\n(local models)"]
+  AVS --> LanceDB[("LanceDB\nvector DB)")]
+  AVS --> PGVector[("pgvector\n(PostgreSQL)")]
+        </div>
+      </div>
+
+      <div class="diagram-card">
+        <h3>Component Diagram</h3>
+        <p class="diagram-desc">Major internal crates and their dependency relationships within the workspace.</p>
+        <div class="mermaid">
+graph LR
+  subgraph avs-core["avs-core (Foundation)"]
+    Agent[Agent / Runtime]
+    Config[Config / Builder]
+    ToolTrait[Tool Trait]
+    ModelTrait[ModelProvider Trait]
+    Error[AgentError]
+    Prompt[PromptRegistry]
+  end
+
+  subgraph avs-memory["avs-memory + backends"]
+    MemShort[ShortTermMemory]
+    MemLong[LongTermMemory Trait]
+    Lance[LanceDB Backend]
+    PG[pgvector Backend]
+  end
+
+  subgraph avs-integration["avs-integration"]
+    Adapter[IntegrationAdapter Trait]
+    Slack[Slack Adapter]
+    Webhook[Webhook Adapter]
+  end
+
+  subgraph avs-server["avs-server"]
+    HTTP[Axum Server]
+    Auth[API Key Auth]
+  end
+
+  avs-react[avs-react] --> avs-core
+  avs-plan[avs-plan] --> avs-core
+  avs-router[avs-router] --> avs-core
+  avs-tools[avs-tools] --> avs-core
+  avs-mcp[avs-mcp] --> avs-core
+  avs-guardrails[avs-guardrails] --> avs-core
+  avs-memory[avs-memory] --> avs-core
+  avs-memory-lancedb[avs-memory-lancedb] --> avs-memory
+  avs-memory-pgvector[avs-memory-pgvector] --> avs-memory
+  avs-integration --> avs-core
+  avs-server --> avs-core
+  avs-server --> avs-integration
+
+  style avs-core fill:#e1f5fe
+  style avs-server fill:#fff3e0
+        </div>
+      </div>
+
+      <div class="diagram-card">
+        <h3>Application Diagram</h3>
+        <p class="diagram-desc">Shows the workspace structure: library crate for embedding, server binary for standalone deployment, and example agents.</p>
+        <div class="mermaid">
+graph TB
+  subgraph Workspace["AgentVerse Workspace"]
+    subgraph Core["avs-core"]
+      CoreLib[Library: Agent, Tool, Config, ModelProvider]
+    end
+
+    subgraph Strategies["Strategy Crates"]
+      React[avs-react: ReAct]
+      Plan[avs-plan: Plan + Hierarchical]
+      Router[avs-router: Strategy Router]
+    end
+
+    subgraph Data["Data Crates"]
+      Memory[avs-memory + LanceDB + pgvector]
+      Tools[avs-tools: Built-in tools]
+      MCP[avs-mcp: MCP client]
+    end
+
+    subgraph Enterprise["Enterprise Crates"]
+      Guard[avs-guardrails: Prompt/Output/Action guard]
+      Integration[avs-integration: Slack + Webhook]
+    end
+
+    subgraph Deploy["Deployment"]
+      ServerBin[avs-server: Standalone HTTP server]
+      Example1[hello-agent]
+      Example2[slack-hr-assistant]
+      Example3[rag-qa]
+      Example4[web-search-agent]
+      Example5[code-review-agent]
+    end
+
+    CoreLib --> Strategies
+    CoreLib --> Data
+    CoreLib --> Enterprise
+    ServerBin --> CoreLib
+    ServerBin --> Strategies
+    ServerBin --> Data
+    ServerBin --> Enterprise
+    Example1 --> CoreLib
+    Example2 --> CoreLib
+    Example3 --> CoreLib
+    Example4 --> CoreLib
+    Example5 --> CoreLib
+  end
+        </div>
+      </div>
+
+      <div class="diagram-card">
+        <h3>Sequence — ReAct Orchestration Loop</h3>
+        <p class="diagram-desc">The core cycle of ReAct strategy: prompt generation, LLM inference, tool execution, memory update, with Guardrails at each boundary.</p>
+        <div class="mermaid">
+sequenceDiagram
+  participant User
+  participant IA as IntegrationAdapter
+  participant Strat as Strategy (ReAct)
+  participant PG as PromptRegistry
+  participant LLM as ModelProvider
+  participant Guard as Guardrails
+  participant TR as ToolRegistry
+  participant Mem as Memory
+
+  User->>IA: input message
+  IA->>Strat: AgentInput
+
+  loop Strategy Loop
+    Strat->>PG: get_prompt("react", context)
+    PG-->>Strat: prompt string
+
+    Strat->>Guard: prompt_guard(prompt)
+    Guard-->>Strat: approved
+
+    Strat->>LLM: generate(prompt, tools)
+    LLM-->>Strat: LLMResponse
+
+    alt tool_call in response
+      Strat->>Guard: action_guard(tool_call)
+      Guard-->>Strat: approved
+      Strat->>TR: execute(tool, args)
+      TR-->>Strat: ToolResult
+      Strat->>Mem: store(tool_call + result)
+    else done in response
+      Strat->>Guard: output_guard(response)
+      Guard-->>Strat: approved
+      Strat->>Mem: store(final_response)
+      Strat-->>IA: AgentOutput
+      IA-->>User: response
+      break
+    end
+  end
+        </div>
+      </div>
+
+      <div class="diagram-card">
+        <h3>Integration Diagram</h3>
+        <p class="diagram-desc">External systems that AgentVerse connects to: LLM providers, vector databases, and messaging platforms.</p>
+        <div class="mermaid">
+graph TB
+  subgraph LLMProviders["LLM Providers"]
+    OpenAI[OpenAI API\n(chat/completions)]
+    Anthropic[Anthropic API\n(messages)]
+    Ollama[Ollama Server\n(/api/generate)]
+    vLLM[vLLM Server\n(OpenAI-compatible)]
+  end
+
+  subgraph VectorDBs["Vector Databases"]
+    LanceDB[(LanceDB\nembedded)]
+    PG[(PostgreSQL + pgvector)]
+  end
+
+  subgraph Messaging["Messaging Platforms"]
+    Slack[Slack\n(Bolt / WebSocket)]
+    Webhook[REST API\n(HTTP endpoint)]
+  end
+
+  subgraph AgentVerse["AgentVerse Server"]
+    MP[ModelProvider]
+    Mem[Memory System]
+    IA[IntegrationAdapter]
+  end
+
+  MP --> OpenAI
+  MP --> Anthropic
+  MP --> Ollama
+  MP --> vLLM
+  Mem --> LanceDB
+  Mem --> PG
+  IA --> Slack
+  IA --> Webhook
+        </div>
+      </div>
+
+    </section>
+
+    <section id="architecture">
+      <h2>Architecture</h2>
+      <div class="findings">
+
+        <div class="finding strength">
+          <span class="badge badge-strength">Strength</span>
+          <div class="finding-text">
+            <strong>Hexagonal Architecture — Pluggable Interfaces</strong>
+            <p>All critical capabilities (Tool, IntegrationAdapter, LongTermMemory) are defined as traits in avs-core, with implementations in separate crates. The core has zero knowledge of external systems, cleanly separating business logic from infrastructure.</p>
+          </div>
+        </div>
+
+        <div class="finding strength">
+          <span class="badge badge-strength">Strength</span>
+          <div class="finding-text">
+            <strong>Dependency Direction — Core as Foundation</strong>
+            <p>All crates depend on avs-core and never vice versa. This creates a clean dependency graph with no circular dependencies. Feature crates (react, plan, guardrails) can be used independently.</p>
+          </div>
+        </div>
+
+        <div class="finding strength">
+          <span class="badge badge-strength">Strength</span>
+          <div class="finding-text">
+            <strong>Phase-Aware Strategy Context</strong>
+            <p>The StepContext enum (Planning, Executing, Thinking, Acting) enforces that each strategy phase only has access to the data it needs. This is strong cohesion — each phase is a focused responsibility.</p>
+          </div>
+        </div>
+
+        <div class="finding strength">
+          <span class="badge badge-strength">Strength</span>
+          <div class="finding-text">
+            <strong>Config as First-Class Citizen</strong>
+            <p>Config is a pure serializable data structure, not a Builder byproduct. This enables YAML/JSON configuration, DSL compilation, and bidirectional conversion with Agent. Excellent for the stated future goal of non-programmer DSL support.</p>
+          </div>
+        </div>
+
+        <div class="finding strength">
+          <span class="badge badge-strength">Strength</span>
+          <div class="finding-text">
+            <strong>Guardrails Default-Integrated</strong>
+            <p>Guardrails are not opt-in via feature flag but integrated into the core loop by default. This follows the "security by default" principle — users must explicitly disable rather than accidentally omit security.</p>
+          </div>
+        </div>
+
+        <div class="finding concern">
+          <span class="badge badge-concern">Concern</span>
+          <div class="finding-text">
+            <strong>RwLock Concurrency Model — Write Contention Risk</strong>
+            <p>Single-instance + Arc&lt;RwLock&lt;AgentState&gt;&gt; means all concurrent requests share one write lock. Under high write volume (many users actively chatting), the write lock becomes a bottleneck. Consider per-user Mutex or channel-based message passing for write-heavy workloads.</p>
+          </div>
+        </div>
+
+        <div class="finding concern">
+          <span class="badge badge-concern">Concern</span>
+          <div class="finding-text">
+            <strong>MVP Scope — 12 Crates, All in v0.1</strong>
+            <p>The scope (Core, 3 Strategy crates, Memory + 2 backends, Tools, MCP, Guardrails, Integration, Server) is massive for a first release. While parallel development helps, the integration surface is large. A single breaking change in avs-core ripples to all dependent crates.</p>
+          </div>
+        </div>
+
+        <div class="finding concern">
+          <span class="badge badge-concern">Concern</span>
+          <div class="finding-text">
+            <strong>Static + Dynamic Tool Parameter Coexistence</strong>
+            <p>Built-in tools use Rust struct types while MCP tools use serde_json::Value. The framework must provide a conversion layer (Value → Args) that is both ergonomic and type-safe. This dual-mode adds cognitive overhead for implementers.</p>
+          </div>
+        </div>
+
+        <div class="finding risk">
+          <span class="badge badge-risk">Risk</span>
+          <div class="finding-text">
+            <strong>Human-in-the-Loop Message Queue — Blocking Uncertainty</strong>
+            <p>When ActionGuard suspends the strategy loop for human confirmation, the loop is paused until an external signal arrives. If the confirmation system fails or the queue backs up, agents can stall indefinitely. Need timeout + fallback behavior defined.</p>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <section id="security">
+      <h2>Security</h2>
+      <div class="findings">
+
+        <div class="finding strength">
+          <span class="badge badge-strength">Strength</span>
+          <div class="finding-text">
+            <strong>Multi-Layer Guardrails</strong>
+            <p>PromptGuard (input), ActionGuard (tool execution), and OutputGuard (LLM response) provide defense-in-depth against prompt injection, jailbreak attacks, and PII leakage.</p>
+          </div>
+        </div>
+
+        <div class="finding strength">
+          <span class="badge badge-strength">Strength</span>
+          <div class="finding-text">
+            <strong>API Key Authentication</strong>
+            <p>Bearer token auth at the HTTP layer is simple and effective for internal tools. Keys map to user_id for multi-tenant isolation.</p>
+          </div>
+        </div>
+
+        <div class="finding concern">
+          <span class="badge badge-concern">Concern</span>
+          <div class="finding-text">
+            <strong>Secrets Management — Not Explicitly Addressed</strong>
+            <p>The spec mentions API keys for models but doesn't define a secrets management pattern (env vars, vault integration, cloud secrets manager). API key injection via Config needs to support loading from environment or secrets store rather than plaintext config files.</p>
+          </div>
+        </div>
+
+        <div class="finding concern">
+          <span class="badge badge-concern">Concern</span>
+          <div class="finding-text">
+            <strong>Tool Execution Isolation — No Sandbox Mentioned</strong>
+            <p>Built-in tools execute directly in the process. File write, HTTP request, and command execution tools need sandboxing (capabilities, chroot, or WASM) to prevent privilege escalation. The spec mentions WASM sandbox in the future but not in MVP.</p>
+          </div>
+        </div>
+
+        <div class="finding risk">
+          <span class="badge badge-risk">Risk</span>
+          <div class="finding-text">
+            <strong>LLM API Keys in Config — Potential Plaintext Exposure</strong>
+            <p>If Config is loaded from YAML/JSON files, API keys may be stored in plaintext. Even with file permissions, config files are a common attack surface. Recommend: API keys must come from environment variables, never from config files. Config file should only reference env var names.</p>
+          </div>
+        </div>
+
+        <div class="finding concern">
+          <span class="badge badge-concern">Concern</span>
+          <div class="finding-text">
+            <strong>Rate Limiting — Per-User or Global?</strong>
+            <p>The spec mentions RateLimiter but doesn't specify whether it's per-user or global. For a multi-tenant server, per-user rate limiting is essential to prevent one user from exhausting the LLM budget for all users.</p>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <section id="scalability">
+      <h2>Scalability</h2>
+      <div class="findings">
+
+        <div class="finding concern">
+          <span class="badge badge-concern">Concern</span>
+          <div class="finding-text">
+            <strong>Single Instance — No Horizontal Scaling Path</strong>
+            <p>The single-instance + Arc&lt;RwLock&gt; model works for moderate concurrency but doesn't support horizontal scaling. For high-traffic enterprise deployments, a stateless multi-instance model with shared memory backend (Redis, pgvector) would be needed. Consider designing the State interface to support external backends.</p>
+          </div>
+        </div>
+
+        <div class="finding strength">
+          <span class="badge badge-strength">Strength</span>
+          <div class="finding-text">
+            <strong>reqwest Connection Pooling</strong>
+            <p>Using reqwest with connection pooling for LLM API calls reduces connection overhead and improves throughput under concurrent load.</p>
+          </div>
+        </div>
+
+        <div class="finding strength">
+          <span class="badge badge-strength">Strength</span>
+          <div class="finding-text">
+            <strong>Async + tokio Multi-Thread</strong>
+            <p>True parallelism via tokio's multi-thread runtime allows LLM calls and tool execution to run concurrently, maximizing throughput for IO-bound workloads.</p>
+          </div>
+        </div>
+
+        <div class="finding concern">
+          <span class="badge badge-concern">Concern</span>
+          <div class="finding-text">
+            <strong>Memory Growth — Unbounded Conversation Buffers</strong>
+            <p>ShortTermMemory uses Vec&lt;Message&gt; per user. Under long conversations, this grows unbounded. Auto-summary is mentioned but the truncation threshold, summary trigger, and memory budget aren't specified. Need explicit limits to prevent OOM.</p>
+          </div>
+        </div>
+
+        <div class="finding strength">
+          <span class="badge badge-strength">Strength</span>
+          <div class="finding-text">
+            <strong>Per-User State Sharding</strong>
+            <p>user_id-based partitioning in ShortTermMemory allows O(1) lookup per user and enables future sharding across multiple storage backends.</p>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <section id="reliability">
+      <h2>Reliability</h2>
+      <div class="findings">
+
+        <div class="finding strength">
+          <span class="badge badge-strength">Strength</span>
+          <div class="finding-text">
+            <strong>Circuit Breaker + Retry on LLM Calls</strong>
+            <p>Automatic retry with exponential backoff plus circuit breaker protects against LLM API instability. This is critical — LLM APIs are notoriously unreliable with timeouts, partial responses, and rate limits.</p>
+          </div>
+        </div>
+
+        <div class="finding concern">
+          <span class="badge badge-concern">Concern</span>
+          <div class="finding-text">
+            <strong>LLM Dependency — No Graceful Degradation Path</strong>
+            <p>If the LLM API is down, the entire Agent is non-functional. No fallback mode (e.g., rule-based responses, cached answers, or queuing) is defined. Consider: when the circuit breaker opens, should the Agent queue requests, return a degradation message, or fall back to a simpler strategy?</p>
+          </div>
+        </div>
+
+        <div class="finding concern">
+          <span class="badge badge-concern">Concern</span>
+          <div class="finding-text">
+            <strong>Human-in-the-Loop — No Timeout Strategy</strong>
+            <p>When ActionGuard suspends the loop for human approval, there's no mention of timeout behavior. If the human never responds, the Agent is stuck. Need a configurable timeout with fallback (e.g., deny action, retry, or escalate).</p>
+          </div>
+        </div>
+
+        <div class="finding concern">
+          <span class="badge badge-concern">Concern</span>
+          <div class="finding-text">
+            <strong>No Health Check Endpoint Defined</strong>
+            <p>The spec mentions health_check() as part of the Agent public interface but doesn't specify what it reports. For a server deployment, HTTP /health and /ready endpoints are needed for load balancer integration. Should report: LLM API status, DB connection status, active request count.</p>
+          </div>
+        </div>
+
+        <div class="finding strength">
+          <span class="badge badge-strength">Strength</span>
+          <div class="finding-text">
+            <strong>OpenTelemetry Tracing</strong>
+            <p>Full end-to-end trace lifecycle (input → strategy → LLM → tool → output) enables production debugging and performance profiling. Even when OTel is disabled, the NoopTracer provides zero-overhead baseline.</p>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <section id="recommendations" class="recommendations">
+      <h2>Recommendations</h2>
+      <div class="card">
+        <ol>
+          <li><strong>Separate LLM API key handling from Config file loading</strong> — API keys must come from environment variables, never from plaintext config files. Config should reference env var names (e.g., <code>model.api_key_env: "OPENAI_API_KEY"</code>) rather than containing raw keys. This prevents secret exposure in config files and version control.</li>
+          <li><strong>Define Human-in-the-Loop timeout and fallback</strong> — When ActionGuard waits for human confirmation, implement a configurable timeout (e.g., 5 minutes). On timeout: deny the action and log a warning, or escalate to a fallback strategy. This prevents agents from stalling indefinitely.</li>
+          <li><strong>Add explicit memory budget per user</strong> — Define a maximum conversation size (e.g., 100 messages or 50KB) and a summary trigger threshold (e.g., every 20 messages). Without bounded memory, long conversations will cause OOM in single-instance mode.</li>
+          <li><strong>Define HTTP /health and /ready endpoints</strong> — For server deployment, the HTTP layer needs liveness and readiness probes. /health reports service status; /ready checks downstream dependencies (LLM API, DB connections). These are essential for container orchestration (Kubernetes, Docker Compose).</li>
+          <li><strong>Consider per-user Mutex instead of RwLock for State</strong> — A single RwLock becomes a bottleneck under high write contention. An alternative is per-user Mutex (HashMap&lt;user_id, Mutex&lt;UserState&gt;&gt;) which allows truly concurrent writes across different users. This adds complexity but scales better.</li>
+          <li><strong>Phase the MVP delivery despite the "all in v0.1" goal</strong> — Even if all features ship in v0.1, build in dependency order: core first (with tests), then strategies, then data layer, then integrations, then server. This allows incremental verification and catches integration issues early. CI should run on each crate independently.</li>
+        </ol>
+      </div>
+    </section>
+
+  </main>
+</body>
+</html>
