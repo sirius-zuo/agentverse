@@ -1,0 +1,8 @@
+[package]
+name = "example-hello-agent"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+agentverse = { path = "../../avs-core" }
+tokio.workspace = true

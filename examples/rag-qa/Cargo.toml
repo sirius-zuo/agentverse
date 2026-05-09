@@ -1,0 +1,11 @@
+[package]
+name = "example-rag-qa"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+agentverse = { path = "../../avs-core" }
+agentverse-memory = { path = "../../avs-memory" }
+agentverse-memory-lancedb = { path = "../../avs-memory-lancedb" }
+agentverse-tools = { path = "../../avs-tools" }
+tokio.workspace = true

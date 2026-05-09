@@ -1,0 +1,10 @@
+[package]
+name = "example-slack-hr-assistant"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+agentverse = { path = "../../avs-core" }
+agentverse-tools = { path = "../../avs-tools" }
+agentverse-integration = { path = "../../avs-integration" }
+tokio.workspace = true

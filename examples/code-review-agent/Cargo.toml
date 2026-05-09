@@ -1,0 +1,10 @@
+[package]
+name = "example-code-review-agent"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+agentverse = { path = "../../avs-core" }
+agentverse-plan = { path = "../../avs-plan" }
+agentverse-tools = { path = "../../avs-tools" }
+tokio.workspace = true
