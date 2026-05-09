@@ -1,6 +1,9 @@
 [workspace]
 members = [
     "avs-core",
+    "avs-memory",
+    "avs-memory-lancedb",
+    "avs-memory-pgvector",
     "avs-react",
     "avs-plan",
     "avs-router",

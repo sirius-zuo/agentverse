@@ -23,7 +23,7 @@ pub use agent::Agent;
 pub use builder::AgentBuilder;
 pub use config::Config;
 pub use error::{AgentError, ModelError, ToolError, ConfigError};
-pub use memory::{Memory, Message, ShortTermMemory};
+pub use memory::{Memory, Message, MessageRole, ShortTermMemory};
 pub use model::ModelProvider;
 pub use prompt::PromptRegistry;
 pub use tool::{AsyncTool, SyncTool, ToolResult};

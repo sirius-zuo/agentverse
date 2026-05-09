@@ -1,0 +1,13 @@
+[package]
+name = "agentverse-memory"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+agentverse = { path = "../avs-core" }
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+chrono.workspace = true

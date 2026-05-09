@@ -1,0 +1,16 @@
+[package]
+name = "agentverse-memory-pgvector"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+agentverse = { path = "../avs-core" }
+agentverse-memory = { path = "../avs-memory" }
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono"] }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
