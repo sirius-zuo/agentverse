@@ -5,4 +5,4 @@ pub mod webhook;
 
 pub use adapter::{IntegrationAdapter, IntegrationError};
 pub use slack::SlackAdapter;
-pub use webhook::{WebhookAdapter, WebhookRequest, WebhookResponse};
+pub use webhook::{handle_webhook, WebhookAdapter, WebhookRequest, WebhookResponse, WebhookState};

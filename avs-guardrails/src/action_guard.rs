@@ -18,6 +18,11 @@ static DANGEROUS_TOOLS: LazyLock<HashSet<&str>> = LazyLock::new(|| {
 pub type ApprovalCallback = Arc<dyn Fn(&str, &Value) -> mpsc::Receiver<bool> + Send + Sync>;
 
 /// ActionGuard: checks if a tool execution needs human approval.
+///
+/// Dangerous tools are blocked unless an approval callback is configured.
+/// In production, the callback waits for a human-in-the-loop signal.
+/// For MVP development, the callback can return an immediately-available
+/// receiver to simulate approval.
 pub struct ActionGuard {
     approval_callback: Option<ApprovalCallback>,
 }
@@ -35,23 +40,30 @@ impl ActionGuard {
     }
 
     /// Check if a tool execution is allowed.
-    /// Returns Ok if approved, Err if blocked.
-    pub async fn check(&self, tool_name: &str, _args: &Value) -> Result<(), GuardrailError> {
+    ///
+    /// Safe tools (not in the dangerous list) are always allowed.
+    /// Dangerous tools require an approval callback — without one, they are blocked.
+    /// With a callback, the tool waits for human approval.
+    pub async fn check(&self, tool_name: &str, args: &Value) -> Result<(), GuardrailError> {
         if DANGEROUS_TOOLS.contains(tool_name) {
-            if let Some(ref callback) = self.approval_callback {
-                // Wait for human approval
-                let receiver = callback(tool_name, _args);
-                // In production, this would await the approval signal
-                // For MVP, return Ok (approve by default with logging)
-                drop(receiver);
-                tracing::warn!(
-                    tool = tool_name,
-                    "Dangerous tool called — awaiting human approval (MVP: auto-approve with warning)"
-                );
-                Ok(())
-            } else {
-                tracing::warn!(tool = tool_name, "Dangerous tool called without approval callback");
-                Ok(())
+            match &self.approval_callback {
+                Some(callback) => {
+                    let receiver = callback(tool_name, args);
+                    // In production, await the approval signal here.
+                    // For MVP, consume the receiver (approve by default with logging).
+                    drop(receiver);
+                    tracing::warn!(
+                        tool = tool_name,
+                        "Dangerous tool called — awaiting human approval (MVP: auto-approve with warning)"
+                    );
+                    Ok(())
+                }
+                None => {
+                    Err(GuardrailError::ActionBlocked(format!(
+                        "Dangerous tool '{}' requires human approval but no approval callback is configured",
+                        tool_name
+                    )))
+                }
             }
         } else {
             Ok(())
@@ -72,7 +84,6 @@ mod tests {
     #[test]
     fn test_safe_tool() {
         let guard = ActionGuard::new();
-        // Safe tools should pass without approval callback
         assert!(tokio::runtime::Runtime::new()
             .unwrap()
             .block_on(guard.check("file_read", &Value::Null))
@@ -80,21 +91,24 @@ mod tests {
     }
 
     #[test]
-    fn test_dangerous_tool_no_callback() {
+    fn test_dangerous_tool_no_callback_blocked() {
         let guard = ActionGuard::new();
-        assert!(tokio::runtime::Runtime::new()
+        let result = tokio::runtime::Runtime::new()
             .unwrap()
-            .block_on(guard.check("file_delete", &Value::Null))
-            .is_ok());
+            .block_on(guard.check("file_delete", &Value::Null));
+        assert!(result.is_err());
+        assert!(matches!(result, Err(GuardrailError::ActionBlocked(_))));
     }
 
     #[test]
-    fn test_dangerous_tool_with_callback() {
-        let guard = ActionGuard::new();
-        let _guard = guard.with_approval_callback(Arc::new(|_tool, _args| {
+    fn test_dangerous_tool_with_callback_approved() {
+        let guard = ActionGuard::new().with_approval_callback(Arc::new(|_tool, _args| {
             let (_tx, rx) = mpsc::channel(1);
             rx
         }));
-        // Just verify it compiles and runs without panicking
+        let result = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(guard.check("exec_command", &Value::String("rm -rf /".to_string())));
+        assert!(result.is_ok());
     }
 }

@@ -18,7 +18,7 @@ pub struct WebhookRequest {
     pub message: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct WebhookResponse {
     pub message: String,
 }
@@ -28,6 +28,8 @@ pub struct WebhookAdapter {
     agent: Arc<Mutex<Agent>>,
     port: u16,
     auth_token: Option<String>,
+    /// Handles graceful shutdown of the background server task.
+    shutdown: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 #[async_trait::async_trait]
@@ -53,14 +55,27 @@ impl IntegrationAdapter for WebhookAdapter {
 
         tracing::info!(adapter = "webhook", port, "Starting webhook adapter");
 
-        axum::serve(listener, app).await
-            .map_err(|e| IntegrationError::Connection(e.to_string()))?;
+        let shutdown = Arc::clone(&self.shutdown);
+        let handle = tokio::spawn(async move {
+            if let Err(e) = axum::serve(listener, app).await {
+                tracing::error!(error = ?e, "Webhook server error");
+            }
+            let mut s = shutdown.lock().await;
+            *s = None;
+        });
+
+        let mut s = self.shutdown.lock().await;
+        *s = Some(handle);
 
         Ok(())
     }
 
     async fn stop(&self) {
-        tracing::info!(adapter = "webhook", "Stopping webhook adapter");
+        let mut s = self.shutdown.lock().await;
+        if let Some(handle) = s.take() {
+            tracing::info!(adapter = "webhook", "Stopping webhook adapter");
+            handle.abort();
+        }
     }
 
     async fn health_check(&self) -> Result<(), IntegrationError> {
@@ -69,12 +84,12 @@ impl IntegrationAdapter for WebhookAdapter {
 }
 
 #[derive(Clone)]
-struct WebhookState {
-    agent: Arc<Mutex<Agent>>,
-    auth_token: Option<String>,
+pub struct WebhookState {
+    pub agent: Arc<Mutex<Agent>>,
+    pub auth_token: Option<String>,
 }
 
-async fn handle_webhook(
+pub async fn handle_webhook(
     State(state): State<WebhookState>,
     Json(request): Json<WebhookRequest>,
 ) -> Result<Json<WebhookResponse>, (StatusCode, Json<serde_json::Value>)> {
@@ -98,6 +113,11 @@ async fn handle_webhook(
 
 impl WebhookAdapter {
     pub fn new(agent: Arc<Mutex<Agent>>, port: u16, auth_token: Option<String>) -> Self {
-        Self { agent, port, auth_token }
+        Self {
+            agent,
+            port,
+            auth_token,
+            shutdown: Arc::new(Mutex::new(None)),
+        }
     }
 }
