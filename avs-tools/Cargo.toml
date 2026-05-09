@@ -1,0 +1,12 @@
+[package]
+name = "agentverse-tools"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+agentverse = { path = "../avs-core" }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+glob = "0.3"
+chrono.workspace = true
