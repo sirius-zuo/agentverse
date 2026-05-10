@@ -1,0 +1,15 @@
+[[example]]
+input = "What time is it?"
+strategy = "react"
+
+[[example]]
+input = "Plan a trip to Paris including flights and hotels"
+strategy = "hierarchical"
+
+[[example]]
+input = "Search for the best pizza places in NYC"
+strategy = "plan_and_execute"
+
+[[example]]
+input = "What is the capital of France?"
+strategy = "react"

@@ -1,0 +1,16 @@
+Choose the best orchestration strategy for this request.
+
+Available strategies:
+- react: simple Q&A, tool use, step-by-step reasoning
+- plan_and_execute: tasks with clear upfront steps
+- hierarchical: complex tasks needing decomposition
+
+{% if examples %}
+Examples:
+{% for example in examples %}
+Input: {{ example.input }}
+Strategy: {{ example.strategy }}
+{% endfor %}
+{% endif %}
+
+Respond with ONLY the strategy name.
