@@ -9,61 +9,37 @@ AgentVerse provides a modular architecture for building AI agents with support f
 ### Prerequisites
 
 - **Rust 1.75+** — `rustup install stable`
-- **LLM backend** — one of:
-  - **OpenAI API** — get an API key from [platform.openai.com](https://platform.openai.com)
-  - **Local LLM** — [llama.cpp](https://github.com/ggerganov/llama.cpp), [Ollama](https://ollama.ai), or any OpenAI-compatible server
+- **LLM API** — any OpenAI-compatible endpoint:
+  - **OpenAI API** — get a key from [platform.openai.com](https://platform.openai.com)
+  - **Local LLM** — [llama.cpp](https://github.com/ggerganov/llama.cpp), [Ollama](https://ollama.ai), or similar
 
-### Option 1: Run a Demo Agent (CLI)
+### Run an Example Agent
 
-> **Note:** The example agents currently use the OpenAI API directly. For local LLM support with custom URLs, use the HTTP server (Option 2) or the `AgentBuilder` API.
+The fastest way to try AgentVerse is to run one of the bundled examples. They use the OpenAI API out of the box.
 
 ```bash
-# Using OpenAI
 OPENAI_API_KEY=sk-xxx cargo run -p example-hello-agent
 ```
 
-### Option 2: Run the HTTP Server (Recommended for Local LLM)
+> **Using a local LLM with CLI agents?** The example agents are hardcoded for OpenAI. To use a local LLM, either edit the example code (two lines) or use the [HTTP Server](#run-the-http-server-optional) below, which supports any OpenAI-compatible endpoint without code changes.
 
-The HTTP server supports any OpenAI-compatible endpoint via environment variables.
+### Run the HTTP Server (Optional)
 
-**Step 1: Start your LLM backend** (on a separate port)
-
-```bash
-# llama.cpp — runs on port 9090
-./server -m models/llama.gguf --host 127.0.0.1 --port 9090
-
-# Ollama — runs on port 11434 by default
-ollama serve
-```
-
-> **Ports:** The LLM backend and agentverse server must use different ports. The agentverse server defaults to `8080`.
-
-**Step 2: Build and run the agentverse server**
+The HTTP server exposes an agent as an API — useful for web frontends, mobile apps, or shared infrastructure.
 
 ```bash
 cargo build -p agentverse-server
 
-# With llama.cpp (backend on 9090, server on 8080)
+# Using OpenAI API
+MODEL_BASE_URL=https://api.openai.com MODEL_API_KEY=sk-xxx \
+  cargo run -p agentverse-server
+
+# Using a local LLM (llama.cpp on port 9090, server on 8080)
 MODEL_BASE_URL=http://127.0.0.1:9090 MODEL_API_KEY="" \
-  cargo run -p agentverse-server
-
-# With Ollama (backend on 11434, server on 8080)
-MODEL_BASE_URL=http://127.0.0.1:11434/v1 MODEL_API_KEY="ollama" \
-  cargo run -p agentverse-server
-
-# With OpenAI (server on 8080)
-MODEL_BASE_URL=https://api.openai.com \
-  MODEL_API_KEY=sk-xxx \
   cargo run -p agentverse-server
 ```
 
-> **Other OpenAI-compatible services?** Just set `MODEL_BASE_URL` to your service's base URL:
-> - **vLLM**: `http://localhost:8000/v1`
-> - **LM Studio**: `http://localhost:1234/v1`
-> - **Groq**: `https://api.groq.com/openai/v1`
-> - **Together AI**: `https://api.together.xyz/v1`
-
-### Test the Server
+Test it:
 
 ```bash
 # Health check
@@ -75,13 +51,20 @@ curl -X POST http://localhost:8080/invoke \
   -d '{"user_id": "user1", "message": "Hello, agent!"}'
 ```
 
+> **Other OpenAI-compatible services?** Set `MODEL_BASE_URL` to your endpoint:
+> - **Ollama**: `http://127.0.0.1:11434/v1`
+> - **vLLM**: `http://localhost:8000/v1`
+> - **LM Studio**: `http://localhost:1234/v1`
+> - **Groq**: `https://api.groq.com/openai/v1`
+> - **Together AI**: `https://api.together.xyz/v1`
+
 ## Environment Variables
 
 | Variable | Default | Description |
 |---|---|---|
-| `MODEL_BASE_URL` | `http://localhost:9090` | OpenAI-compatible LLM backend endpoint |
-| `MODEL_API_KEY` | *(empty)* | API key (required for OpenAI, optional for local) |
-| `MODEL_NAME` | *(inferred from URL)* | Model identifier (e.g. `gpt-4`, `phi3-mini`) |
+| `MODEL_BASE_URL` | *(none)* | OpenAI-compatible LLM endpoint (e.g. `https://api.openai.com`, `http://127.0.0.1:9090`) |
+| `MODEL_API_KEY` | *(empty)* | API key (required for OpenAI, optional for local LLM) |
+| `MODEL_NAME` | *(inferred)* | Model identifier (e.g. `gpt-4`, `phi3-mini`) |
 | `API_KEY` | *(empty)* | Server auth token (Bearer token for `/invoke` on port 8080) |
 | `CONFIG_PATH` | *(none)* | Path to YAML config file |
 | `RUST_LOG` | `info` | Logging level |
@@ -167,7 +150,7 @@ Response:
 | `code-review-agent` | Hierarchical | Code analysis with FileSearch + Calculator |
 
 ```bash
-# Run an example
+# Run an example (uses OpenAI API by default)
 OPENAI_API_KEY=sk-xxx cargo run -p example-hello-agent
 ```
 
