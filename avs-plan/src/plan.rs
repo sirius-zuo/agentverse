@@ -3,8 +3,9 @@
 //! Generates a plan from the request, then executes each step sequentially,
 //! and finally synthesizes a result from all step outputs.
 
-use super::planner::generate_plan;
-use agentverse::{AgentError, ModelProvider, SyncTool};
+use super::planner::{generate_plan, Plan};
+use agentverse::{AgentError, ModelProvider, PromptRegistry, SyncTool};
+use agentverse_guardrails::check_output;
 use std::sync::{Arc, Mutex};
 
 /// Plan-and-Execute strategy: plan first, then execute.
@@ -18,6 +19,7 @@ where
     M: agentverse::Memory,
 {
     model: Arc<P>,
+    registry: Arc<PromptRegistry>,
     tools: Vec<Box<dyn SyncTool>>,
     memory: Arc<Mutex<M>>,
     max_iterations: usize,
@@ -31,12 +33,14 @@ where
     /// Create a new Plan-and-Execute strategy.
     pub fn new(
         model: Arc<P>,
+        registry: Arc<PromptRegistry>,
         tools: Vec<Box<dyn SyncTool>>,
         memory: Arc<Mutex<M>>,
         max_iterations: usize,
     ) -> Self {
         Self {
             model,
+            registry,
             tools,
             memory,
             max_iterations,
@@ -44,28 +48,42 @@ where
     }
 
     /// Execute the plan-and-execute cycle.
-    ///
-    /// # Arguments
-    /// * `input` - The user's request
-    ///
-    /// # Returns
-    /// A string containing the final synthesized answer
     pub async fn run(&mut self, input: String) -> Result<String, AgentError> {
-        // Phase 1: Generate plan
+        self.memory.lock().unwrap().append(agentverse::Message {
+            role: agentverse::memory::MessageRole::User,
+            content: input.clone(),
+        });
+
         let tool_names: Vec<String> = self.tools.iter().map(|t| t.name().to_string()).collect();
 
-        let plan = generate_plan(&*self.model, &input, &tool_names).await?;
+        let conversation = self
+            .memory
+            .lock()
+            .unwrap()
+            .last_n(20)
+            .iter()
+            .map(|m| {
+                let role_str = match m.role {
+                    agentverse::memory::MessageRole::System => "System",
+                    agentverse::memory::MessageRole::User => "User",
+                    agentverse::memory::MessageRole::Assistant => "Assistant",
+                    agentverse::memory::MessageRole::Tool => "Tool",
+                };
+                format!("{}: {}", role_str, m.content)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let plan = generate_plan(&*self.model, &self.registry, &input, &tool_names, &conversation).await?;
 
         self.memory.lock().unwrap().append(agentverse::Message {
             role: agentverse::memory::MessageRole::System,
             content: format!("Plan generated: {}", plan.description),
         });
 
-        // Phase 2: Execute each step sequentially
         let mut step_results: Vec<(usize, String)> = Vec::new();
 
         for step in &plan.steps {
-            // Check if we've exceeded max iterations
             if step.id > self.max_iterations {
                 self.memory.lock().unwrap().append(agentverse::Message {
                     role: agentverse::memory::MessageRole::System,
@@ -78,14 +96,12 @@ where
             }
 
             let result = if let Some(ref tool_name) = step.tool {
-                // Execute a tool
                 let args = step.args.clone().unwrap_or_default();
                 match self.execute_tool(tool_name, args) {
                     Ok(result) => result,
                     Err(e) => format!("Tool error: {}", e),
                 }
             } else {
-                // Reasoning-only step: just acknowledge
                 format!("Reasoning: {}", step.description)
             };
 
@@ -138,6 +154,12 @@ where
             .generate(&final_prompt, None)
             .await
             .map_err(AgentError::Model)?;
+
+        check_output(&answer).map_err(|e| AgentError::Guardrail(match e {
+            agentverse_guardrails::GuardrailError::OutputFiltered(msg) => agentverse::GuardrailError::OutputFiltered(msg),
+            agentverse_guardrails::GuardrailError::PromptInjection(msg) => agentverse::GuardrailError::PromptInjection(msg),
+            _ => agentverse::GuardrailError::OutputFiltered(e.to_string()),
+        }))?;
 
         Ok(answer)
     }

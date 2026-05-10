@@ -1,10 +1,7 @@
-//! Shared planning utilities for Plan-and-Execute and Hierarchical strategies.
-//!
-//! Provides `PlanStep`, `Plan`, and utility functions for generating plans
-//! and decomposing requests into sub-goals.
-
-use agentverse::ModelProvider;
+use agentverse::{AgentError, ModelProvider, PromptRegistry};
+use agentverse_guardrails::check_prompt;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// A single step in a plan.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -40,42 +37,41 @@ impl Plan {
     }
 }
 
-/// Generate a plan from the LLM given a user request and available tool names.
-///
-/// The LLM is prompted to return a JSON `Plan` object.
+/// Generate a plan from the LLM using the templated prompt.
 pub async fn generate_plan(
     model: &dyn ModelProvider,
+    registry: &PromptRegistry,
     request: &str,
     tools: &[String],
-) -> Result<Plan, agentverse::ModelError> {
+    conversation: &str,
+) -> Result<Plan, AgentError> {
     let tools_desc = if tools.is_empty() {
         "none (reasoning only)".to_string()
     } else {
         tools.join(", ")
     };
 
+    let mut context = HashMap::new();
+    context.insert("tools".to_string(), serde_json::Value::String(tools_desc));
+    context.insert("conversation".to_string(), serde_json::Value::String(conversation.to_string()));
+
+    let strategy_prompt = registry
+        .render("strategies.plan_and_execute", context)
+        .map_err(|e| AgentError::Config(agentverse::ConfigError::Invalid(e.to_string())))?;
+
+    check_prompt(&strategy_prompt).map_err(|e| AgentError::Guardrail(match e {
+        agentverse_guardrails::GuardrailError::PromptInjection(msg) => agentverse::GuardrailError::PromptInjection(msg),
+        agentverse_guardrails::GuardrailError::OutputFiltered(msg) => agentverse::GuardrailError::OutputFiltered(msg),
+        _ => agentverse::GuardrailError::PromptInjection(e.to_string()),
+    }))?;
+
     let prompt = format!(
-        "You are a planning assistant. Given the following request and available tools, \
-         generate a step-by-step plan.\n\n\
-         Request: {}\n\
-         Available tools: {}\n\n\
-         Respond with ONLY a JSON object with this structure:\n\
-         {{\"description\": \"plan description\", \"steps\": [\n\
-         {{\"id\": 1, \"description\": \"step 1\", \"tool\": \"tool_name\", \"args\": {{}}, \"depends_on\": []}},\n\
-         {{\"id\": 2, \"description\": \"step 2\", \"tool\": null, \"args\": null, \"depends_on\": [1]}}\n\
-         ]}}\n\n\
-         Rules:\n\
-         - Each step should be a single atomic action.\n\
-         - Set \"tool\" to null and \"args\" to null for reasoning-only steps.\n\
-         - Set \"depends_on\" to the IDs of steps that must complete first.\n\
-         - Use the minimum number of steps necessary.\n\
-         - Respond with ONLY the JSON object, no markdown, no explanation.",
-        request, tools_desc
+        "{}\n\nRequest: {}\n\nRespond with ONLY a JSON object:\n{{\"description\": \"...\", \"steps\": [{{\"id\": 1, \"description\": \"...\", \"tool\": \"...\", \"args\": {{}}, \"depends_on\": []}}]}}",
+        strategy_prompt, request
     );
 
     let response = model.generate(&prompt, None).await?;
 
-    // Strip markdown code fences if present
     let json_str = response
         .trim()
         .trim_start_matches('`')
@@ -84,34 +80,41 @@ pub async fn generate_plan(
         .trim();
 
     let plan: Plan = serde_json::from_str(json_str).map_err(|e| {
-        agentverse::ModelError::InvalidResponse(format!(
+        AgentError::Model(agentverse::ModelError::InvalidResponse(format!(
             "Failed to parse plan JSON: {}. Response was: {}",
             e, response
-        ))
+        )))
     })?;
 
     Ok(plan)
 }
 
-/// Decompose a complex request into sub-goals using the LLM.
-///
-/// Returns a JSON array of strings, each representing one sub-goal.
+/// Decompose a complex request into sub-goals.
 pub async fn decompose_request(
     model: &dyn ModelProvider,
+    registry: &PromptRegistry,
     request: &str,
-) -> Result<Vec<String>, agentverse::ModelError> {
-    let prompt = format!(
-        "Given the following complex request, decompose it into sub-goals.\n\n\
-         Request: {}\n\n\
-         Respond with ONLY a JSON array of strings, one per sub-goal.\n\n\
-         Do not include any text outside the JSON array.\n\n\
-         Example response: [\"Sub-goal 1\", \"Sub-goal 2\", \"Sub-goal 3\"]",
-        request
+) -> Result<Vec<String>, AgentError> {
+    let mut context = HashMap::new();
+    context.insert(
+        "conversation".to_string(),
+        serde_json::Value::String(format!("User: {}", request)),
     );
+
+    let strategy_prompt = registry
+        .render("strategies.hierarchical.decompose", context)
+        .map_err(|e| AgentError::Config(agentverse::ConfigError::Invalid(e.to_string())))?;
+
+    check_prompt(&strategy_prompt).map_err(|e| AgentError::Guardrail(match e {
+        agentverse_guardrails::GuardrailError::PromptInjection(msg) => agentverse::GuardrailError::PromptInjection(msg),
+        agentverse_guardrails::GuardrailError::OutputFiltered(msg) => agentverse::GuardrailError::OutputFiltered(msg),
+        _ => agentverse::GuardrailError::PromptInjection(e.to_string()),
+    }))?;
+
+    let prompt = format!("{}\n\nRequest: {}\n\nRespond with ONLY a JSON array of strings.", strategy_prompt, request);
 
     let response = model.generate(&prompt, None).await?;
 
-    // Strip markdown code fences if present
     let json_str = response
         .trim()
         .trim_start_matches('`')
@@ -120,10 +123,10 @@ pub async fn decompose_request(
         .trim();
 
     let sub_goals: Vec<String> = serde_json::from_str(json_str).map_err(|e| {
-        agentverse::ModelError::InvalidResponse(format!(
+        AgentError::Model(agentverse::ModelError::InvalidResponse(format!(
             "Failed to parse decomposition: {}. Response was: {}",
             e, response
-        ))
+        )))
     })?;
 
     Ok(sub_goals)

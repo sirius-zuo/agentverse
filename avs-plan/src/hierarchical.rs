@@ -3,21 +3,19 @@
 //! Decomposes complex requests into sub-goals, then generates and executes
 //! a plan for each sub-goal, and finally synthesizes results from all sub-goals.
 
-use super::planner::{decompose_request, generate_plan};
-use agentverse::{AgentError, ModelProvider, SyncTool};
+use super::planner::{decompose_request, generate_plan, Plan};
+use agentverse::{AgentError, ModelProvider, PromptRegistry, SyncTool};
+use agentverse_guardrails::check_output;
 use std::sync::{Arc, Mutex};
 
 /// Hierarchical Planning strategy.
-///
-/// 1. Decompose the request into sub-goals
-/// 2. For each sub-goal, generate and execute a plan
-/// 3. Synthesize a final answer from all sub-goal results
 pub struct HierarchicalStrategy<P, M>
 where
     P: ModelProvider,
     M: agentverse::Memory,
 {
     model: Arc<P>,
+    registry: Arc<PromptRegistry>,
     tools: Vec<Box<dyn SyncTool>>,
     memory: Arc<Mutex<M>>,
     max_iterations: usize,
@@ -30,15 +28,9 @@ where
     M: agentverse::Memory,
 {
     /// Create a new Hierarchical Planning strategy.
-    ///
-    /// # Arguments
-    /// * `model` - The LLM model provider
-    /// * `tools` - Available tools for execution
-    /// * `memory` - Memory for conversation history
-    /// * `max_iterations` - Maximum number of steps to execute
-    /// * `max_decompose_depth` - Maximum number of sub-goals to decompose into
     pub fn new(
         model: Arc<P>,
+        registry: Arc<PromptRegistry>,
         tools: Vec<Box<dyn SyncTool>>,
         memory: Arc<Mutex<M>>,
         max_iterations: usize,
@@ -46,6 +38,7 @@ where
     ) -> Self {
         Self {
             model,
+            registry,
             tools,
             memory,
             max_iterations,
@@ -54,22 +47,19 @@ where
     }
 
     /// Execute the hierarchical planning cycle.
-    ///
-    /// # Arguments
-    /// * `input` - The user's request
-    ///
-    /// # Returns
-    /// A string containing the final synthesized answer
     pub async fn run(&mut self, input: String) -> Result<String, AgentError> {
-        // Phase 1: Decompose into sub-goals
-        let sub_goals = decompose_request(&*self.model, &input).await?;
+        self.memory.lock().unwrap().append(agentverse::Message {
+            role: agentverse::memory::MessageRole::User,
+            content: input.clone(),
+        });
+
+        let sub_goals = decompose_request(&*self.model, &self.registry, &input).await?;
 
         self.memory.lock().unwrap().append(agentverse::Message {
             role: agentverse::memory::MessageRole::System,
             content: format!("Decomposed into {} sub-goals", sub_goals.len()),
         });
 
-        // Phase 2: For each sub-goal, generate and execute a plan
         let mut sub_goal_results: Vec<(usize, String)> = Vec::new();
 
         for (i, sub_goal) in sub_goals.iter().enumerate() {
@@ -85,12 +75,28 @@ where
                 break;
             }
 
-            // Generate a plan for this sub-goal
             let tool_names: Vec<String> = self.tools.iter().map(|t| t.name().to_string()).collect();
 
-            let sub_plan = generate_plan(&*self.model, sub_goal, &tool_names).await?;
+            let conversation = self
+                .memory
+                .lock()
+                .unwrap()
+                .last_n(20)
+                .iter()
+                .map(|m| {
+                    let role_str = match m.role {
+                        agentverse::memory::MessageRole::System => "System",
+                        agentverse::memory::MessageRole::User => "User",
+                        agentverse::memory::MessageRole::Assistant => "Assistant",
+                        agentverse::memory::MessageRole::Tool => "Tool",
+                    };
+                    format!("{}: {}", role_str, m.content)
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
 
-            // Execute sub-plan steps
+            let sub_plan = generate_plan(&*self.model, &self.registry, sub_goal, &tool_names, &conversation).await?;
+
             let mut step_results: Vec<String> = Vec::new();
             for step in &sub_plan.steps {
                 if step.id > self.max_iterations {
@@ -134,7 +140,6 @@ where
             });
         }
 
-        // Phase 3: Synthesize final answer from all sub-goal results
         let conversation_history = self
             .memory
             .lock()
@@ -172,6 +177,12 @@ where
             .generate(&final_prompt, None)
             .await
             .map_err(AgentError::Model)?;
+
+        check_output(&answer).map_err(|e| AgentError::Guardrail(match e {
+            agentverse_guardrails::GuardrailError::OutputFiltered(msg) => agentverse::GuardrailError::OutputFiltered(msg),
+            agentverse_guardrails::GuardrailError::PromptInjection(msg) => agentverse::GuardrailError::PromptInjection(msg),
+            _ => agentverse::GuardrailError::OutputFiltered(e.to_string()),
+        }))?;
 
         Ok(answer)
     }
