@@ -71,7 +71,7 @@ async fn test_route_invalid_response() {
     let result = router.route("What is 2+2?").await;
     assert!(result.is_err());
     match result.unwrap_err() {
-        ModelError::InvalidResponse(msg) => {
+        agentverse::AgentError::Model(agentverse::ModelError::InvalidResponse(msg)) => {
             assert!(msg.contains("Unknown strategy"));
         }
         other => panic!("Expected InvalidResponse, got {:?}", other),

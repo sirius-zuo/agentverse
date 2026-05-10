@@ -2,8 +2,10 @@
 //!
 //! At runtime, the router asks the LLM which strategy to use for a given request.
 
-use agentverse::{ModelError, ModelProvider};
+use agentverse::{AgentError, ModelProvider, PromptRegistry};
+use agentverse_guardrails::check_prompt;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Strategy names that the router can choose from.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -32,6 +34,7 @@ where
 {
     model: P,
     strategies: Vec<StrategyName>,
+    registry: Option<std::sync::Arc<PromptRegistry>>,
 }
 
 impl<P> StrategyRouter<P>
@@ -40,13 +43,30 @@ where
 {
     /// Create a new StrategyRouter with the given model and available strategies.
     pub fn new(model: P, strategies: Vec<StrategyName>) -> Self {
-        Self { model, strategies }
+        Self {
+            model,
+            strategies,
+            registry: None,
+        }
+    }
+
+    /// Create a router with prompt registry for templated prompts.
+    pub fn with_registry(
+        model: P,
+        strategies: Vec<StrategyName>,
+        registry: std::sync::Arc<PromptRegistry>,
+    ) -> Self {
+        Self {
+            model,
+            strategies,
+            registry: Some(registry),
+        }
     }
 
     /// Decide which strategy to use based on the user's request.
     ///
     /// Asks the LLM to choose the best strategy from the available options.
-    pub async fn route(&self, request: &str) -> Result<StrategyName, ModelError> {
+    pub async fn route(&self, request: &str) -> Result<StrategyName, AgentError> {
         let strategy_list = self
             .strategies
             .iter()
@@ -54,14 +74,48 @@ where
             .collect::<Vec<_>>()
             .join("\n");
 
-        let prompt = format!(
-            "Choose the best orchestration strategy for the following request.\n\n\
-             Request: {}\n\n\
-             Available strategies:\n{}\n\n\
-             Respond with ONLY the strategy name (e.g., 'react', 'plan_and_execute', 'hierarchical').\n\
-             Do not include any explanation.",
-            request, strategy_list
-        );
+        let prompt = if let Some(ref registry) = self.registry {
+            let mut context = HashMap::new();
+            context.insert(
+                "conversation".to_string(),
+                serde_json::Value::String(format!("User: {}", request)),
+            );
+            context.insert(
+                "tools".to_string(),
+                serde_json::Value::String(strategy_list),
+            );
+
+            let strategy_prompt = registry
+                .render("router", context)
+                .map_err(|e| AgentError::Config(agentverse::ConfigError::Invalid(e.to_string())))?;
+
+            check_prompt(&strategy_prompt).map_err(|e| {
+                AgentError::Guardrail(match e {
+                    agentverse_guardrails::GuardrailError::PromptInjection(msg) => {
+                        agentverse::GuardrailError::PromptInjection(msg)
+                    }
+                    agentverse_guardrails::GuardrailError::OutputFiltered(msg) => {
+                        agentverse::GuardrailError::OutputFiltered(msg)
+                    }
+                    _ => agentverse::GuardrailError::PromptInjection(e.to_string()),
+                })
+            })?;
+
+            format!(
+                "{}\n\nRequest: {}\n\nRespond with ONLY the strategy name.",
+                strategy_prompt, request
+            )
+        } else {
+            // Fallback to hardcoded prompt if no registry
+            format!(
+                "Choose the best orchestration strategy for the following request.\n\n\
+                 Request: {}\n\n\
+                 Available strategies:\n{}\n\n\
+                 Respond with ONLY the strategy name (e.g., 'react', 'plan_and_execute', 'hierarchical').\n\
+                 Do not include any explanation.",
+                request, strategy_list
+            )
+        };
 
         let response = self.model.generate(&prompt, None).await?;
         let selected = response.trim().to_lowercase();
@@ -70,9 +124,8 @@ where
             "react" => Ok(StrategyName::ReAct),
             "plan_and_execute" | "plan-and-execute" => Ok(StrategyName::PlanAndExecute),
             "hierarchical" => Ok(StrategyName::Hierarchical),
-            _ => Err(ModelError::InvalidResponse(format!(
-                "Unknown strategy: {}",
-                response
+            _ => Err(AgentError::Model(agentverse::ModelError::InvalidResponse(
+                format!("Unknown strategy: {}", response),
             ))),
         }
     }
