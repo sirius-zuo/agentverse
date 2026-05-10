@@ -55,6 +55,8 @@ async fn main() {
         model_name: server_config.agent.model_name.clone(),
         max_messages: 100,
         tools: vec![],
+            prompts_dir: None,
+            system_prompt: None,
     };
 
     let agent = Agent::from_config(agent_config).unwrap_or_else(|e| {

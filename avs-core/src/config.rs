@@ -9,6 +9,12 @@ pub struct Config {
     pub max_messages: usize,
     #[serde(default)]
     pub tools: Vec<String>,
+    /// Optional prompts directory for .j2/.toml file loading.
+    #[serde(default)]
+    pub prompts_dir: Option<String>,
+    /// Optional system prompt override.
+    #[serde(default)]
+    pub system_prompt: Option<String>,
 }
 
 impl Config {

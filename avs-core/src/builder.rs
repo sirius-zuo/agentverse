@@ -37,6 +37,8 @@ impl AgentBuilder {
             model_name: String::new(),
             max_messages: self.max_messages,
             tools: Vec::new(),
+            prompts_dir: None,
+            system_prompt: None,
         };
 
         crate::agent::Agent::from_config(config)

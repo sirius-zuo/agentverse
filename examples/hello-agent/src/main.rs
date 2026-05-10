@@ -8,6 +8,8 @@ async fn main() {
         model_name: "gpt-4".to_string(),
         max_messages: 50,
         tools: vec![],
+        prompts_dir: None,
+        system_prompt: None,
     };
 
     let agent = Agent::from_config(config).unwrap();
