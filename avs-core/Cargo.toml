@@ -17,6 +17,7 @@ uuid.workspace = true
 chrono.workspace = true
 tokio.workspace = true
 serde_yaml = "0.9"
+toml.workspace = true
 
 # Optional tracing
 opentelemetry = { version = "0.22", optional = true }
