@@ -41,12 +41,12 @@ impl Default for ServerConfig {
         }
         Self {
             host: "127.0.0.1".to_string(),
-            port: 9090,
+            port: 8080,
             agent: AgentConfig {
                 model_api_key,
                 model_name: std::env::var("MODEL_NAME").unwrap_or_else(|_| {
                     std::env::var("MODEL_BASE_URL")
-                        .unwrap_or_else(|_| "http://localhost:8080".to_string())
+                        .unwrap_or_else(|_| "http://localhost:9090".to_string())
                         .replace("http://", "")
                         .replace("https://", "")
                         .trim_end_matches('/')

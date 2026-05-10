@@ -29,29 +29,29 @@ The HTTP server supports any OpenAI-compatible endpoint via environment variable
 **Step 1: Start your LLM backend** (on a separate port)
 
 ```bash
-# llama.cpp — runs on port 8080
-./server -m models/llama.gguf --host 127.0.0.1 --port 8080
+# llama.cpp — runs on port 9090
+./server -m models/llama.gguf --host 127.0.0.1 --port 9090
 
 # Ollama — runs on port 11434 by default
 ollama serve
 ```
 
-> **Ports:** The LLM backend and agentverse server must use different ports. The agentverse server defaults to `9090`.
+> **Ports:** The LLM backend and agentverse server must use different ports. The agentverse server defaults to `8080`.
 
 **Step 2: Build and run the agentverse server**
 
 ```bash
 cargo build -p agentverse-server
 
-# With llama.cpp (backend on 8080, server on 9090)
-MODEL_BASE_URL=http://127.0.0.1:8080 MODEL_API_KEY="" \
+# With llama.cpp (backend on 9090, server on 8080)
+MODEL_BASE_URL=http://127.0.0.1:9090 MODEL_API_KEY="" \
   cargo run -p agentverse-server
 
-# With Ollama (backend on 11434, server on 9090)
+# With Ollama (backend on 11434, server on 8080)
 MODEL_BASE_URL=http://127.0.0.1:11434/v1 MODEL_API_KEY="ollama" \
   cargo run -p agentverse-server
 
-# With OpenAI (server on 9090)
+# With OpenAI (server on 8080)
 MODEL_BASE_URL=https://api.openai.com \
   MODEL_API_KEY=sk-xxx \
   cargo run -p agentverse-server
@@ -67,10 +67,10 @@ MODEL_BASE_URL=https://api.openai.com \
 
 ```bash
 # Health check
-curl http://localhost:9090/health
+curl http://localhost:8080/health
 
 # Invoke the agent
-curl -X POST http://localhost:9090/invoke \
+curl -X POST http://localhost:8080/invoke \
   -H "Content-Type: application/json" \
   -d '{"user_id": "user1", "message": "Hello, agent!"}'
 ```
@@ -79,10 +79,10 @@ curl -X POST http://localhost:9090/invoke \
 
 | Variable | Default | Description |
 |---|---|---|
-| `MODEL_BASE_URL` | `http://localhost:8080` | OpenAI-compatible API endpoint |
+| `MODEL_BASE_URL` | `http://localhost:9090` | OpenAI-compatible LLM backend endpoint |
 | `MODEL_API_KEY` | *(empty)* | API key (required for OpenAI, optional for local) |
-| `MODEL_NAME` | *(inferred from URL)* | Model identifier |
-| `API_KEY` | *(empty)* | Server auth token (Bearer token for `/invoke`) |
+| `MODEL_NAME` | *(inferred from URL)* | Model identifier (e.g. `gpt-4`, `phi3-mini`) |
+| `API_KEY` | *(empty)* | Server auth token (Bearer token for `/invoke` on port 8080) |
 | `CONFIG_PATH` | *(none)* | Path to YAML config file |
 | `RUST_LOG` | `info` | Logging level |
 
@@ -91,7 +91,7 @@ curl -X POST http://localhost:9090/invoke \
 ```yaml
 # config.yaml
 host: "0.0.0.0"
-port: 9090
+port: 8080
 agent:
   model_api_key: ""
   model_name: "gpt-4"
@@ -111,7 +111,7 @@ Run with: `CONFIG_PATH=config.yaml cargo run -p agentverse-server`
 Returns server health and model info.
 
 ```json
-{"status": "healthy", "model": "http://localhost:8080"}
+{"status": "healthy", "model": "http://localhost:9090"}
 ```
 
 ### `GET /ready`
@@ -127,7 +127,7 @@ Returns readiness status.
 Invoke the agent with a user message.
 
 ```bash
-curl -X POST http://localhost:9090/invoke \
+curl -X POST http://localhost:8080/invoke \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer my-secret-key" \
   -d '{"user_id": "user1", "message": "Hello, agent!"}'

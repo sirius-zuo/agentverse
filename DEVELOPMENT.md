@@ -104,16 +104,16 @@ cmake --build build --config Release -n
 # Download a model (e.g., Phi-3)
 python3 models/download.py --repo-id microsoft/Phi-3-mini-4k-instruct --local-dir models/phi3
 
-# Start the OpenAI-compatible server (use a port different from the server's 9090)
+# Start the OpenAI-compatible server
 ./build/bin/llama-server -m models/phi3/Phi-3-mini-4k-instruct-q4_k_M.gguf \
   --host 127.0.0.1 \
-  --port 8080
+  --port 9090
 ```
 
 Then set your environment variables:
 
 ```bash
-export MODEL_BASE_URL=http://127.0.0.1:8080
+export MODEL_BASE_URL=http://127.0.0.1:9090
 export MODEL_API_KEY=""
 export MODEL_NAME="phi3-mini"
 ```
@@ -489,7 +489,7 @@ RUN cargo build --release -p agentverse-server
 FROM debian:bookworm-slim
 WORKDIR /app
 COPY --from=builder /app/target/release/agentverse-server .
-EXPOSE 9090
+EXPOSE 8080
 CMD ["./agentverse-server"]
 ```
 
@@ -497,7 +497,7 @@ Build and run:
 
 ```bash
 docker build -t agentverse-server .
-docker run -p 9090:9090 \
+docker run -p 8080:8080 \
   -e MODEL_BASE_URL=https://api.openai.com \
   -e MODEL_API_KEY=sk-xxx \
   -e API_KEY=my-secret-token \
@@ -509,7 +509,7 @@ docker run -p 9090:9090 \
 ```yaml
 # config.yaml
 host: "0.0.0.0"
-port: 9090
+port: 8080
 agent:
   model_api_key: "sk-xxx"
   model_name: "gpt-4"
@@ -613,7 +613,7 @@ adapter.start().await.expect("Failed to start Webhook adapter");
 ### Invoke Endpoint
 
 ```bash
-curl -X POST http://localhost:9090/invoke \
+curl -X POST http://localhost:8080/invoke \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer my-secret-key" \
   -d '{"user_id": "user1", "message": "Hello, agent!"}'
@@ -701,7 +701,7 @@ RUST_LOG=agentverse=info,agentverse_guardrails=debug cargo run -p agentverse-ser
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MODEL_BASE_URL` | `http://localhost:8080` | OpenAI-compatible API endpoint |
+| `MODEL_BASE_URL` | `http://localhost:9090` | OpenAI-compatible LLM backend endpoint |
 | `MODEL_API_KEY` | *(empty)* | API key |
 | `MODEL_NAME` | *(inferred)* | Model identifier |
 | `API_KEY` | *(empty)* | Server auth token |
