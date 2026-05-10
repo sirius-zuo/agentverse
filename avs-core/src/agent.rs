@@ -8,6 +8,7 @@ use crate::memory::{Memory, Message, ShortTermMemory};
 use crate::prompt::{PromptConfig, PromptRegistry};
 use crate::tracing::{DefaultTracer, Tracer};
 
+#[allow(dead_code)]
 pub struct Agent {
     config: Config,
     memory: Arc<RwLock<dyn Memory>>,
@@ -64,7 +65,10 @@ impl Agent {
         // For now, return a placeholder using the system prompt
         let _ = user_id;
         let mut context = std::collections::HashMap::new();
-        context.insert("conversation".to_string(), serde_json::Value::String(input.to_string()));
+        context.insert(
+            "conversation".to_string(),
+            serde_json::Value::String(input.to_string()),
+        );
         let system = self
             .prompt_registry
             .render("system", context)

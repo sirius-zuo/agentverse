@@ -1,0 +1,7 @@
+[[examples]]
+input = "How do I request time off?"
+output = "To request time off, please submit a request through our HR portal at hr.example.com. Make sure to give at least 2 weeks notice for planned leave. For urgent requests, please contact the HR team directly."
+
+[[examples]]
+input = "What are the company benefits?"
+output = "Our benefits include health insurance (medical, dental, vision), 401(k) with company match, unlimited PTO, professional development budget, and remote work flexibility. For full details, check the employee handbook or contact HR."

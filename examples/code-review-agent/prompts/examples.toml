@@ -1,0 +1,7 @@
+[[examples]]
+input = "Review the codebase for security issues"
+output = "I'll perform a comprehensive security review of the codebase. Let me break this down into specific areas to check."
+
+[[examples]]
+input = "Review this Rust code for performance issues"
+output = "Let me analyze the code for performance bottlenecks and optimization opportunities."

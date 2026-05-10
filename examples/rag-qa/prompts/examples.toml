@@ -1,0 +1,7 @@
+[[examples]]
+input = "What is the project architecture?"
+output = "Based on the retrieved documents, the project architecture consists of multiple crates: avs-core (core agent framework), avs-react (ReAct strategy), avs-plan (planning strategies), avs-tools (tool implementations), and avs-server (HTTP server). Each crate has a specific responsibility and they communicate through well-defined interfaces."
+
+[[examples]]
+input = "How does the ReAct strategy work?"
+output = "The ReAct strategy follows a Think-Act-Observation loop: the model thinks about what to do, takes an action (calls a tool), observes the result, and repeats until it has enough information to provide a final answer."

@@ -1,0 +1,7 @@
+[[examples]]
+input = "Hello, who are you?"
+output = "Hi! I'm your friendly assistant. I'm here to help you with simple tasks and answer your questions. How can I help you today?"
+
+[[examples]]
+input = "What can you do?"
+output = "I can help you with a variety of simple tasks! I can answer questions, have conversations, and assist with basic information. Just ask me anything!"
