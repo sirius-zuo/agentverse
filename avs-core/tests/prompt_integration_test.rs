@@ -31,10 +31,7 @@ fn test_prompt_rendering_with_examples() {
 fn test_prompt_rendering_without_examples() {
     let registry = PromptRegistry::new();
     let mut context = HashMap::new();
-    context.insert(
-        "examples".to_string(),
-        json!(None::<Vec<Example>>),
-    );
+    context.insert("examples".to_string(), json!(None::<Vec<Example>>));
     context.insert("tools".to_string(), json!(""));
     context.insert("conversation".to_string(), json!(""));
 
@@ -89,7 +86,9 @@ fn test_plan_prompt_rendering() {
     context.insert("tools".to_string(), json!("weather, search"));
     context.insert("conversation".to_string(), json!(""));
 
-    let result = registry.render("strategies.plan_and_execute", context).unwrap();
+    let result = registry
+        .render("strategies.plan_and_execute", context)
+        .unwrap();
     assert!(result.contains("planning assistant"));
     assert!(result.contains("search_weather"));
 }
