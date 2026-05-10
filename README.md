@@ -2,26 +2,54 @@
 
 Lightweight, extensible AI Agent framework in Rust.
 
+AgentVerse provides a modular architecture for building AI agents with support for multiple orchestration strategies (ReAct, Plan-and-Execute, Hierarchical), built-in tools, prompt engineering with Jinja2 templates, security guardrails, and an HTTP server for remote access.
+
 ## Quick Start
 
-### Local Development (llama.cpp)
+### Prerequisites
+
+- **Rust 1.75+** — `rustup install stable`
+- **OpenAI API key** or a local LLM (llama.cpp)
+
+### Option 1: Run a Demo Agent (CLI)
 
 ```bash
-# Start llama.cpp server
-./server -m models/llama.gguf --host 127.0.0.1 --port 8080
+# Using OpenAI
+OPENAI_API_KEY=sk-xxx cargo run -p example-hello-agent
+
+# Using local llama.cpp
+MODEL_API_KEY="" MODEL_NAME="phi3-mini" cargo run -p example-hello-agent
+```
+
+### Option 2: Run the HTTP Server
+
+```bash
+# Start llama.cpp server locally (optional)
+./server -m models/llama.gguf --host 127.0.0.1 --port 9090
 
 # Build and run AgentVerse server
 cargo build -p agentverse-server
-MODEL_BASE_URL=http://localhost:8080 MODEL_API_KEY="" \
+
+# With local LLM
+MODEL_BASE_URL=http://127.0.0.1:9090 MODEL_API_KEY="" \
+  cargo run -p agentverse-server
+
+# With OpenAI
+MODEL_BASE_URL=https://api.openai.com \
+  MODEL_API_KEY=sk-xxx \
   cargo run -p agentverse-server
 ```
 
-### Production (OpenAI-compatible)
+### Test the Server
 
 ```bash
-MODEL_BASE_URL=https://api.openai.com \
-MODEL_API_KEY=sk-xxx \
-cargo run -p agentverse-server
+# Health check
+curl http://localhost:9090/health
+
+# Invoke the agent
+curl -X POST http://localhost:9090/invoke \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "user1", "message": "Hello, agent!"}'
 ```
 
 ## Environment Variables
@@ -92,7 +120,7 @@ Response:
 
 | Crate | Description |
 |---|---|
-| `agentverse` | Core framework — Agent, Config, ToolResult, Memory |
+| `agentverse` | Core framework — Agent, Config, ToolResult, Memory, PromptRegistry |
 | `agentverse-react` | ReAct strategy loop |
 | `agentverse-plan` | Plan-and-Execute + Hierarchical strategies |
 | `agentverse-router` | Dynamic strategy routing |
@@ -119,3 +147,44 @@ Response:
 # Run an example
 OPENAI_API_KEY=sk-xxx cargo run -p example-hello-agent
 ```
+
+## Documentation
+
+- **[Developer Guide](DEVELOPMENT.md)** — Complete guide for developing, testing, and deploying agents with AgentVerse
+  - Architecture overview
+  - Creating custom agents
+  - Writing tools
+  - Prompt engineering with templates
+  - Testing strategies
+  - Deploying to production
+  - Adding long-term memory
+  - Integrating external systems (Slack, Webhooks)
+  - Debugging & observability
+
+## Project Structure
+
+```
+AgentVerse/
+├── avs-core/              # Core: Agent, Config, PromptRegistry, Memory, Tool traits
+├── avs-react/             # ReAct strategy loop
+├── avs-plan/              # Plan-and-Execute + Hierarchical strategies
+├── avs-router/            # Dynamic strategy routing
+├── avs-tools/             # Built-in tools (Calculator, DateTime, FileSearch, HttpClient)
+├── avs-mcp/               # MCP client for external tool servers
+├── avs-guardrails/        # Security: prompt injection, output filtering, rate limiting
+├── avs-integration/       # Slack, Webhook adapters
+├── avs-memory/            # Memory traits (Memory, ShortTermMemory)
+├── avs-memory-lancedb/    # LanceDB-backed long-term memory
+├── avs-memory-pgvector/   # pgvector-backed long-term memory
+├── avs-server/            # Standalone HTTP server
+└── examples/              # Example agents
+    ├── hello-agent/       # Simple agent, no tools
+    ├── slack-hr-assistant/ # Slack integration
+    ├── rag-qa/            # Document Q&A
+    ├── web-search-agent/  # Plan-and-Execute
+    └── code-review-agent/ # Hierarchical planning
+```
+
+## License
+
+MIT
