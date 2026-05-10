@@ -13,3 +13,6 @@ Cargo.lock
 
 # OS
 .DS_Store
+
+# Env
+.env

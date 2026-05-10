@@ -15,6 +15,7 @@ use config::ServerConfig;
 use routes::{health, invoke, ready, AppState};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tower_http::cors::CorsLayer;
 use tracing::info;
 use tracing_subscriber::{
     fmt::Layer, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, EnvFilter,
@@ -57,17 +58,16 @@ async fn main() {
     };
 
     let agent = Agent::from_config(agent_config).unwrap_or_else(|e| {
-        panic!("Failed to build agent: {}", e);
+        eprintln!("Failed to build agent: {}", e);
+        std::process::exit(1);
     });
 
-    // Build tool registry (infrastructure for future tool use)
-    let _tool_registry = ToolRegistry::new();
-    let _tools: Vec<Box<dyn agentverse::SyncTool>> = vec![
-        Box::new(FileSearch),
-        Box::new(HttpClient),
-        Box::new(Calculator),
-        Box::new(DateTimeTool),
-    ];
+    // Build tool registry — wired for future tool use
+    let mut tool_registry = ToolRegistry::new();
+    tool_registry.register(FileSearch);
+    tool_registry.register(HttpClient);
+    tool_registry.register(Calculator);
+    tool_registry.register(DateTimeTool);
 
     // Build rate limiter
     let rate_limiter = Arc::new(RateLimiter::new(
@@ -80,13 +80,17 @@ async fn main() {
         agent: Arc::new(Mutex::new(agent)),
         rate_limiter,
         guardrails_enabled: server_config.guardrails.enabled,
+        model_name: server_config.agent.model_name.clone(),
+        tools: Arc::new(Mutex::new(tool_registry)),
     };
 
     // Build routes
+    let cors = CorsLayer::permissive();
     let app = Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
         .route("/invoke", post(invoke))
+        .layer(cors)
         .layer(middleware::from_fn(auth::auth_middleware))
         .with_state(state);
 
@@ -94,7 +98,10 @@ async fn main() {
     let addr = format!("{}:{}", server_config.host, server_config.port);
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
-        .unwrap_or_else(|e| panic!("Failed to bind to {}: {}", addr, e));
+        .unwrap_or_else(|e| {
+            eprintln!("Failed to bind to {}: {}", addr, e);
+            std::process::exit(1);
+        });
 
     info!("Listening on {}", addr);
     axum::serve(listener, app)

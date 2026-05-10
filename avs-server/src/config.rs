@@ -17,8 +17,9 @@ pub struct AgentConfig {
     pub max_iterations: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum StrategyConfig {
+    #[default]
     ReAct,
     PlanAndExecute,
     Hierarchical,
@@ -32,13 +33,26 @@ pub struct GuardrailsConfig {
 
 impl Default for ServerConfig {
     fn default() -> Self {
+        let model_api_key = std::env::var("MODEL_API_KEY").unwrap_or_default();
+        if model_api_key.is_empty() {
+            eprintln!(
+                "WARNING: MODEL_API_KEY is not set. The server will start but model calls will fail."
+            );
+        }
         Self {
-            host: "0.0.0.0".to_string(),
-            port: 8080,
+            host: "127.0.0.1".to_string(),
+            port: 9090,
             agent: AgentConfig {
-                model_api_key: std::env::var("MODEL_API_KEY").unwrap_or_default(),
-                model_name: std::env::var("MODEL_NAME").unwrap_or_else(|_| "gpt-4".to_string()),
-                strategy: StrategyConfig::ReAct,
+                model_api_key,
+                model_name: std::env::var("MODEL_NAME").unwrap_or_else(|_| {
+                    std::env::var("MODEL_BASE_URL")
+                        .unwrap_or_else(|_| "http://localhost:8080".to_string())
+                        .replace("http://", "")
+                        .replace("https://", "")
+                        .trim_end_matches('/')
+                        .to_string()
+                }),
+                strategy: StrategyConfig::default(),
                 max_iterations: 10,
             },
             guardrails: GuardrailsConfig {
@@ -59,6 +73,15 @@ impl ServerConfig {
     }
 
     pub fn from_env() -> Self {
-        Self::default()
+        let mut config = Self::default();
+        // Override base URL if set
+        if let Ok(base_url) = std::env::var("MODEL_BASE_URL") {
+            config.agent.model_name = base_url
+                .replace("http://", "")
+                .replace("https://", "")
+                .trim_end_matches('/')
+                .to_string();
+        }
+        config
     }
 }
