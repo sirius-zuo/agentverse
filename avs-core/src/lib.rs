@@ -27,6 +27,7 @@ pub use error::{AgentError, ConfigError, GuardrailError, ModelError, ToolError};
 pub use example::Example;
 pub use memory::{Memory, Message, MessageRole, ShortTermMemory};
 pub use model::ModelProvider;
+pub use prompt::PromptConfig;
 pub use prompt::PromptRegistry;
 pub use tool::{AsyncTool, SyncTool, ToolResult};
 pub use tracing::{NoopTracer, Tracer};

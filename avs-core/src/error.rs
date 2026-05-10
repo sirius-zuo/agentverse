@@ -36,6 +36,8 @@ pub enum ConfigError {
     Invalid(String),
     #[error("Missing field: {0}")]
     Missing(String),
+    #[error("File error: {0}")]
+    FileError(String),
 }
 
 #[derive(Error, Debug)]

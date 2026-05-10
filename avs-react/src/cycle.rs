@@ -177,7 +177,6 @@ where
 
         self.prompt_registry
             .render("react", context)
-            .map_err(|e| AgentError::Config(agentverse::ConfigError::Invalid(e)))
     }
 
     /// Return the number of tools available.
