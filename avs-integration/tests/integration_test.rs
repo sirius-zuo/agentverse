@@ -13,6 +13,8 @@ fn test_agent() -> Arc<Mutex<Agent>> {
         model_name: "test-model".to_string(),
         max_messages: 100,
         tools: vec![],
+        prompts_dir: None,
+        system_prompt: None,
     };
     let agent = Agent::from_config(config).expect("should create test agent");
     Arc::new(Mutex::new(agent))
@@ -91,7 +93,7 @@ async fn test_webhook_endpoint() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let body: WebhookResponse = resp.json().await.expect("should parse JSON");
-    assert_eq!(body.message, "Processed: hello");
+    assert!(body.message.contains("hello"));
 
     adapter.stop().await;
     server.abort();

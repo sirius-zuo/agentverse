@@ -1,47 +1,69 @@
 use crate::config::Config;
 use crate::error::AgentError;
-use crate::model::ModelProvider;
+use crate::prompt::PromptConfig;
 
 pub struct AgentBuilder {
-    model: Option<Box<dyn ModelProvider>>,
-    max_messages: usize,
+    config: Option<Config>,
+    system_prompt: Option<String>,
+    prompts_dir: Option<String>,
 }
 
 impl AgentBuilder {
     pub fn new() -> Self {
         Self {
-            model: None,
-            max_messages: 100,
+            config: None,
+            system_prompt: None,
+            prompts_dir: None,
         }
     }
 
-    pub fn model(mut self, model: impl ModelProvider + 'static) -> Self {
-        self.model = Some(Box::new(model));
+    /// Set the full config.
+    pub fn config(mut self, config: Config) -> Self {
+        self.config = Some(config);
         self
     }
 
-    pub fn max_messages(mut self, max: usize) -> Self {
-        self.max_messages = max;
+    /// Set a system prompt override.
+    pub fn system_prompt(mut self, prompt: &str) -> Self {
+        self.system_prompt = Some(prompt.to_string());
+        self
+    }
+
+    /// Set a prompts directory for .j2/.toml file loading.
+    pub fn prompt_dir(mut self, dir: &str) -> Self {
+        self.prompts_dir = Some(dir.to_string());
         self
     }
 
     pub fn build(self) -> Result<crate::agent::Agent, AgentError> {
-        if self.model.is_none() {
+        let config = self.config.unwrap_or_else(|| Config {
+            model_api_key: String::new(),
+            model_name: String::new(),
+            max_messages: 100,
+            tools: Vec::new(),
+            prompts_dir: self.prompts_dir.clone(),
+            system_prompt: self.system_prompt.clone(),
+        });
+
+        if config.model_api_key.is_empty() {
             return Err(AgentError::Config(crate::error::ConfigError::Missing(
-                "model is required".to_string(),
+                "model_api_key is required".to_string(),
+            )));
+        }
+        if config.model_name.is_empty() {
+            return Err(AgentError::Config(crate::error::ConfigError::Missing(
+                "model_name is required".to_string(),
             )));
         }
 
-        let config = Config {
-            model_api_key: String::new(),
-            model_name: String::new(),
-            max_messages: self.max_messages,
-            tools: Vec::new(),
-            prompts_dir: None,
-            system_prompt: None,
+        let prompt_config = PromptConfig {
+            system_prompt: self.system_prompt,
+            prompts_dir: self.prompts_dir,
+            templates: std::collections::HashMap::new(),
+            examples: std::collections::HashMap::new(),
         };
 
-        crate::agent::Agent::from_config(config)
+        crate::agent::Agent::from_config_with_prompts(config, &prompt_config)
     }
 }
 

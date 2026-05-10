@@ -153,6 +153,8 @@ mod tests {
                     model_name: "test-model".to_string(),
                     max_messages: 10,
                     tools: vec![],
+                    prompts_dir: None,
+                    system_prompt: None,
                 })
                 .unwrap(),
             )),
