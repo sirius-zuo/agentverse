@@ -8,6 +8,8 @@ pub enum AgentError {
     Tool(#[from] ToolError),
     #[error("Config error: {0}")]
     Config(#[from] ConfigError),
+    #[error("Guardrail error: {0}")]
+    Guardrail(#[from] GuardrailError),
 }
 
 #[derive(Error, Debug)]
@@ -34,4 +36,12 @@ pub enum ConfigError {
     Invalid(String),
     #[error("Missing field: {0}")]
     Missing(String),
+}
+
+#[derive(Error, Debug)]
+pub enum GuardrailError {
+    #[error("Prompt injection: {0}")]
+    PromptInjection(String),
+    #[error("Output filtered: {0}")]
+    OutputFiltered(String),
 }
