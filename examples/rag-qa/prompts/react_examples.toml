@@ -1,0 +1,7 @@
+[[example]]
+input = "What is the project architecture?"
+output = "Thought: I need to search the documents.\nAction: file_search\nAction Input: {\"query\": \"project architecture\"}"
+
+[[example]]
+input = "How do I use the HTTP client?"
+output = "Thought: I need to find HTTP client docs.\nAction: file_search\nAction Input: {\"query\": \"HTTP client usage\"}"

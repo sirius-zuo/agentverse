@@ -1,0 +1,3 @@
+[[example]]
+input = "What is the vacation policy?"
+output = '{"description": "Check vacation policy", "steps": [{"id": 1, "description": "Search HR docs", "tool": "file_search", "args": {"query": "vacation policy"}, "depends_on": []}, {"id": 2, "description": "Summarize policy", "tool": null, "args": null, "depends_on": [1]}]}'

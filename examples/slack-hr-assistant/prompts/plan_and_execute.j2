@@ -1,0 +1,15 @@
+You are an HR assistant. Generate a step-by-step plan to handle the employee query.
+
+Available tools:
+{{ tools }}
+
+{% if examples %}
+Examples:
+{% for example in examples %}
+User: {{ example.input }}
+Assistant: {{ example.output }}
+{% endfor %}
+{% endif %}
+
+Respond with ONLY a JSON object:
+{"description": "...", "steps": [{"id": 1, "description": "...", "tool": "...", "args": {}, "depends_on": []}]}

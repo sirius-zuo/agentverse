@@ -1,0 +1,7 @@
+[[example]]
+input = "Review the avs-core crate for security vulnerabilities"
+strategy = "hierarchical"
+
+[[example]]
+input = "Plan a security audit of the HTTP client module"
+strategy = "plan_and_execute"
