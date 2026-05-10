@@ -4,6 +4,7 @@
 //! its own `step()` logic via a closure.
 
 use agentverse::{AgentError, Message, ModelProvider, PromptRegistry, SyncTool};
+use agentverse_guardrails::{check_output, check_prompt};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -177,6 +178,34 @@ where
 
         self.prompt_registry
             .render("react", context)
+    }
+
+    /// Build the prompt with guardrail checking on the rendered prompt.
+    pub fn build_prompt_with_guardrails(&self) -> Result<String, AgentError> {
+        let prompt = self.build_prompt()?;
+        check_prompt(&prompt).map_err(|e| match e {
+            agentverse_guardrails::GuardrailError::PromptInjection(msg) => {
+                AgentError::Guardrail(agentverse::GuardrailError::PromptInjection(msg))
+            }
+            agentverse_guardrails::GuardrailError::OutputFiltered(msg) => {
+                AgentError::Guardrail(agentverse::GuardrailError::OutputFiltered(msg))
+            }
+            _ => AgentError::Guardrail(agentverse::GuardrailError::PromptInjection(e.to_string())),
+        })?;
+        Ok(prompt)
+    }
+
+    /// Apply output guardrail to a model response.
+    pub fn check_output_guardrail(&self, output: &str) -> Result<(), AgentError> {
+        check_output(output).map_err(|e| match e {
+            agentverse_guardrails::GuardrailError::OutputFiltered(msg) => {
+                AgentError::Guardrail(agentverse::GuardrailError::OutputFiltered(msg))
+            }
+            agentverse_guardrails::GuardrailError::PromptInjection(msg) => {
+                AgentError::Guardrail(agentverse::GuardrailError::PromptInjection(msg))
+            }
+            _ => AgentError::Guardrail(agentverse::GuardrailError::OutputFiltered(e.to_string())),
+        })
     }
 
     /// Return the number of tools available.

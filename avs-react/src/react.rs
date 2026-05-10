@@ -72,13 +72,15 @@ where
 
             let _iter = self.skeleton.next_iteration();
 
-            let prompt = self.skeleton.build_prompt()?;
+            let prompt = self.skeleton.build_prompt_with_guardrails()?;
 
             let response = self
                 .skeleton
                 .model()
                 .generate(&prompt, Some(tool_defs.clone()))
                 .await?;
+
+            self.skeleton.check_output_guardrail(&response)?;
 
             let action = parse_response(&response);
 

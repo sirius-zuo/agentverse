@@ -6,6 +6,7 @@ rust-version.workspace = true
 
 [dependencies]
 agentverse = { path = "../avs-core" }
+agentverse-guardrails = { path = "../avs-guardrails" }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tracing = { workspace = true }
