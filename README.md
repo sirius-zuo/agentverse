@@ -26,30 +26,32 @@ OPENAI_API_KEY=sk-xxx cargo run -p example-hello-agent
 
 The HTTP server supports any OpenAI-compatible endpoint via environment variables.
 
-**Step 1: Start your LLM backend**
+**Step 1: Start your LLM backend** (on a separate port)
 
 ```bash
-# llama.cpp
-./server -m models/llama.gguf --host 127.0.0.1 --port 9090
+# llama.cpp — runs on port 8080
+./server -m models/llama.gguf --host 127.0.0.1 --port 8080
 
-# Ollama (runs on port 11434 by default)
+# Ollama — runs on port 11434 by default
 ollama serve
 ```
 
-**Step 2: Build and run the server**
+> **Ports:** The LLM backend and agentverse server must use different ports. The agentverse server defaults to `9090`.
+
+**Step 2: Build and run the agentverse server**
 
 ```bash
 cargo build -p agentverse-server
 
-# With local LLM (llama.cpp on port 9090)
-MODEL_BASE_URL=http://127.0.0.1:9090 MODEL_API_KEY="" \
+# With llama.cpp (backend on 8080, server on 9090)
+MODEL_BASE_URL=http://127.0.0.1:8080 MODEL_API_KEY="" \
   cargo run -p agentverse-server
 
-# With local LLM (Ollama on port 11434)
+# With Ollama (backend on 11434, server on 9090)
 MODEL_BASE_URL=http://127.0.0.1:11434/v1 MODEL_API_KEY="ollama" \
   cargo run -p agentverse-server
 
-# With OpenAI
+# With OpenAI (server on 9090)
 MODEL_BASE_URL=https://api.openai.com \
   MODEL_API_KEY=sk-xxx \
   cargo run -p agentverse-server
@@ -89,7 +91,7 @@ curl -X POST http://localhost:9090/invoke \
 ```yaml
 # config.yaml
 host: "0.0.0.0"
-port: 8080
+port: 9090
 agent:
   model_api_key: ""
   model_name: "gpt-4"

@@ -104,16 +104,16 @@ cmake --build build --config Release -n
 # Download a model (e.g., Phi-3)
 python3 models/download.py --repo-id microsoft/Phi-3-mini-4k-instruct --local-dir models/phi3
 
-# Start the OpenAI-compatible server
+# Start the OpenAI-compatible server (use a port different from the server's 9090)
 ./build/bin/llama-server -m models/phi3/Phi-3-mini-4k-instruct-q4_k_M.gguf \
   --host 127.0.0.1 \
-  --port 9090
+  --port 8080
 ```
 
 Then set your environment variables:
 
 ```bash
-export MODEL_BASE_URL=http://127.0.0.1:9090
+export MODEL_BASE_URL=http://127.0.0.1:8080
 export MODEL_API_KEY=""
 export MODEL_NAME="phi3-mini"
 ```
