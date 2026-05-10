@@ -9,29 +9,44 @@ AgentVerse provides a modular architecture for building AI agents with support f
 ### Prerequisites
 
 - **Rust 1.75+** — `rustup install stable`
-- **OpenAI API key** or a local LLM (llama.cpp)
+- **LLM backend** — one of:
+  - **OpenAI API** — get an API key from [platform.openai.com](https://platform.openai.com)
+  - **Local LLM** — [llama.cpp](https://github.com/ggerganov/llama.cpp), [Ollama](https://ollama.ai), or any OpenAI-compatible server
 
 ### Option 1: Run a Demo Agent (CLI)
+
+> **Note:** The example agents currently use the OpenAI API directly. For local LLM support with custom URLs, use the HTTP server (Option 2) or the `AgentBuilder` API.
 
 ```bash
 # Using OpenAI
 OPENAI_API_KEY=sk-xxx cargo run -p example-hello-agent
-
-# Using local llama.cpp
-MODEL_API_KEY="" MODEL_NAME="phi3-mini" cargo run -p example-hello-agent
 ```
 
-### Option 2: Run the HTTP Server
+### Option 2: Run the HTTP Server (Recommended for Local LLM)
+
+The HTTP server supports any OpenAI-compatible endpoint via environment variables.
+
+**Step 1: Start your LLM backend**
 
 ```bash
-# Start llama.cpp server locally (optional)
+# llama.cpp
 ./server -m models/llama.gguf --host 127.0.0.1 --port 9090
 
-# Build and run AgentVerse server
+# Ollama (runs on port 11434 by default)
+ollama serve
+```
+
+**Step 2: Build and run the server**
+
+```bash
 cargo build -p agentverse-server
 
-# With local LLM
+# With local LLM (llama.cpp on port 9090)
 MODEL_BASE_URL=http://127.0.0.1:9090 MODEL_API_KEY="" \
+  cargo run -p agentverse-server
+
+# With local LLM (Ollama on port 11434)
+MODEL_BASE_URL=http://127.0.0.1:11434/v1 MODEL_API_KEY="ollama" \
   cargo run -p agentverse-server
 
 # With OpenAI
@@ -39,6 +54,12 @@ MODEL_BASE_URL=https://api.openai.com \
   MODEL_API_KEY=sk-xxx \
   cargo run -p agentverse-server
 ```
+
+> **Other OpenAI-compatible services?** Just set `MODEL_BASE_URL` to your service's base URL:
+> - **vLLM**: `http://localhost:8000/v1`
+> - **LM Studio**: `http://localhost:1234/v1`
+> - **Groq**: `https://api.groq.com/openai/v1`
+> - **Together AI**: `https://api.together.xyz/v1`
 
 ### Test the Server
 
