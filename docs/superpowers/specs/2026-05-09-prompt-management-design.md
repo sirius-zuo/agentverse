@@ -332,19 +332,96 @@ Strategy: {{ example.strategy }}
 Respond with ONLY the strategy name.
 ```
 
+## Guardrails Integration
+
+Guardrails are placed at three boundaries in the prompt flow:
+
+```
+User Input → check_prompt (lightweight) → PromptRegistry → Rendered Prompt → check_prompt (real guardrail) → LLM → check_output → Response → Memory/Return
+```
+
+**Two guardrail checkpoints:**
+
+1. **Pre-render** (`check_prompt` on raw user input) — catches obvious injection before entering the system. Light-weight, fast path.
+2. **Post-render** (`check_prompt` on full rendered prompt) — catches injection that may have slipped through in conversation context (user messages, tool outputs, system prompt). This is the real guardrail.
+3. **Post-LLM** (`check_output` on LLM response) — catches data leakage (SSN, emails, secrets) before response is stored or returned.
+
+Guardrails live in the **strategy layer** (not `PromptRegistry`), because:
+- `PromptRegistry` is pure templating — shouldn't know about security
+- Strategies control the full prompt lifecycle — they call `render()`, then guardrail, then LLM, then guardrail
+
+**API in `CycleSkeleton` (avs-react):**
+
+```rust
+pub async fn build_prompt_with_guardrails(&self) -> Result<String, AgentError> {
+    let prompt = self.build_prompt()?;
+    check_prompt(&prompt).map_err(|e| AgentError::Guardrail(e))?;
+    Ok(prompt)
+}
+```
+
+**API in strategy `run()` loop:**
+
+```rust
+let prompt = skeleton.build_prompt_with_guardrails()?;
+let response = model.generate(&prompt, tool_defs).await?;
+check_output(&response).map_err(|e| AgentError::Guardrail(e))?;
+```
+
+**New error variant:** `AgentError::Guardrail(GuardrailError)` — clean separation from model/tool/config errors.
+
+**Config integration:** Guardrails enabled/disabled per strategy:
+
+```yaml
+strategies:
+  react:
+    guardrails:
+      prompt_check: true    # check_prompt on rendered prompt
+      output_check: true    # check_output on LLM response
+    template: "..."
+    examples: "react_examples"
+```
+
+## Example Agents Update
+
+Current state: all 5 example agents call `Agent::invoke()` which is a placeholder returning `"Processed: ..."`.
+
+After this design, each agent gets:
+- A `prompts/` directory with custom `.j2` and `.toml` files
+- Strategy instantiation (not placeholder invoke)
+- Guardrails wired in
+- Tool wiring where applicable
+
+**Agent mapping:**
+
+| Agent | Strategy | Tools | Guardrails |
+|-------|----------|-------|------------|
+| `hello-agent` | `ReActStrategy` | Calculator, DateTime | Enabled |
+| `slack-hr-assistant` | `PlanStrategy` | SlackAdapter | Enabled |
+| `rag-qa` | `ReActStrategy` | FileSearch, HttpClient | Enabled |
+| `web-search-agent` | `ReActStrategy` | HttpClient | Enabled |
+| `code-review-agent` | `HierarchicalStrategy` | FileSearch, HttpClient | Enabled |
+
+Each agent loads prompts from its own `prompts/` directory (e.g., `examples/hello-agent/prompts/`).
+
 ## Implementation Plan
 
 1. Add `toml` crate dependency to `avs-core`
 2. Add `Example` struct and enhance `PromptRegistry` with file loading
 3. Update `Config` to include `prompts_dir` and `system_prompt`
 4. Update `AgentBuilder` with prompt APIs
-5. Wire `PromptRegistry` into `CycleSkeleton` (avs-react)
-6. Replace hardcoded strings in `PlanStrategy` (avs-plan)
-7. Replace hardcoded strings in `HierarchicalStrategy` (avs-plan)
-8. Replace hardcoded strings in `StrategyRouter` (avs-router)
-9. Update `Agent::invoke()` to use the full prompt system
-10. Add integration tests for prompt rendering with examples
-11. Create example `.j2` and `.toml` files in `prompts/` directory
+5. Add `AgentError::Guardrail` variant
+6. Wire `PromptRegistry` into `CycleSkeleton` (avs-react)
+7. Add guardrail checkpoints to `CycleSkeleton::build_prompt_with_guardrails()`
+8. Wire guardrails into strategy `run()` loops
+9. Replace hardcoded strings in `PlanStrategy` (avs-plan)
+10. Replace hardcoded strings in `HierarchicalStrategy` (avs-plan)
+11. Replace hardcoded strings in `StrategyRouter` (avs-router)
+12. Update `Agent::invoke()` to use the full prompt system
+13. Update all 5 example agents with prompt architecture + guardrails + tool wiring
+14. Add integration tests for prompt rendering with examples
+15. Create example `.j2` and `.toml` files in each example agent's `prompts/` directory
+16. Create default `.j2` and `.toml` files in project root `prompts/` directory
 
 ## Scope Check
 
