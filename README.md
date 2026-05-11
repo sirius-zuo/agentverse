@@ -15,13 +15,13 @@ AgentVerse provides a modular architecture for building AI agents with support f
 
 ### Run an Example Agent
 
-The fastest way to try AgentVerse is to run one of the bundled examples. They use the OpenAI API out of the box.
+The fastest way to try AgentVerse is to run one of the bundled examples. They use the `ProviderConfig::OpenAI` default, which works with any OpenAI-compatible endpoint (OpenAI API, llama.cpp, Ollama, vLLM, etc.).
 
 ```bash
 OPENAI_API_KEY=sk-xxx cargo run -p example-hello-agent
 ```
 
-> **Using a local LLM with CLI agents?** The example agents are hardcoded for OpenAI. To use a local LLM, either edit the example code (two lines) or use the [HTTP Server](#run-the-http-server-optional) below, which supports any OpenAI-compatible endpoint without code changes.
+> **Using a local LLM?** Set `MODEL_BASE_URL` to point to your endpoint — the example agents use the same `Config` structure as the HTTP server, so no code changes needed.
 
 ### Run the HTTP Server (Optional)
 
@@ -35,8 +35,9 @@ MODEL_BASE_URL=https://api.openai.com MODEL_API_KEY=sk-xxx \
   cargo run -p agentverse-server
 
 # Using a local LLM (llama.cpp on port 9090, server on 8080)
-MODEL_BASE_URL=http://127.0.0.1:9090 MODEL_API_KEY="" \
+MODEL_BASE_URL=http://127.0.0.1:9090 \
   cargo run -p agentverse-server
+# (MODEL_API_KEY is optional for local LLMs — empty key is accepted)
 ```
 
 Test it:
@@ -122,7 +123,7 @@ provider:
 | Variable | Default | Description |
 |---|---|---|
 | `MODEL_BASE_URL` | *(none)* | OpenAI-compatible LLM endpoint (e.g. `https://api.openai.com`, `http://127.0.0.1:9090`) |
-| `MODEL_API_KEY` | *(empty)* | API key (required for OpenAI, optional for local LLM) |
+| `MODEL_API_KEY` | *(empty)* | API key (required for OpenAI/Anthropic/Gemini, optional for local LLMs) |
 | `MODEL_NAME` | *(inferred)* | Model identifier (e.g. `gpt-4`, `phi3-mini`) |
 | `API_KEY` | *(empty)* | Server auth token (Bearer token for `/invoke` on port 8080) |
 | `CONFIG_PATH` | *(none)* | Path to YAML config file |
@@ -193,7 +194,7 @@ Response:
 | `code-review-agent` | Hierarchical | Code analysis with FileSearch + Calculator |
 
 ```bash
-# Run an example (uses OpenAI API by default)
+# Run an example (uses ProviderConfig::OpenAI by default)
 OPENAI_API_KEY=sk-xxx cargo run -p example-hello-agent
 ```
 
