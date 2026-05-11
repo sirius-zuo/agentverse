@@ -1,4 +1,5 @@
 // avs-server/src/config.rs
+use agentverse::ProviderConfig;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -11,18 +12,8 @@ pub struct ServerConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
-    pub model_api_key: String,
-    pub model_name: String,
-    pub strategy: StrategyConfig,
+    pub provider: ProviderConfig,
     pub max_iterations: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub enum StrategyConfig {
-    #[default]
-    ReAct,
-    PlanAndExecute,
-    Hierarchical,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,8 +24,8 @@ pub struct GuardrailsConfig {
 
 impl Default for ServerConfig {
     fn default() -> Self {
-        let model_api_key = std::env::var("MODEL_API_KEY").unwrap_or_default();
-        if model_api_key.is_empty() {
+        let api_key = std::env::var("MODEL_API_KEY").unwrap_or_default();
+        if api_key.is_empty() {
             eprintln!(
                 "WARNING: MODEL_API_KEY is not set. The server will start but model calls will fail."
             );
@@ -43,16 +34,14 @@ impl Default for ServerConfig {
             host: "127.0.0.1".to_string(),
             port: 8080,
             agent: AgentConfig {
-                model_api_key,
-                model_name: std::env::var("MODEL_NAME").unwrap_or_else(|_| {
-                    std::env::var("MODEL_BASE_URL")
-                        .unwrap_or_else(|_| "http://localhost:9090".to_string())
-                        .replace("http://", "")
-                        .replace("https://", "")
-                        .trim_end_matches('/')
-                        .to_string()
-                }),
-                strategy: StrategyConfig::default(),
+                provider: ProviderConfig::OpenAI {
+                    model_name: std::env::var("MODEL_NAME").unwrap_or_else(|_| "gpt-4".to_string()),
+                    api_key,
+                    base_url: Some(
+                        std::env::var("MODEL_BASE_URL")
+                            .unwrap_or_else(|_| "http://localhost:9090/v1".to_string()),
+                    ),
+                },
                 max_iterations: 10,
             },
             guardrails: GuardrailsConfig {
@@ -73,15 +62,6 @@ impl ServerConfig {
     }
 
     pub fn from_env() -> Self {
-        let mut config = Self::default();
-        // Override base URL if set
-        if let Ok(base_url) = std::env::var("MODEL_BASE_URL") {
-            config.agent.model_name = base_url
-                .replace("http://", "")
-                .replace("https://", "")
-                .trim_end_matches('/')
-                .to_string();
-        }
-        config
+        Self::default()
     }
 }

@@ -61,9 +61,13 @@ fn test_prompt_registry_has_all_strategy_templates() {
     let mut ctx = HashMap::new();
     ctx.insert("tools".to_string(), serde_json::json!(""));
     ctx.insert("conversation".to_string(), serde_json::json!(""));
-    
+
     // All strategy templates should render
     assert!(registry.render("strategies.react", ctx.clone()).is_ok());
-    assert!(registry.render("strategies.plan_and_execute", ctx.clone()).is_ok());
-    assert!(registry.render("strategies.hierarchical.decompose", ctx).is_ok());
+    assert!(registry
+        .render("strategies.plan_and_execute", ctx.clone())
+        .is_ok());
+    assert!(registry
+        .render("strategies.hierarchical.decompose", ctx)
+        .is_ok());
 }

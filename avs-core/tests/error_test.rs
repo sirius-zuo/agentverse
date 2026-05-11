@@ -15,3 +15,25 @@ fn test_agent_error_from_model() {
     let agent_err = AgentError::Model(model_err);
     assert!(matches!(agent_err, AgentError::Model(_)));
 }
+
+#[test]
+fn test_rate_limited_error() {
+    let err = ModelError::RateLimited("429 Too Many Requests".to_string());
+    assert_eq!(err.to_string(), "Rate limited: 429 Too Many Requests");
+}
+
+#[test]
+fn test_circuit_open_error() {
+    let err = ModelError::CircuitOpen("Circuit breaker is open, retry later".to_string());
+    assert_eq!(
+        err.to_string(),
+        "Circuit breaker open: Circuit breaker is open, retry later"
+    );
+}
+
+#[test]
+fn test_agent_error_from_rate_limited() {
+    let err = ModelError::RateLimited("rate limit".to_string());
+    let agent_err = AgentError::Model(err);
+    assert!(matches!(agent_err, AgentError::Model(_)));
+}

@@ -3,9 +3,27 @@ use serde::{Deserialize, Serialize};
 use crate::error::{AgentError, ConfigError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ProviderConfig {
+    OpenAI {
+        model_name: String,
+        api_key: String,
+        #[serde(default)]
+        base_url: Option<String>,
+    },
+    Anthropic {
+        model_name: String,
+        api_key: String,
+    },
+    Gemini {
+        model_name: String,
+        api_key: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    pub model_api_key: String,
-    pub model_name: String,
+    pub provider: ProviderConfig,
     pub max_messages: usize,
     #[serde(default)]
     pub tools: Vec<String>,
@@ -28,15 +46,31 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<(), AgentError> {
-        if self.model_api_key.is_empty() {
-            return Err(AgentError::Config(ConfigError::Missing(
-                "model_api_key is required".to_string(),
-            )));
-        }
-        if self.model_name.is_empty() {
-            return Err(AgentError::Config(ConfigError::Missing(
-                "model_name is required".to_string(),
-            )));
+        match &self.provider {
+            ProviderConfig::OpenAI {
+                model_name,
+                api_key,
+                ..
+            }
+            | ProviderConfig::Anthropic {
+                model_name,
+                api_key,
+            }
+            | ProviderConfig::Gemini {
+                model_name,
+                api_key,
+            } => {
+                if model_name.is_empty() {
+                    return Err(AgentError::Config(ConfigError::Missing(
+                        "provider.model_name is required".to_string(),
+                    )));
+                }
+                if api_key.is_empty() {
+                    return Err(AgentError::Config(ConfigError::Missing(
+                        "provider.api_key is required".to_string(),
+                    )));
+                }
+            }
         }
         Ok(())
     }

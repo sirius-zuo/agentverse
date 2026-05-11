@@ -1,4 +1,4 @@
-use crate::config::Config;
+use crate::config::{Config, ProviderConfig};
 use crate::error::AgentError;
 use crate::prompt::PromptConfig;
 
@@ -37,24 +37,16 @@ impl AgentBuilder {
 
     pub fn build(self) -> Result<crate::agent::Agent, AgentError> {
         let config = self.config.unwrap_or_else(|| Config {
-            model_api_key: String::new(),
-            model_name: String::new(),
+            provider: ProviderConfig::OpenAI {
+                model_name: String::new(),
+                api_key: String::new(),
+                base_url: None,
+            },
             max_messages: 100,
             tools: Vec::new(),
             prompts_dir: self.prompts_dir.clone(),
             system_prompt: self.system_prompt.clone(),
         });
-
-        if config.model_api_key.is_empty() {
-            return Err(AgentError::Config(crate::error::ConfigError::Missing(
-                "model_api_key is required".to_string(),
-            )));
-        }
-        if config.model_name.is_empty() {
-            return Err(AgentError::Config(crate::error::ConfigError::Missing(
-                "model_name is required".to_string(),
-            )));
-        }
 
         let prompt_config = PromptConfig {
             system_prompt: self.system_prompt,

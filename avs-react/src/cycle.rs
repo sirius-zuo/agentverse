@@ -176,8 +176,7 @@ where
             .join("\n");
         context.insert("tools".to_string(), Value::String(tools));
 
-        self.prompt_registry
-            .render("react", context)
+        self.prompt_registry.render("react", context)
     }
 
     /// Build the prompt with guardrail checking on the rendered prompt.

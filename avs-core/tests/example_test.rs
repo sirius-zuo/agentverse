@@ -48,7 +48,9 @@ fn test_example_roundtrip_toml() {
     struct ExampleSet {
         example: Vec<Example>,
     }
-    let set = ExampleSet { example: vec![ex.clone()] };
+    let set = ExampleSet {
+        example: vec![ex.clone()],
+    };
     let toml_str = toml::to_string(&set).unwrap();
     let deserialized: ExampleSet = toml::from_str(&toml_str).unwrap();
     assert_eq!(deserialized.example, vec![ex]);

@@ -9,7 +9,7 @@ use crate::error::ModelError;
 use crate::model::ToolDefinition;
 
 #[derive(Debug, Clone)]
-pub struct OpenAICompatible {
+pub struct AnthropicProvider {
     client: Client,
     api_base: String,
     model_name: String,
@@ -17,49 +17,46 @@ pub struct OpenAICompatible {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct ChatRequest {
+struct AnthropicRequest {
     model: String,
-    messages: Vec<ChatMessage>,
+    messages: Vec<AnthropicMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tools: Option<Vec<ChatTool>>,
+    tools: Option<Vec<AnthropicTool>>,
+    max_tokens: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct ChatMessage {
+struct AnthropicMessage {
     role: String,
     content: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct ChatTool {
-    #[serde(rename = "type")]
-    type_field: String,
-    function: FunctionDefinition,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct FunctionDefinition {
+struct AnthropicTool {
     name: String,
     description: String,
-    parameters: Value,
+    input_schema: Value,
 }
 
 #[derive(Debug, Deserialize)]
-struct ChatResponse {
-    choices: Vec<Choice>,
+struct AnthropicResponse {
+    content: Vec<AnthropicContent>,
 }
 
 #[derive(Debug, Deserialize)]
-struct Choice {
-    message: ResponseMessage,
+#[allow(dead_code)]
+struct AnthropicContent {
+    #[serde(rename = "type")]
+    content_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    input: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-struct ResponseMessage {
-    content: Option<String>,
-}
-
-impl OpenAICompatible {
+impl AnthropicProvider {
     pub fn new(api_base: &str, model_name: &str, api_key: &str) -> Self {
         Self {
             client: Client::new(),
@@ -71,29 +68,24 @@ impl OpenAICompatible {
 
     pub fn from_config(config: ProviderConfig) -> Result<Self, ModelError> {
         match config {
-            ProviderConfig::OpenAI {
+            ProviderConfig::Anthropic {
                 model_name,
                 api_key,
-                base_url,
             } => Ok(Self {
                 client: Client::new(),
-                api_base: base_url.unwrap_or_else(|| "http://localhost:9090/v1".to_string()),
+                api_base: "https://api.anthropic.com".to_string(),
                 model_name,
                 api_key,
             }),
             _ => Err(ModelError::ApiError(
-                "ProviderConfig is not OpenAI".to_string(),
+                "ProviderConfig is not Anthropic".to_string(),
             )),
         }
-    }
-
-    fn chat_url(&self) -> String {
-        format!("{}/chat/completions", self.api_base)
     }
 }
 
 #[async_trait]
-impl ModelProvider for OpenAICompatible {
+impl ModelProvider for AnthropicProvider {
     fn name(&self) -> &str {
         &self.model_name
     }
@@ -103,34 +95,33 @@ impl ModelProvider for OpenAICompatible {
         prompt: &str,
         tools: Option<Vec<ToolDefinition>>,
     ) -> Result<String, ModelError> {
-        let messages = vec![ChatMessage {
+        let messages = vec![AnthropicMessage {
             role: "user".to_string(),
             content: prompt.to_string(),
         }];
 
-        let chat_tools = tools.map(|t| {
+        let anthropic_tools = tools.map(|t| {
             t.into_iter()
-                .map(|tool| ChatTool {
-                    type_field: "function".to_string(),
-                    function: FunctionDefinition {
-                        name: tool.name,
-                        description: tool.description,
-                        parameters: tool.parameters,
-                    },
+                .map(|tool| AnthropicTool {
+                    name: tool.name,
+                    description: tool.description,
+                    input_schema: tool.parameters,
                 })
                 .collect()
         });
 
-        let request = ChatRequest {
+        let request = AnthropicRequest {
             model: self.model_name.clone(),
             messages,
-            tools: chat_tools,
+            tools: anthropic_tools,
+            max_tokens: 4096,
         };
 
         let response = self
             .client
-            .post(self.chat_url())
-            .header("Authorization", format!("Bearer {}", self.api_key))
+            .post(format!("{}/v1/messages", self.api_base))
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
             .header("Content-Type", "application/json")
             .json(&request)
             .send()
@@ -143,18 +134,25 @@ impl ModelProvider for OpenAICompatible {
             .await
             .map_err(|e| ModelError::ApiError(e.to_string()))?;
 
+        if status == 429 {
+            return Err(ModelError::RateLimited(format!(
+                "Anthropic rate limited: {}",
+                body
+            )));
+        }
+
         if !status.is_success() {
             return Err(ModelError::ApiError(format!("HTTP {}: {}", status, body)));
         }
 
-        let chat_response: ChatResponse =
+        let resp: AnthropicResponse =
             serde_json::from_str(&body).map_err(|e| ModelError::InvalidResponse(e.to_string()))?;
 
-        chat_response
-            .choices
+        // Return first text content
+        resp.content
             .into_iter()
-            .next()
-            .and_then(|c| c.message.content)
-            .ok_or_else(|| ModelError::InvalidResponse("No content in response".to_string()))
+            .find(|c| c.content_type == "text")
+            .and_then(|c| c.text)
+            .ok_or_else(|| ModelError::InvalidResponse("No text content in response".to_string()))
     }
 }

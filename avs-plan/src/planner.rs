@@ -53,17 +53,26 @@ pub async fn generate_plan(
 
     let mut context = HashMap::new();
     context.insert("tools".to_string(), serde_json::Value::String(tools_desc));
-    context.insert("conversation".to_string(), serde_json::Value::String(conversation.to_string()));
+    context.insert(
+        "conversation".to_string(),
+        serde_json::Value::String(conversation.to_string()),
+    );
 
     let strategy_prompt = registry
         .render("strategies.plan_and_execute", context)
         .map_err(|e| AgentError::Config(agentverse::ConfigError::Invalid(e.to_string())))?;
 
-    check_prompt(&strategy_prompt).map_err(|e| AgentError::Guardrail(match e {
-        agentverse_guardrails::GuardrailError::PromptInjection(msg) => agentverse::GuardrailError::PromptInjection(msg),
-        agentverse_guardrails::GuardrailError::OutputFiltered(msg) => agentverse::GuardrailError::OutputFiltered(msg),
-        _ => agentverse::GuardrailError::PromptInjection(e.to_string()),
-    }))?;
+    check_prompt(&strategy_prompt).map_err(|e| {
+        AgentError::Guardrail(match e {
+            agentverse_guardrails::GuardrailError::PromptInjection(msg) => {
+                agentverse::GuardrailError::PromptInjection(msg)
+            }
+            agentverse_guardrails::GuardrailError::OutputFiltered(msg) => {
+                agentverse::GuardrailError::OutputFiltered(msg)
+            }
+            _ => agentverse::GuardrailError::PromptInjection(e.to_string()),
+        })
+    })?;
 
     let prompt = format!(
         "{}\n\nRequest: {}\n\nRespond with ONLY a JSON object:\n{{\"description\": \"...\", \"steps\": [{{\"id\": 1, \"description\": \"...\", \"tool\": \"...\", \"args\": {{}}, \"depends_on\": []}}]}}",
@@ -105,13 +114,22 @@ pub async fn decompose_request(
         .render("strategies.hierarchical.decompose", context)
         .map_err(|e| AgentError::Config(agentverse::ConfigError::Invalid(e.to_string())))?;
 
-    check_prompt(&strategy_prompt).map_err(|e| AgentError::Guardrail(match e {
-        agentverse_guardrails::GuardrailError::PromptInjection(msg) => agentverse::GuardrailError::PromptInjection(msg),
-        agentverse_guardrails::GuardrailError::OutputFiltered(msg) => agentverse::GuardrailError::OutputFiltered(msg),
-        _ => agentverse::GuardrailError::PromptInjection(e.to_string()),
-    }))?;
+    check_prompt(&strategy_prompt).map_err(|e| {
+        AgentError::Guardrail(match e {
+            agentverse_guardrails::GuardrailError::PromptInjection(msg) => {
+                agentverse::GuardrailError::PromptInjection(msg)
+            }
+            agentverse_guardrails::GuardrailError::OutputFiltered(msg) => {
+                agentverse::GuardrailError::OutputFiltered(msg)
+            }
+            _ => agentverse::GuardrailError::PromptInjection(e.to_string()),
+        })
+    })?;
 
-    let prompt = format!("{}\n\nRequest: {}\n\nRespond with ONLY a JSON array of strings.", strategy_prompt, request);
+    let prompt = format!(
+        "{}\n\nRequest: {}\n\nRespond with ONLY a JSON array of strings.",
+        strategy_prompt, request
+    );
 
     let response = model.generate(&prompt, None).await?;
 

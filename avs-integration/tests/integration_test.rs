@@ -1,4 +1,4 @@
-use agentverse::{Agent, Config};
+use agentverse::{Agent, Config, ProviderConfig};
 use agentverse_integration::{
     IntegrationAdapter, SlackAdapter, WebhookAdapter, WebhookRequest, WebhookResponse,
 };
@@ -9,8 +9,11 @@ use tokio::sync::Mutex;
 /// Helper to create a test agent with a minimal config.
 fn test_agent() -> Arc<Mutex<Agent>> {
     let config = Config {
-        model_api_key: "test-key".to_string(),
-        model_name: "test-model".to_string(),
+        provider: ProviderConfig::OpenAI {
+            model_name: "test-model".to_string(),
+            api_key: "test-key".to_string(),
+            base_url: None,
+        },
         max_messages: 100,
         tools: vec![],
         prompts_dir: None,

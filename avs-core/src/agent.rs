@@ -2,15 +2,17 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
-use crate::config::Config;
+use crate::config::{Config, ProviderConfig};
 use crate::error::AgentError;
 use crate::memory::{Memory, Message, ShortTermMemory};
+use crate::model::{AnthropicProvider, GeminiProvider, OpenAICompatible, ProviderWrapper};
 use crate::prompt::{PromptConfig, PromptRegistry};
 use crate::tracing::{DefaultTracer, Tracer};
 
 #[allow(dead_code)]
 pub struct Agent {
     config: Config,
+    provider: Option<ProviderWrapper>,
     memory: Arc<RwLock<dyn Memory>>,
     prompt_registry: PromptRegistry,
     tracer: Box<dyn Tracer>,
@@ -30,8 +32,21 @@ impl Agent {
 
         let prompt_registry = PromptRegistry::from_config(prompt_config)?;
 
+        let provider = match &config.provider {
+            ProviderConfig::OpenAI { .. } => Some(ProviderWrapper::new(
+                OpenAICompatible::from_config(config.provider.clone())?,
+            )),
+            ProviderConfig::Anthropic { .. } => Some(ProviderWrapper::new(
+                AnthropicProvider::from_config(config.provider.clone())?,
+            )),
+            ProviderConfig::Gemini { .. } => Some(ProviderWrapper::new(
+                GeminiProvider::from_config(config.provider.clone())?,
+            )),
+        };
+
         Ok(Self {
             config,
+            provider,
             memory: Arc::new(RwLock::new(ShortTermMemory::new(100))),
             prompt_registry,
             tracer: Box::new(DefaultTracer::default()),

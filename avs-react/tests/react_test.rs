@@ -18,6 +18,10 @@ struct MockModel {
 
 #[async_trait::async_trait]
 impl ModelProvider for MockModel {
+    fn name(&self) -> &str {
+        "mock-model"
+    }
+
     async fn generate(
         &self,
         _prompt: &str,

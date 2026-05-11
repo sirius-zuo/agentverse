@@ -10,6 +10,10 @@ struct MockModel {
 
 #[async_trait::async_trait]
 impl agentverse::ModelProvider for MockModel {
+    fn name(&self) -> &str {
+        "mock-model"
+    }
+
     async fn generate(
         &self,
         _prompt: &str,

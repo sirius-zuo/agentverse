@@ -13,8 +13,7 @@ const DEFAULT_SYSTEM_TEMPLATE: &str =
      You are concise and accurate. Never claim to have done something you haven't.\n\
      If you don't know something, say so.";
 
-const DEFAULT_REACT_TEMPLATE: &str =
-    "You are using the ReAct pattern: Think → Act → Observe.\n\n\
+const DEFAULT_REACT_TEMPLATE: &str = "You are using the ReAct pattern: Think → Act → Observe.\n\n\
      Current conversation:\n\
      {{ conversation }}\n\n\
      Available tools:\n\
@@ -133,9 +132,16 @@ impl PromptRegistry {
     }
 
     /// Render a template by name with context.
-    pub fn render(&self, name: &str, context: HashMap<String, Value>) -> Result<String, AgentError> {
+    pub fn render(
+        &self,
+        name: &str,
+        context: HashMap<String, Value>,
+    ) -> Result<String, AgentError> {
         let tmpl = self.env.get_template(name).map_err(|e| {
-            AgentError::Config(ConfigError::Invalid(format!("Template '{}' not found: {}", name, e)))
+            AgentError::Config(ConfigError::Invalid(format!(
+                "Template '{}' not found: {}",
+                name, e
+            )))
         })?;
         let entries: Vec<(String, minijinja::value::Value)> = context
             .into_iter()
@@ -143,7 +149,10 @@ impl PromptRegistry {
             .collect();
         let ctx = minijinja::value::Value::from_iter(entries);
         let result = tmpl.render(ctx).map_err(|e| {
-            AgentError::Config(ConfigError::Invalid(format!("Template render error: {}", e)))
+            AgentError::Config(ConfigError::Invalid(format!(
+                "Template render error: {}",
+                e
+            )))
         })?;
         Ok(result)
     }
@@ -158,20 +167,23 @@ impl PromptRegistry {
         let path = Path::new(dir);
         if !path.is_dir() {
             return Err(AgentError::Config(ConfigError::Invalid(format!(
-                "Prompts directory not found: {}", dir
+                "Prompts directory not found: {}",
+                dir
             ))));
         }
 
         let entries = fs::read_dir(path).map_err(|e| {
             AgentError::Config(ConfigError::Invalid(format!(
-                "Cannot read prompts directory: {}", e
+                "Cannot read prompts directory: {}",
+                e
             )))
         })?;
 
         for entry in entries {
             let entry = entry.map_err(|e| {
                 AgentError::Config(ConfigError::Invalid(format!(
-                    "Error reading directory entry: {}", e
+                    "Error reading directory entry: {}",
+                    e
                 )))
             })?;
             let path = entry.path();
@@ -181,7 +193,9 @@ impl PromptRegistry {
                     let name = path.file_stem().unwrap().to_string_lossy().to_string();
                     let template = fs::read_to_string(&path).map_err(|e| {
                         AgentError::Config(ConfigError::Invalid(format!(
-                            "Cannot read template {}: {}", path.display(), e
+                            "Cannot read template {}: {}",
+                            path.display(),
+                            e
                         )))
                     })?;
                     self.add_template(&name, &template);
@@ -190,12 +204,16 @@ impl PromptRegistry {
                     let name = path.file_stem().unwrap().to_string_lossy().to_string();
                     let content = fs::read_to_string(&path).map_err(|e| {
                         AgentError::Config(ConfigError::Invalid(format!(
-                            "Cannot read examples file {}: {}", path.display(), e
+                            "Cannot read examples file {}: {}",
+                            path.display(),
+                            e
                         )))
                     })?;
                     let examples: Vec<Example> = toml::from_str(&content).map_err(|e| {
                         AgentError::Config(ConfigError::Invalid(format!(
-                            "Cannot parse examples file {}: {}", path.display(), e
+                            "Cannot parse examples file {}: {}",
+                            path.display(),
+                            e
                         )))
                     })?;
                     self.add_examples(name, examples);
@@ -213,9 +231,18 @@ impl Default for PromptRegistry {
         let mut env = Environment::new();
         env.add_template("react", DEFAULT_REACT_TEMPLATE).unwrap();
         env.add_template("system", DEFAULT_SYSTEM_TEMPLATE).unwrap();
-        env.add_template("strategies.react", DEFAULT_REACT_TEMPLATE).unwrap();
-        env.add_template("strategies.plan_and_execute", DEFAULT_PLAN_AND_EXECUTE_TEMPLATE).unwrap();
-        env.add_template("strategies.hierarchical.decompose", DEFAULT_HIERARCHICAL_DECOMPOSE_TEMPLATE).unwrap();
+        env.add_template("strategies.react", DEFAULT_REACT_TEMPLATE)
+            .unwrap();
+        env.add_template(
+            "strategies.plan_and_execute",
+            DEFAULT_PLAN_AND_EXECUTE_TEMPLATE,
+        )
+        .unwrap();
+        env.add_template(
+            "strategies.hierarchical.decompose",
+            DEFAULT_HIERARCHICAL_DECOMPOSE_TEMPLATE,
+        )
+        .unwrap();
         env.add_template("router", DEFAULT_ROUTER_TEMPLATE).unwrap();
         Self {
             env,

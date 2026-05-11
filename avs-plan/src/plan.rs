@@ -3,7 +3,7 @@
 //! Generates a plan from the request, then executes each step sequentially,
 //! and finally synthesizes a result from all step outputs.
 
-use super::planner::{generate_plan, Plan};
+use super::planner::generate_plan;
 use agentverse::{AgentError, ModelProvider, PromptRegistry, SyncTool};
 use agentverse_guardrails::check_output;
 use std::sync::{Arc, Mutex};
@@ -74,7 +74,14 @@ where
             .collect::<Vec<_>>()
             .join("\n");
 
-        let plan = generate_plan(&*self.model, &self.registry, &input, &tool_names, &conversation).await?;
+        let plan = generate_plan(
+            &*self.model,
+            &self.registry,
+            &input,
+            &tool_names,
+            &conversation,
+        )
+        .await?;
 
         self.memory.lock().unwrap().append(agentverse::Message {
             role: agentverse::memory::MessageRole::System,
@@ -155,11 +162,17 @@ where
             .await
             .map_err(AgentError::Model)?;
 
-        check_output(&answer).map_err(|e| AgentError::Guardrail(match e {
-            agentverse_guardrails::GuardrailError::OutputFiltered(msg) => agentverse::GuardrailError::OutputFiltered(msg),
-            agentverse_guardrails::GuardrailError::PromptInjection(msg) => agentverse::GuardrailError::PromptInjection(msg),
-            _ => agentverse::GuardrailError::OutputFiltered(e.to_string()),
-        }))?;
+        check_output(&answer).map_err(|e| {
+            AgentError::Guardrail(match e {
+                agentverse_guardrails::GuardrailError::OutputFiltered(msg) => {
+                    agentverse::GuardrailError::OutputFiltered(msg)
+                }
+                agentverse_guardrails::GuardrailError::PromptInjection(msg) => {
+                    agentverse::GuardrailError::PromptInjection(msg)
+                }
+                _ => agentverse::GuardrailError::OutputFiltered(e.to_string()),
+            })
+        })?;
 
         Ok(answer)
     }

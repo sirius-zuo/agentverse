@@ -1,9 +1,12 @@
-use agentverse::{Agent, Config};
+use agentverse::{Agent, Config, ProviderConfig};
 
 fn make_config() -> Config {
     Config {
-        model_api_key: "sk-xxx".to_string(),
-        model_name: "gpt-4".to_string(),
+        provider: ProviderConfig::OpenAI {
+            model_name: "gpt-4".to_string(),
+            api_key: "sk-xxx".to_string(),
+            base_url: None,
+        },
         max_messages: 50,
         tools: vec![],
         prompts_dir: None,

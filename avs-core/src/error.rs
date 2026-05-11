@@ -12,7 +12,7 @@ pub enum AgentError {
     Guardrail(#[from] GuardrailError),
 }
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum ModelError {
     #[error("API error: {0}")]
     ApiError(String),
@@ -20,6 +20,10 @@ pub enum ModelError {
     Timeout(String),
     #[error("Invalid response: {0}")]
     InvalidResponse(String),
+    #[error("Rate limited: {0}")]
+    RateLimited(String),
+    #[error("Circuit breaker open: {0}")]
+    CircuitOpen(String),
 }
 
 #[derive(Error, Debug)]

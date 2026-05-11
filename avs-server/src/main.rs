@@ -44,19 +44,17 @@ async fn main() {
     info!(
         host = %server_config.host,
         port = server_config.port,
-        model = %server_config.agent.model_name,
-        strategy = ?server_config.agent.strategy,
+        provider = ?server_config.agent.provider,
         "Starting AgentVerse server"
     );
 
     // Build agent
     let agent_config = Config {
-        model_api_key: server_config.agent.model_api_key.clone(),
-        model_name: server_config.agent.model_name.clone(),
+        provider: server_config.agent.provider.clone(),
         max_messages: 100,
         tools: vec![],
-            prompts_dir: None,
-            system_prompt: None,
+        prompts_dir: None,
+        system_prompt: None,
     };
 
     let agent = Agent::from_config(agent_config).unwrap_or_else(|e| {
@@ -78,11 +76,16 @@ async fn main() {
     ));
 
     // Build app state
+    let model_name = match &server_config.agent.provider {
+        agentverse::ProviderConfig::OpenAI { model_name, .. } => model_name.clone(),
+        agentverse::ProviderConfig::Anthropic { model_name, .. } => model_name.clone(),
+        agentverse::ProviderConfig::Gemini { model_name, .. } => model_name.clone(),
+    };
     let state = AppState {
         agent: Arc::new(Mutex::new(agent)),
         rate_limiter,
         guardrails_enabled: server_config.guardrails.enabled,
-        model_name: server_config.agent.model_name.clone(),
+        model_name,
         tools: Arc::new(Mutex::new(tool_registry)),
     };
 

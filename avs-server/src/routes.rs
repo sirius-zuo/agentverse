@@ -149,8 +149,11 @@ mod tests {
         AppState {
             agent: Arc::new(Mutex::new(
                 Agent::from_config(Config {
-                    model_api_key: "test-key".to_string(),
-                    model_name: "test-model".to_string(),
+                    provider: agentverse::ProviderConfig::OpenAI {
+                        model_name: "test-model".to_string(),
+                        api_key: "test-key".to_string(),
+                        base_url: None,
+                    },
                     max_messages: 10,
                     tools: vec![],
                     prompts_dir: None,

@@ -22,11 +22,13 @@ pub mod tracing;
 // Public re-exports
 pub use agent::Agent;
 pub use builder::AgentBuilder;
-pub use config::Config;
+pub use config::{Config, ProviderConfig};
 pub use error::{AgentError, ConfigError, GuardrailError, ModelError, ToolError};
 pub use example::Example;
 pub use memory::{Memory, Message, MessageRole, ShortTermMemory};
-pub use model::ModelProvider;
+pub use model::{
+    AnthropicProvider, GeminiProvider, ModelProvider, OpenAICompatible, ProviderWrapper,
+};
 pub use prompt::PromptConfig;
 pub use prompt::PromptRegistry;
 pub use tool::{AsyncTool, SyncTool, ToolResult};

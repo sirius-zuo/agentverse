@@ -3,7 +3,7 @@
 //! Decomposes complex requests into sub-goals, then generates and executes
 //! a plan for each sub-goal, and finally synthesizes results from all sub-goals.
 
-use super::planner::{decompose_request, generate_plan, Plan};
+use super::planner::{decompose_request, generate_plan};
 use agentverse::{AgentError, ModelProvider, PromptRegistry, SyncTool};
 use agentverse_guardrails::check_output;
 use std::sync::{Arc, Mutex};
@@ -95,7 +95,14 @@ where
                 .collect::<Vec<_>>()
                 .join("\n");
 
-            let sub_plan = generate_plan(&*self.model, &self.registry, sub_goal, &tool_names, &conversation).await?;
+            let sub_plan = generate_plan(
+                &*self.model,
+                &self.registry,
+                sub_goal,
+                &tool_names,
+                &conversation,
+            )
+            .await?;
 
             let mut step_results: Vec<String> = Vec::new();
             for step in &sub_plan.steps {
@@ -178,11 +185,17 @@ where
             .await
             .map_err(AgentError::Model)?;
 
-        check_output(&answer).map_err(|e| AgentError::Guardrail(match e {
-            agentverse_guardrails::GuardrailError::OutputFiltered(msg) => agentverse::GuardrailError::OutputFiltered(msg),
-            agentverse_guardrails::GuardrailError::PromptInjection(msg) => agentverse::GuardrailError::PromptInjection(msg),
-            _ => agentverse::GuardrailError::OutputFiltered(e.to_string()),
-        }))?;
+        check_output(&answer).map_err(|e| {
+            AgentError::Guardrail(match e {
+                agentverse_guardrails::GuardrailError::OutputFiltered(msg) => {
+                    agentverse::GuardrailError::OutputFiltered(msg)
+                }
+                agentverse_guardrails::GuardrailError::PromptInjection(msg) => {
+                    agentverse::GuardrailError::PromptInjection(msg)
+                }
+                _ => agentverse::GuardrailError::OutputFiltered(e.to_string()),
+            })
+        })?;
 
         Ok(answer)
     }
