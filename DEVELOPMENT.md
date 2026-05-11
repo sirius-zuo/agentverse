@@ -7,6 +7,7 @@ Complete guide for developing, testing, and deploying agents with AgentVerse.
 - [Architecture Overview](#architecture-overview)
 - [Development Setup](#development-setup)
 - [Creating a Custom Agent](#creating-a-custom-agent)
+- [Multi-LLM Provider Configuration](#multi-llm-provider-configuration)
 - [Writing Tools](#writing-tools)
 - [Prompt Engineering](#prompt-engineering)
 - [Testing Strategies](#testing-strategies)
@@ -133,7 +134,7 @@ agentverse = { path = "path/to/avs-core" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 // src/main.rs
-use agentverse::{Agent, Config};
+use agentverse::{Agent, Config, ProviderConfig};
 use std::path::PathBuf;
 
 #[tokio::main]
@@ -142,8 +143,11 @@ async fn main() {
     let prompts_dir = PathBuf::from("prompts");
 
     let config = Config {
-        model_api_key: std::env::var("MODEL_API_KEY").expect("MODEL_API_KEY not set"),
-        model_name: "gpt-4".to_string(),
+        provider: ProviderConfig::OpenAI {
+            model_name: "gpt-4".to_string(),
+            api_key: std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY not set"),
+            base_url: Some("http://127.0.0.1:9090/v1".to_string()),
+        },
         max_messages: 50,
         tools: vec![],
         prompts_dir: Some(prompts_dir.to_string_lossy().to_string()),
@@ -194,6 +198,119 @@ let agent = Agent::from_config_with_prompts(config, &prompt_config)?;
 
 ```bash
 MODEL_API_KEY=sk-xxx cargo run --bin my-agent
+```
+
+---
+
+---
+
+## Multi-LLM Provider Configuration
+
+AgentVerse supports multiple LLM providers through a unified interface. The `ProviderConfig` enum allows you to switch providers without changing agent code.
+
+### ProviderConfig Enum
+
+| Variant | Fields | Use Case |
+|---------|--------|----------|
+| `OpenAI` | `model_name`, `api_key`, `base_url` | OpenAI-compatible endpoints (llama.cpp, Ollama, vLLM, etc.) |
+| `Anthropic` | `model_name`, `api_key` | Claude models via Anthropic API |
+| `Gemini` | `model_name`, `api_key` | Google Gemini models via Gemini API |
+
+### Configuration Examples
+
+**OpenAI** (or any OpenAI-compatible endpoint):
+```yaml
+provider:
+  type: openai
+  model_name: "gpt-4"
+  api_key: "sk-xxx"
+  base_url: "http://127.0.0.1:9090/v1"  # llama.cpp, Ollama, etc.
+```
+
+**Anthropic**:
+```yaml
+provider:
+  type: anthropic
+  model_name: "claude-3-sonnet-20240229"
+  api_key: "sk-ant-xxx"
+```
+
+**Gemini**:
+```yaml
+provider:
+  type: gemini
+  model_name: "gemini-pro"
+  api_key: "your-gemini-api-key"
+```
+
+### ProviderWrapper: Retry and Circuit Breaker
+
+The `ProviderWrapper` adds resilience to all providers with configurable retry and circuit breaker logic.
+
+**Default Settings:**
+- **Retries**: 3 attempts with exponential backoff (500ms base delay)
+- **Circuit Breaker**: Opens after 5 consecutive failures, resets after 30 seconds
+- **Retryable Errors**: `RateLimited` (HTTP 429) and `ApiError` (HTTP 5xx)
+- **Non-Retryable Errors**: `InvalidResponse`, `CircuitOpen`, `Timeout`
+
+**Custom Configuration:**
+```rust
+let provider = OpenAICompatible::from_config(config)?;
+let wrapper = ProviderWrapper::new(provider)
+    .with_retries(5, 1000)  // 5 retries, 1s base delay
+    .with_circuit_breaker(10, 60);  // Open after 10 failures, reset after 60s
+```
+
+**Error Variants:**
+- `ModelError::RateLimited` — HTTP 429 response
+- `ModelError::CircuitOpen` — Circuit breaker is open, retry later
+- `ModelError::ApiError` — Other API errors (non-429)
+- `ModelError::InvalidResponse` — Response parsing failed
+- `ModelError::Timeout` — Request timed out
+
+### Using Providers in Code
+
+```rust
+use agentverse::{Agent, Config, ProviderConfig};
+
+// OpenAI
+let config = Config {
+    provider: ProviderConfig::OpenAI {
+        model_name: "gpt-4".to_string(),
+        api_key: std::env::var("OPENAI_API_KEY").unwrap(),
+        base_url: Some("http://127.0.0.1:9090/v1".to_string()),
+    },
+    max_messages: 50,
+    tools: vec![],
+    prompts_dir: None,
+    system_prompt: None,
+};
+
+let agent = Agent::from_config(config)?;
+
+// Anthropic
+let config = Config {
+    provider: ProviderConfig::Anthropic {
+        model_name: "claude-3-sonnet-20240229".to_string(),
+        api_key: std::env::var("ANTHROPIC_API_KEY").unwrap(),
+    },
+    max_messages: 50,
+    tools: vec![],
+    prompts_dir: None,
+    system_prompt: None,
+};
+
+// Gemini
+let config = Config {
+    provider: ProviderConfig::Gemini {
+        model_name: "gemini-pro".to_string(),
+        api_key: std::env::var("GEMINI_API_KEY").unwrap(),
+    },
+    max_messages: 50,
+    tools: vec![],
+    prompts_dir: None,
+    system_prompt: None,
+};
 ```
 
 ---
@@ -400,8 +517,11 @@ use agentverse::{Agent, Config};
 #[test]
 fn test_agent_creation() {
     let config = Config {
-        model_api_key: "test-key".to_string(),
-        model_name: "gpt-4".to_string(),
+        provider: agentverse::ProviderConfig::OpenAI {
+            model_name: "gpt-4".to_string(),
+            api_key: "test-key".to_string(),
+            base_url: None,
+        },
         max_messages: 10,
         tools: vec![],
         prompts_dir: None,
@@ -511,9 +631,11 @@ docker run -p 8080:8080 \
 host: "0.0.0.0"
 port: 8080
 agent:
-  model_api_key: "sk-xxx"
-  model_name: "gpt-4"
-  strategy: ReAct
+  provider:
+    type: openai
+    model_name: "gpt-4"
+    api_key: "sk-xxx"
+    base_url: "https://api.openai.com/v1"
   max_iterations: 10
 guardrails:
   enabled: true
@@ -712,13 +834,35 @@ RUST_LOG=agentverse=info,agentverse_guardrails=debug cargo run -p agentverse-ser
 
 | Crate | Key Types |
 |-------|-----------|
-| `agentverse` | `Agent`, `Config`, `AgentBuilder`, `PromptRegistry`, `Example`, `SyncTool`, `AsyncTool` |
+| `agentverse` | `Agent`, `Config`, `ProviderConfig`, `AgentBuilder`, `PromptRegistry`, `Example`, `SyncTool`, `AsyncTool`, `ModelError` |
 | `agentverse-react` | `ReActStrategy` |
 | `agentverse-plan` | `PlanStrategy`, `HierarchicalStrategy` |
 | `agentverse-router` | `StrategyRouter`, `StrategyName` |
 | `agentverse-guardrails` | `check_prompt`, `check_output`, `RateLimiter` |
 | `agentverse-tools` | `Calculator`, `DateTimeTool`, `FileSearch`, `HttpClient`, `ToolRegistry` |
 | `agentverse-integration` | `SlackAdapter`, `WebhookAdapter` |
+
+### ProviderConfig Enum
+
+```rust
+pub enum ProviderConfig {
+    OpenAI { model_name: String, api_key: String, base_url: Option<String> },
+    Anthropic { model_name: String, api_key: String },
+    Gemini { model_name: String, api_key: String },
+}
+```
+
+### ModelError Variants
+
+```rust
+pub enum ModelError {
+    ApiError(String),           // General API errors
+    Timeout(String),            // Request timeout
+    InvalidResponse(String),    // Response parsing failed
+    RateLimited(String),        // HTTP 429
+    CircuitOpen(String),        // Circuit breaker is open
+}
+```
 
 ---
 

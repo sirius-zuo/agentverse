@@ -58,6 +58,65 @@ curl -X POST http://localhost:8080/invoke \
 > - **Groq**: `https://api.groq.com/openai/v1`
 > - **Together AI**: `https://api.together.xyz/v1`
 
+## Multi-LLM Provider Support
+
+AgentVerse supports multiple LLM providers through a unified interface. The `ProviderConfig` enum allows you to switch providers without changing agent code.
+
+### Supported Providers
+
+| Provider | Use Case | Example Model |
+|---|---|---|
+| **OpenAI** | API-compatible with OpenAI's chat completions (works with llama.cpp, Ollama, vLLM, etc.) | `gpt-4`, `phi3-mini`, `llama-3` |
+| **Anthropic** | Claude models via Anthropic's API | `claude-3-opus`, `claude-3-sonnet` |
+| **Gemini** | Google's Gemini models via Gemini API | `gemini-pro`, `gemini-1.5-flash` |
+
+### Configuration File
+
+```yaml
+# config.yaml
+host: "0.0.0.0"
+port: 8080
+agent:
+  provider:
+    type: openai  # or "anthropic" or "gemini"
+    model_name: "gpt-4"
+    api_key: "sk-xxx"
+    base_url: "http://127.0.0.1:9090/v1"  # only for OpenAI
+  max_iterations: 10
+guardrails:
+  enabled: true
+  max_requests_per_minute: 60
+```
+
+#### Provider Examples
+
+**OpenAI** (or any OpenAI-compatible endpoint):
+```yaml
+provider:
+  type: openai
+  model_name: "gpt-4"
+  api_key: "sk-xxx"
+  base_url: "http://127.0.0.1:9090/v1"  # llama.cpp, Ollama, etc.
+```
+
+**Anthropic**:
+```yaml
+provider:
+  type: anthropic
+  model_name: "claude-3-sonnet-20240229"
+  api_key: "sk-ant-xxx"
+```
+
+**Gemini**:
+```yaml
+provider:
+  type: gemini
+  model_name: "gemini-pro"
+  api_key: "your-gemini-api-key"
+```
+
+> **Note:** The `base_url` field is only required for OpenAI-compatible providers (e.g., llama.cpp, Ollama). Anthropic and Gemini use fixed endpoints.
+
 ## Environment Variables
 
 | Variable | Default | Description |
@@ -68,22 +127,6 @@ curl -X POST http://localhost:8080/invoke \
 | `API_KEY` | *(empty)* | Server auth token (Bearer token for `/invoke` on port 8080) |
 | `CONFIG_PATH` | *(none)* | Path to YAML config file |
 | `RUST_LOG` | `info` | Logging level |
-
-## Configuration File
-
-```yaml
-# config.yaml
-host: "0.0.0.0"
-port: 8080
-agent:
-  model_api_key: ""
-  model_name: "gpt-4"
-  strategy: ReAct
-  max_iterations: 10
-guardrails:
-  enabled: true
-  max_requests_per_minute: 60
-```
 
 Run with: `CONFIG_PATH=config.yaml cargo run -p agentverse-server`
 
