@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - run: sudo apt-get install -y protobuf-compiler
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo check --all
 
@@ -17,6 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - run: sudo apt-get install -y protobuf-compiler
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --all
 
@@ -24,6 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - run: sudo apt-get install -y protobuf-compiler
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo clippy --all -- -D warnings
 
@@ -38,6 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - run: sudo apt-get install -y protobuf-compiler
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo doc --all --no-deps --document-private-items
 
@@ -54,5 +58,6 @@ jobs:
     needs: [check]
     steps:
       - uses: actions/checkout@v4
+      - run: sudo apt-get install -y protobuf-compiler
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo check --examples
