@@ -115,10 +115,7 @@ impl ModelProvider for ProviderWrapper {
         self.inner.name()
     }
 
-    async fn generate(
-        &self,
-        request: GenerateRequest,
-    ) -> Result<GenerateResponse, ModelError> {
+    async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, ModelError> {
         let mut cb = self.circuit_breaker.write().await;
         if !cb.can_execute() {
             return Err(ModelError::CircuitOpen(

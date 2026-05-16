@@ -105,10 +105,7 @@ impl ModelProvider for GeminiProvider {
         &self.model_name
     }
 
-    async fn generate(
-        &self,
-        request: GenerateRequest,
-    ) -> Result<GenerateResponse, ModelError> {
+    async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, ModelError> {
         use crate::memory::MessageRole;
 
         let system_instruction = request.system.map(|s| GeminiSystemInstruction {
@@ -120,10 +117,10 @@ impl ModelProvider for GeminiProvider {
             .into_iter()
             .filter_map(|m| {
                 let role = match m.role {
-                    MessageRole::User      => "user",
+                    MessageRole::User => "user",
                     MessageRole::Assistant => "model",
-                    MessageRole::Tool      => "user",
-                    MessageRole::System    => return None,
+                    MessageRole::Tool => "user",
+                    MessageRole::System => return None,
                 };
                 Some(GeminiContent {
                     role: role.to_string(),
@@ -134,15 +131,22 @@ impl ModelProvider for GeminiProvider {
 
         let gemini_tools = request.tools.map(|t| {
             vec![GeminiToolConfig {
-                functions: t.into_iter().map(|tool| GeminiFunction {
-                    name: tool.name,
-                    description: tool.description,
-                    parameters: tool.parameters,
-                }).collect(),
+                functions: t
+                    .into_iter()
+                    .map(|tool| GeminiFunction {
+                        name: tool.name,
+                        description: tool.description,
+                        parameters: tool.parameters,
+                    })
+                    .collect(),
             }]
         });
 
-        let req = GeminiRequest { system_instruction, contents, tools: gemini_tools };
+        let req = GeminiRequest {
+            system_instruction,
+            contents,
+            tools: gemini_tools,
+        };
         let url = format!("{}?key={}", self.generate_content_url(), self.api_key);
 
         let response = self
@@ -155,10 +159,16 @@ impl ModelProvider for GeminiProvider {
             .map_err(|e| ModelError::ApiError(e.to_string()))?;
 
         let status = response.status();
-        let body = response.text().await.map_err(|e| ModelError::ApiError(e.to_string()))?;
+        let body = response
+            .text()
+            .await
+            .map_err(|e| ModelError::ApiError(e.to_string()))?;
 
         if status == 429 {
-            return Err(ModelError::RateLimited(format!("Gemini rate limited: {}", body)));
+            return Err(ModelError::RateLimited(format!(
+                "Gemini rate limited: {}",
+                body
+            )));
         }
         if !status.is_success() {
             return Err(ModelError::ApiError(format!("HTTP {}: {}", status, body)));
@@ -171,9 +181,11 @@ impl ModelProvider for GeminiProvider {
             .candidates
             .into_iter()
             .next()
-            .and_then(|c| c.content.parts.into_iter().next().map(|p| match p {
-                GeminiPart::Text { text } => text,
-            }))
+            .and_then(|c| {
+                c.content.parts.into_iter().next().map(|p| match p {
+                    GeminiPart::Text { text } => text,
+                })
+            })
             .ok_or_else(|| ModelError::InvalidResponse("No content in response".to_string()))?;
 
         Ok(GenerateResponse {

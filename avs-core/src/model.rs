@@ -64,10 +64,7 @@ pub struct CycleResult {
 pub trait ModelProvider: Send + Sync {
     fn name(&self) -> &str;
 
-    async fn generate(
-        &self,
-        request: GenerateRequest,
-    ) -> Result<GenerateResponse, ModelError>;
+    async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, ModelError>;
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -83,8 +80,18 @@ mod tests {
 
     #[test]
     fn usage_stats_add_assign() {
-        let mut a = UsageStats { input_tokens: 10, output_tokens: 5, cache_write_tokens: 100, cache_read_tokens: 0 };
-        let b = UsageStats { input_tokens: 20, output_tokens: 8, cache_write_tokens: 0, cache_read_tokens: 100 };
+        let mut a = UsageStats {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_write_tokens: 100,
+            cache_read_tokens: 0,
+        };
+        let b = UsageStats {
+            input_tokens: 20,
+            output_tokens: 8,
+            cache_write_tokens: 0,
+            cache_read_tokens: 100,
+        };
         a += b;
         assert_eq!(a.input_tokens, 30);
         assert_eq!(a.output_tokens, 13);
@@ -103,7 +110,12 @@ mod tests {
     fn cycle_result_holds_answer_and_usage() {
         let r = CycleResult {
             answer: "done".to_string(),
-            total_usage: UsageStats { input_tokens: 50, output_tokens: 10, cache_write_tokens: 40, cache_read_tokens: 40 },
+            total_usage: UsageStats {
+                input_tokens: 50,
+                output_tokens: 10,
+                cache_write_tokens: 40,
+                cache_read_tokens: 40,
+            },
         };
         assert_eq!(r.answer, "done");
         assert_eq!(r.total_usage.cache_read_tokens, 40);

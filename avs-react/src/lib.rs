@@ -7,6 +7,6 @@ pub mod cycle;
 pub mod parse;
 pub mod react;
 
+pub use agentverse::CycleResult;
 pub use cycle::{CycleAction, CycleSkeleton};
 pub use react::ReActStrategy;
-pub use agentverse::CycleResult;

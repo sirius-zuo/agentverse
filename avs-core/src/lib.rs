@@ -27,7 +27,7 @@ pub use error::{AgentError, ConfigError, GuardrailError, ModelError, ToolError};
 pub use example::Example;
 pub use memory::{Memory, Message, MessageRole, ShortTermMemory};
 pub use model::{
-    AnthropicProvider, CycleResult, GenerateRequest, GenerateResponse, GeminiProvider,
+    AnthropicProvider, CycleResult, GeminiProvider, GenerateRequest, GenerateResponse,
     ModelProvider, OpenAICompatible, ProviderWrapper, ToolDefinition, UsageStats,
 };
 pub use prompt::PromptConfig;

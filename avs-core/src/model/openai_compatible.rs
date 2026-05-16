@@ -116,28 +116,31 @@ impl ModelProvider for OpenAICompatible {
         &self.model_name
     }
 
-    async fn generate(
-        &self,
-        request: GenerateRequest,
-    ) -> Result<GenerateResponse, ModelError> {
+    async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, ModelError> {
         use crate::memory::MessageRole;
 
         let mut messages = Vec::new();
 
         // System → prepend as role:"system"
         if let Some(system) = request.system {
-            messages.push(ChatMessage { role: "system".to_string(), content: system });
+            messages.push(ChatMessage {
+                role: "system".to_string(),
+                content: system,
+            });
         }
 
         // Conversation messages — map roles
         for m in request.messages {
             let role = match m.role {
-                MessageRole::User      => "user",
+                MessageRole::User => "user",
                 MessageRole::Assistant => "assistant",
-                MessageRole::Tool      => "tool",
-                MessageRole::System    => continue, // already handled above
+                MessageRole::Tool => "tool",
+                MessageRole::System => continue, // already handled above
             };
-            messages.push(ChatMessage { role: role.to_string(), content: m.content });
+            messages.push(ChatMessage {
+                role: role.to_string(),
+                content: m.content,
+            });
         }
 
         let chat_tools = request.tools.map(|t| {
@@ -153,7 +156,11 @@ impl ModelProvider for OpenAICompatible {
                 .collect()
         });
 
-        let req = ChatRequest { model: self.model_name.clone(), messages, tools: chat_tools };
+        let req = ChatRequest {
+            model: self.model_name.clone(),
+            messages,
+            tools: chat_tools,
+        };
 
         let response = self
             .client
@@ -166,7 +173,10 @@ impl ModelProvider for OpenAICompatible {
             .map_err(|e| ModelError::ApiError(e.to_string()))?;
 
         let status = response.status();
-        let body = response.text().await.map_err(|e| ModelError::ApiError(e.to_string()))?;
+        let body = response
+            .text()
+            .await
+            .map_err(|e| ModelError::ApiError(e.to_string()))?;
 
         if !status.is_success() {
             return Err(ModelError::ApiError(format!("HTTP {}: {}", status, body)));

@@ -14,10 +14,7 @@ impl agentverse::ModelProvider for MockModel {
         "mock-model"
     }
 
-    async fn generate(
-        &self,
-        _request: GenerateRequest,
-    ) -> Result<GenerateResponse, ModelError> {
+    async fn generate(&self, _request: GenerateRequest) -> Result<GenerateResponse, ModelError> {
         Ok(GenerateResponse {
             content: self.response.clone(),
             usage: UsageStats::default(),

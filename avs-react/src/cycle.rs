@@ -152,8 +152,8 @@ where
 
     /// Build a structured GenerateRequest from the system template, memory, and tools.
     pub fn build_request(&self) -> Result<agentverse::GenerateRequest, AgentError> {
-        use std::collections::HashMap;
         use serde_json::Value;
+        use std::collections::HashMap;
 
         let tools_str: String = self
             .tools
@@ -181,7 +181,11 @@ where
         Ok(agentverse::GenerateRequest {
             system,
             messages,
-            tools: if tool_defs.is_empty() { None } else { Some(tool_defs) },
+            tools: if tool_defs.is_empty() {
+                None
+            } else {
+                Some(tool_defs)
+            },
         })
     }
 
@@ -196,7 +200,9 @@ where
                 agentverse_guardrails::GuardrailError::OutputFiltered(msg) => {
                     AgentError::Guardrail(agentverse::GuardrailError::OutputFiltered(msg))
                 }
-                _ => AgentError::Guardrail(agentverse::GuardrailError::PromptInjection(e.to_string())),
+                _ => AgentError::Guardrail(agentverse::GuardrailError::PromptInjection(
+                    e.to_string(),
+                )),
             })?;
         }
         Ok(request)

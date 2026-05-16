@@ -3,7 +3,9 @@
 //! Tests the PlanStep, Plan, and strategy structures with mock models.
 
 use agentverse::memory::{Message, MessageRole};
-use agentverse::{GenerateRequest, GenerateResponse, ModelError, ModelProvider, SyncTool, UsageStats};
+use agentverse::{
+    GenerateRequest, GenerateResponse, ModelError, ModelProvider, SyncTool, UsageStats,
+};
 use agentverse_plan::{Plan, PlanStep};
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -22,10 +24,7 @@ impl ModelProvider for MockModel {
         "mock-model"
     }
 
-    async fn generate(
-        &self,
-        _request: GenerateRequest,
-    ) -> Result<GenerateResponse, ModelError> {
+    async fn generate(&self, _request: GenerateRequest) -> Result<GenerateResponse, ModelError> {
         let idx = self.index.fetch_add(1, Ordering::SeqCst) % self.responses.len();
         Ok(GenerateResponse {
             content: self.responses[idx].clone(),
@@ -181,7 +180,10 @@ async fn test_mock_model_responses() {
 
     let req = || GenerateRequest {
         system: None,
-        messages: vec![Message { role: MessageRole::User, content: "prompt".to_string() }],
+        messages: vec![Message {
+            role: MessageRole::User,
+            content: "prompt".to_string(),
+        }],
         tools: None,
     };
 

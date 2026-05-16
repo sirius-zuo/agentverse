@@ -42,10 +42,14 @@ where
     /// The loop runs until the model returns an answer, an error occurs,
     /// or max iterations is reached.
     pub async fn run(&mut self, input: String) -> Result<agentverse::CycleResult, AgentError> {
-        self.skeleton.memory().lock().unwrap().append(agentverse::Message {
-            role: agentverse::memory::MessageRole::User,
-            content: input,
-        });
+        self.skeleton
+            .memory()
+            .lock()
+            .unwrap()
+            .append(agentverse::Message {
+                role: agentverse::memory::MessageRole::User,
+                content: input,
+            });
 
         loop {
             if self.skeleton.current_iteration() >= self.skeleton.max_iterations() {
@@ -68,30 +72,44 @@ where
 
             match action {
                 CycleAction::Continue { thought } => {
-                    self.skeleton.memory().lock().unwrap().append(agentverse::Message {
-                        role: agentverse::memory::MessageRole::Assistant,
-                        content: format!("Thought: {}", thought),
-                    });
+                    self.skeleton
+                        .memory()
+                        .lock()
+                        .unwrap()
+                        .append(agentverse::Message {
+                            role: agentverse::memory::MessageRole::Assistant,
+                            content: format!("Thought: {}", thought),
+                        });
                 }
                 CycleAction::ToolCall { tool_name, args } => {
                     let result = self.skeleton.execute_tool(&tool_name, args)?;
-                    self.skeleton.memory().lock().unwrap().append(agentverse::Message {
-                        role: agentverse::memory::MessageRole::Tool,
-                        content: format!("Tool: {}\nResult: {}", tool_name, result),
-                    });
+                    self.skeleton
+                        .memory()
+                        .lock()
+                        .unwrap()
+                        .append(agentverse::Message {
+                            role: agentverse::memory::MessageRole::Tool,
+                            content: format!("Tool: {}\nResult: {}", tool_name, result),
+                        });
                 }
                 CycleAction::Done { answer } => {
-                    self.skeleton.memory().lock().unwrap().append(agentverse::Message {
-                        role: agentverse::memory::MessageRole::Assistant,
-                        content: answer.clone(),
-                    });
+                    self.skeleton
+                        .memory()
+                        .lock()
+                        .unwrap()
+                        .append(agentverse::Message {
+                            role: agentverse::memory::MessageRole::Assistant,
+                            content: answer.clone(),
+                        });
                     return Ok(agentverse::CycleResult {
                         answer,
                         total_usage: self.skeleton.total_usage(),
                     });
                 }
                 CycleAction::Error { message } => {
-                    return Err(AgentError::Model(agentverse::ModelError::InvalidResponse(message)));
+                    return Err(AgentError::Model(agentverse::ModelError::InvalidResponse(
+                        message,
+                    )));
                 }
             }
         }

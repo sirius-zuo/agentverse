@@ -89,7 +89,8 @@ pub async fn generate_plan(
 
     let response = model.generate(request_obj).await?;
 
-    let json_str = response.content
+    let json_str = response
+        .content
         .trim()
         .trim_start_matches('`')
         .trim_start_matches("json")
@@ -148,7 +149,8 @@ pub async fn decompose_request(
 
     let response = model.generate(request_obj).await?;
 
-    let json_str = response.content
+    let json_str = response
+        .content
         .trim()
         .trim_start_matches('`')
         .trim_start_matches("json")
