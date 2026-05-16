@@ -6,7 +6,7 @@ use serde_json::Value;
 use super::ModelProvider;
 use crate::config::ProviderConfig;
 use crate::error::ModelError;
-use crate::model::ToolDefinition;
+use crate::model::{GenerateRequest, GenerateResponse, UsageStats};
 
 #[derive(Debug, Clone)]
 pub struct GeminiProvider {
@@ -17,7 +17,14 @@ pub struct GeminiProvider {
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct GeminiSystemInstruction {
+    parts: Vec<GeminiPart>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct GeminiRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    system_instruction: Option<GeminiSystemInstruction>,
     contents: Vec<GeminiContent>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<GeminiToolConfig>>,
@@ -100,58 +107,59 @@ impl ModelProvider for GeminiProvider {
 
     async fn generate(
         &self,
-        prompt: &str,
-        tools: Option<Vec<ToolDefinition>>,
-    ) -> Result<String, ModelError> {
-        let contents = vec![GeminiContent {
-            role: "user".to_string(),
-            parts: vec![GeminiPart::Text {
-                text: prompt.to_string(),
-            }],
-        }];
+        request: GenerateRequest,
+    ) -> Result<GenerateResponse, ModelError> {
+        use crate::memory::MessageRole;
 
-        let gemini_tools = tools.map(|t| {
+        let system_instruction = request.system.map(|s| GeminiSystemInstruction {
+            parts: vec![GeminiPart::Text { text: s }],
+        });
+
+        let contents: Vec<GeminiContent> = request
+            .messages
+            .into_iter()
+            .filter_map(|m| {
+                let role = match m.role {
+                    MessageRole::User      => "user",
+                    MessageRole::Assistant => "model",
+                    MessageRole::Tool      => "user",
+                    MessageRole::System    => return None,
+                };
+                Some(GeminiContent {
+                    role: role.to_string(),
+                    parts: vec![GeminiPart::Text { text: m.content }],
+                })
+            })
+            .collect();
+
+        let gemini_tools = request.tools.map(|t| {
             vec![GeminiToolConfig {
-                functions: t
-                    .into_iter()
-                    .map(|tool| GeminiFunction {
-                        name: tool.name,
-                        description: tool.description,
-                        parameters: tool.parameters,
-                    })
-                    .collect(),
+                functions: t.into_iter().map(|tool| GeminiFunction {
+                    name: tool.name,
+                    description: tool.description,
+                    parameters: tool.parameters,
+                }).collect(),
             }]
         });
 
-        let request = GeminiRequest {
-            contents,
-            tools: gemini_tools,
-        };
-
+        let req = GeminiRequest { system_instruction, contents, tools: gemini_tools };
         let url = format!("{}?key={}", self.generate_content_url(), self.api_key);
 
         let response = self
             .client
             .post(&url)
             .header("Content-Type", "application/json")
-            .json(&request)
+            .json(&req)
             .send()
             .await
             .map_err(|e| ModelError::ApiError(e.to_string()))?;
 
         let status = response.status();
-        let body = response
-            .text()
-            .await
-            .map_err(|e| ModelError::ApiError(e.to_string()))?;
+        let body = response.text().await.map_err(|e| ModelError::ApiError(e.to_string()))?;
 
         if status == 429 {
-            return Err(ModelError::RateLimited(format!(
-                "Gemini rate limited: {}",
-                body
-            )));
+            return Err(ModelError::RateLimited(format!("Gemini rate limited: {}", body)));
         }
-
         if !status.is_success() {
             return Err(ModelError::ApiError(format!("HTTP {}: {}", status, body)));
         }
@@ -159,14 +167,18 @@ impl ModelProvider for GeminiProvider {
         let resp: GeminiResponse =
             serde_json::from_str(&body).map_err(|e| ModelError::InvalidResponse(e.to_string()))?;
 
-        resp.candidates
+        let content = resp
+            .candidates
             .into_iter()
             .next()
-            .and_then(|c| {
-                c.content.parts.into_iter().next().map(|p| match p {
-                    GeminiPart::Text { text } => text,
-                })
-            })
-            .ok_or_else(|| ModelError::InvalidResponse("No content in response".to_string()))
+            .and_then(|c| c.content.parts.into_iter().next().map(|p| match p {
+                GeminiPart::Text { text } => text,
+            }))
+            .ok_or_else(|| ModelError::InvalidResponse("No content in response".to_string()))?;
+
+        Ok(GenerateResponse {
+            content,
+            usage: UsageStats::default(), // Gemini context caching is a separate API
+        })
     }
 }
