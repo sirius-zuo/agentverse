@@ -1,0 +1,10 @@
+[package]
+name = "example-anthropic-react"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+agentverse = { path = "../../avs-core" }
+agentverse-react = { path = "../../avs-react" }
+agentverse-tools = { path = "../../avs-tools" }
+tokio.workspace = true

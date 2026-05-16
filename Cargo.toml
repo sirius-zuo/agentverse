@@ -17,6 +17,7 @@ members = [
     "examples/rag-qa",
     "examples/web-search-agent",
     "examples/code-review-agent",
+    "examples/anthropic-react",
 ]
 resolver = "2"
 

@@ -107,6 +107,66 @@ struct AnthropicUsage {
     cache_read_input_tokens: u32,
 }
 
+// ── Internal helpers ─────────────────────────────────────────────────────────
+
+/// Build the Anthropic wire request from a `GenerateRequest`, applying cache
+/// markers. Split out so tests can call it directly without an HTTP roundtrip.
+fn build_wire_request(model_name: &str, request: GenerateRequest) -> AnthropicRequest {
+    // 1. Tools — cache_control on the last entry
+    let tools = request.tools.map(|defs| {
+        let mut tools: Vec<AnthropicTool> = defs
+            .into_iter()
+            .map(|d: ToolDefinition| AnthropicTool {
+                name: d.name,
+                description: d.description,
+                input_schema: d.parameters,
+                cache_control: None,
+            })
+            .collect();
+        if let Some(last) = tools.last_mut() {
+            last.cache_control = Some(CacheControl {
+                cache_type: "ephemeral",
+            });
+        }
+        tools
+    });
+
+    // 2. System — single block, always cached
+    let system: Vec<AnthropicContentBlock> = request
+        .system
+        .map(|s| vec![AnthropicContentBlock::text_cached(s)])
+        .unwrap_or_default();
+
+    // 3. Messages — filter System role; cache breakpoint on the penultimate
+    let mut messages: Vec<AnthropicMessage> = request
+        .messages
+        .into_iter()
+        .filter_map(|m| {
+            AnthropicProvider::map_role(m.role).map(|role| AnthropicMessage {
+                role,
+                content: vec![AnthropicContentBlock::text(m.content)],
+            })
+        })
+        .collect();
+
+    if messages.len() >= 2 {
+        let penultimate = messages.len() - 2;
+        if let Some(block) = messages[penultimate].content.last_mut() {
+            block.cache_control = Some(CacheControl {
+                cache_type: "ephemeral",
+            });
+        }
+    }
+
+    AnthropicRequest {
+        model: model_name.to_string(),
+        system,
+        messages,
+        tools,
+        max_tokens: 4096,
+    }
+}
+
 // ── Constructor ───────────────────────────────────────────────────────────────
 
 impl AnthropicProvider {
@@ -156,64 +216,7 @@ impl ModelProvider for AnthropicProvider {
     }
 
     async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, ModelError> {
-        // Caching render order: tools → system → messages
-        // Cache breakpoint on the LAST item in each stable section.
-
-        // 1. Tools — cache_control on the last entry
-        let tools = request.tools.map(|defs| {
-            let mut tools: Vec<AnthropicTool> = defs
-                .into_iter()
-                .map(|d: ToolDefinition| AnthropicTool {
-                    name: d.name,
-                    description: d.description,
-                    input_schema: d.parameters,
-                    cache_control: None,
-                })
-                .collect();
-            if let Some(last) = tools.last_mut() {
-                last.cache_control = Some(CacheControl {
-                    cache_type: "ephemeral",
-                });
-            }
-            tools
-        });
-
-        // 2. System — single block, always cached
-        let system: Vec<AnthropicContentBlock> = request
-            .system
-            .map(|s| vec![AnthropicContentBlock::text_cached(s)])
-            .unwrap_or_default();
-
-        // 3. Messages — filter System role, preserve user/assistant/tool roles
-        //    cache_control on the penultimate message (last stable turn before current user query)
-        let mut messages: Vec<AnthropicMessage> = request
-            .messages
-            .into_iter()
-            .filter_map(|m| {
-                Self::map_role(m.role).map(|role| AnthropicMessage {
-                    role,
-                    content: vec![AnthropicContentBlock::text(m.content)],
-                })
-            })
-            .collect();
-
-        // Mark penultimate message's last block as cached (if at least 2 messages exist)
-        if messages.len() >= 2 {
-            let penultimate = messages.len() - 2;
-            if let Some(block) = messages[penultimate].content.last_mut() {
-                block.cache_control = Some(CacheControl {
-                    cache_type: "ephemeral",
-                });
-            }
-        }
-
-        let wire_request = AnthropicRequest {
-            model: self.model_name.clone(),
-            system,
-            messages,
-            tools,
-            max_tokens: 4096,
-        };
+        let wire_request = build_wire_request(&self.model_name, request);
 
         let response = self
             .client
@@ -264,5 +267,183 @@ impl ModelProvider for AnthropicProvider {
                 cache_read_tokens: resp.usage.cache_read_input_tokens,
             },
         })
+    }
+}
+
+// ── Cache-marker unit tests ───────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memory::{Message, MessageRole};
+
+    fn user(content: &str) -> Message {
+        Message {
+            role: MessageRole::User,
+            content: content.to_string(),
+        }
+    }
+
+    fn assistant(content: &str) -> Message {
+        Message {
+            role: MessageRole::Assistant,
+            content: content.to_string(),
+        }
+    }
+
+    fn tool_def(name: &str) -> ToolDefinition {
+        ToolDefinition {
+            name: name.to_string(),
+            description: format!("{} description", name),
+            parameters: serde_json::json!({"type":"object","properties":{}}),
+        }
+    }
+
+    #[test]
+    fn system_block_is_always_cached() {
+        let wire = build_wire_request(
+            "m",
+            GenerateRequest {
+                system: Some("You are helpful.".to_string()),
+                messages: vec![user("hi")],
+                tools: None,
+            },
+        );
+        assert_eq!(wire.system.len(), 1);
+        assert_eq!(wire.system[0].text, "You are helpful.");
+        assert_eq!(
+            wire.system[0].cache_control.as_ref().unwrap().cache_type,
+            "ephemeral"
+        );
+    }
+
+    #[test]
+    fn no_system_produces_empty_system_vec() {
+        let wire = build_wire_request(
+            "m",
+            GenerateRequest {
+                system: None,
+                messages: vec![user("hi")],
+                tools: None,
+            },
+        );
+        assert!(wire.system.is_empty());
+    }
+
+    #[test]
+    fn last_tool_is_cached_others_are_not() {
+        let wire = build_wire_request(
+            "m",
+            GenerateRequest {
+                system: None,
+                messages: vec![user("hi")],
+                tools: Some(vec![tool_def("alpha"), tool_def("beta"), tool_def("gamma")]),
+            },
+        );
+        let tools = wire.tools.unwrap();
+        assert_eq!(tools.len(), 3);
+        assert!(tools[0].cache_control.is_none(), "alpha must not be cached");
+        assert!(tools[1].cache_control.is_none(), "beta must not be cached");
+        assert_eq!(
+            tools[2].cache_control.as_ref().unwrap().cache_type,
+            "ephemeral",
+            "gamma (last) must be cached"
+        );
+    }
+
+    #[test]
+    fn single_message_has_no_message_cache_breakpoint() {
+        let wire = build_wire_request(
+            "m",
+            GenerateRequest {
+                system: None,
+                messages: vec![user("only message")],
+                tools: None,
+            },
+        );
+        assert_eq!(wire.messages.len(), 1);
+        assert!(
+            wire.messages[0].content[0].cache_control.is_none(),
+            "single message must not be cached"
+        );
+    }
+
+    #[test]
+    fn penultimate_message_gets_cache_breakpoint() {
+        // [user1, assistant1, user2(current)]
+        // Penultimate = assistant1 (index 1)
+        let wire = build_wire_request(
+            "m",
+            GenerateRequest {
+                system: None,
+                messages: vec![user("q1"), assistant("a1"), user("q2")],
+                tools: None,
+            },
+        );
+        let msgs = &wire.messages;
+        assert_eq!(msgs.len(), 3);
+        assert!(
+            msgs[0].content[0].cache_control.is_none(),
+            "user1 not cached"
+        );
+        assert_eq!(
+            msgs[1].content[0]
+                .cache_control
+                .as_ref()
+                .unwrap()
+                .cache_type,
+            "ephemeral",
+            "assistant1 (penultimate) must be cached"
+        );
+        assert!(
+            msgs[2].content[0].cache_control.is_none(),
+            "user2 (current) must not be cached"
+        );
+    }
+
+    #[test]
+    fn two_messages_caches_first() {
+        // [user1, user2(current)] → penultimate = user1
+        let wire = build_wire_request(
+            "m",
+            GenerateRequest {
+                system: None,
+                messages: vec![user("first"), user("second")],
+                tools: None,
+            },
+        );
+        assert_eq!(
+            wire.messages[0].content[0]
+                .cache_control
+                .as_ref()
+                .unwrap()
+                .cache_type,
+            "ephemeral"
+        );
+        assert!(wire.messages[1].content[0].cache_control.is_none());
+    }
+
+    #[test]
+    fn system_role_messages_are_filtered_out() {
+        let wire = build_wire_request(
+            "m",
+            GenerateRequest {
+                system: None,
+                messages: vec![
+                    Message {
+                        role: MessageRole::System,
+                        content: "ignored".to_string(),
+                    },
+                    user("hi"),
+                ],
+                tools: None,
+            },
+        );
+        assert_eq!(
+            wire.messages.len(),
+            1,
+            "System-role message must be filtered"
+        );
+        assert_eq!(wire.messages[0].content[0].text, "hi");
     }
 }

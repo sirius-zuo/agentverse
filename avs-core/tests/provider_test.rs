@@ -1,9 +1,10 @@
 use agentverse::memory::{Message, MessageRole};
 use agentverse::{
     AnthropicProvider, GeminiProvider, GenerateRequest, ModelProvider, OpenAICompatible,
-    ProviderConfig, ProviderWrapper,
+    ProviderConfig, ProviderWrapper, ToolDefinition,
 };
 use httpmock::prelude::*;
+use serde_json::json;
 
 fn hello_request() -> GenerateRequest {
     GenerateRequest {
@@ -148,6 +149,78 @@ async fn test_gemini_provider_basic() {
     assert_eq!(result.unwrap().content, "Hello from Gemini!");
 
     mock.assert();
+}
+
+// ── Anthropic HTTP-level tests ────────────────────────────────────────────────
+
+fn anthropic_ok_response() -> serde_json::Value {
+    json!({
+        "content": [{"type": "text", "text": "ok"}],
+        "usage": {
+            "input_tokens": 50,
+            "output_tokens": 10,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0
+        }
+    })
+}
+
+#[tokio::test]
+async fn test_anthropic_sends_caching_beta_header() {
+    let server = MockServer::start();
+    let mock = server.mock(|when, then| {
+        when.method("POST")
+            .path("/v1/messages")
+            .header("anthropic-beta", "prompt-caching-2024-07-31");
+        then.status(200).json_body(anthropic_ok_response());
+    });
+
+    let provider = AnthropicProvider::new(&server.base_url(), "claude-haiku-4-5", "key");
+    provider.generate(hello_request()).await.unwrap();
+    mock.assert();
+}
+
+#[tokio::test]
+async fn test_anthropic_usage_maps_cache_tokens() {
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method("POST").path("/v1/messages");
+        then.status(200).json_body(json!({
+            "content": [{"type": "text", "text": "done"}],
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "cache_creation_input_tokens": 80,
+                "cache_read_input_tokens": 60
+            }
+        }));
+    });
+
+    let provider = AnthropicProvider::new(&server.base_url(), "claude-haiku-4-5", "key");
+    let result = provider.generate(hello_request()).await.unwrap();
+
+    assert_eq!(result.usage.input_tokens, 100);
+    assert_eq!(result.usage.output_tokens, 20);
+    assert_eq!(result.usage.cache_write_tokens, 80);
+    assert_eq!(result.usage.cache_read_tokens, 60);
+}
+
+#[tokio::test]
+async fn test_anthropic_rate_limited_returns_rate_limited_error() {
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method("POST").path("/v1/messages");
+        then.status(429)
+            .json_body(json!({"error": {"message": "rate limit"}}));
+    });
+
+    let provider = AnthropicProvider::new(&server.base_url(), "claude-haiku-4-5", "key");
+    let err = provider.generate(hello_request()).await.unwrap_err();
+    assert!(
+        err.to_string().contains("Rate limited") || err.to_string().contains("rate"),
+        "429 should produce a rate-limit error, got: {}",
+        err
+    );
 }
 
 #[test]
