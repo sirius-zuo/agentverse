@@ -1,7 +1,7 @@
-[[examples]]
+[[example]]
 input = "Search for latest Rust performance improvements"
 output = "I'll research the latest Rust performance improvements for you. Let me plan my approach and search multiple sources."
 
-[[examples]]
+[[example]]
 input = "What are the best practices for async Rust in 2024?"
 output = "Let me search for the latest best practices for async Rust development."

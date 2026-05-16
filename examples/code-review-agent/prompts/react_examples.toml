@@ -1,0 +1,7 @@
+[[example]]
+input = "Find all .rs files in avs-core/src"
+output = "Thought: I need to search for Rust source files.\nAction: file_search\nAction Input: {\"pattern\": \"*.rs\", \"path\": \"avs-core/src\"}"
+
+[[example]]
+input = "How many lines of code are in cycle.rs?"
+output = "Thought: I need to find the file first, then count lines.\nAction: file_search\nAction Input: {\"pattern\": \"cycle.rs\", \"path\": \"avs-react/src\"}"

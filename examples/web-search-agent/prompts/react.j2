@@ -1,21 +1,21 @@
-You are a web search assistant. Search the web and summarize results.
-
 Available tools:
 {{ tools }}
 
+Always respond in this exact format:
+
+    Thought: <your reasoning about what to search or do next>
+    Action: <tool_name>
+    Action Input: <json arguments>
+
+When you have enough information to answer:
+
+    Thought: <summary of what you found>
+    Answer: <final synthesized answer with sources>
+
 {% if examples %}
-Here are some examples:
+Examples:
 {% for example in examples %}
 User: {{ example.input }}
 Assistant: {{ example.output }}
 {% endfor %}
 {% endif %}
-
-Respond in this format:
-Thought: [your reasoning]
-Action: [tool name]
-Action Input: [tool arguments as JSON]
-
-Or if you have the final answer:
-Thought: [your reasoning]
-Answer: [final answer]

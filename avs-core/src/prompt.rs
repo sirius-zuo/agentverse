@@ -1,4 +1,5 @@
 use minijinja::Environment;
+use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
@@ -6,6 +7,13 @@ use std::path::Path;
 
 use crate::error::{AgentError, ConfigError};
 use crate::Example;
+
+/// TOML wrapper: `[[example]]` sections deserialize into `example: Vec<Example>`.
+#[derive(Deserialize, Default)]
+struct ExampleFile {
+    #[serde(default)]
+    example: Vec<Example>,
+}
 
 /// Default embedded templates shipped with the library.
 const DEFAULT_SYSTEM_TEMPLATE: &str = "You are a helpful AI assistant.\n\
@@ -234,14 +242,16 @@ impl PromptRegistry {
                             e
                         )))
                     })?;
-                    let examples: Vec<Example> = toml::from_str(&content).map_err(|e| {
+                    // TOML can't express a root-level array; files use [[example]]
+                    // which produces {"example": [...]}, so we unwrap via ExampleFile.
+                    let file: ExampleFile = toml::from_str(&content).map_err(|e| {
                         AgentError::Config(ConfigError::Invalid(format!(
                             "Cannot parse examples file {}: {}",
                             path.display(),
                             e
                         )))
                     })?;
-                    self.add_examples(name, examples);
+                    self.add_examples(name, file.example);
                 }
                 _ => {}
             }

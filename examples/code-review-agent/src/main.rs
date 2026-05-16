@@ -6,7 +6,7 @@
 //   MODEL_NAME=Qwen3.6-35B-A3B-GGUF \
 //   cargo run -p example-code-review-agent
 
-use agentverse::{OpenAICompatible, PromptRegistry, ShortTermMemory};
+use agentverse::{OpenAICompatible, PromptConfig, PromptRegistry, ShortTermMemory};
 use agentverse_react::ReActStrategy;
 use agentverse_tools::{Calculator, FileSearch};
 use std::sync::{Arc, Mutex};
@@ -25,7 +25,15 @@ async fn main() {
     println!("Tools: FileSearch + Calculator");
 
     let model = Arc::new(OpenAICompatible::new(&base_url, &model_name, &api_key));
-    let registry = Arc::new(PromptRegistry::default());
+    let registry = Arc::new(
+        PromptRegistry::from_config(&PromptConfig {
+            prompts_dir: Some(
+                concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string(),
+            ),
+            ..Default::default()
+        })
+        .expect("prompt config"),
+    );
     let memory = Arc::new(Mutex::new(ShortTermMemory::new(50)));
     let tools: Vec<Box<dyn agentverse::SyncTool>> =
         vec![Box::new(FileSearch), Box::new(Calculator)];
