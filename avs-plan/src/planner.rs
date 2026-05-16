@@ -1,4 +1,5 @@
-use agentverse::{AgentError, ModelProvider, PromptRegistry};
+use agentverse::memory::{Message, MessageRole};
+use agentverse::{AgentError, GenerateRequest, ModelProvider, PromptRegistry};
 use agentverse_guardrails::check_prompt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -74,14 +75,22 @@ pub async fn generate_plan(
         })
     })?;
 
-    let prompt = format!(
-        "{}\n\nRequest: {}\n\nRespond with ONLY a JSON object:\n{{\"description\": \"...\", \"steps\": [{{\"id\": 1, \"description\": \"...\", \"tool\": \"...\", \"args\": {{}}, \"depends_on\": []}}]}}",
-        strategy_prompt, request
-    );
+    let request_obj = GenerateRequest {
+        system: Some(format!(
+            "{}\n\nRespond with ONLY a JSON object:\n{{\"description\": \"...\", \"steps\": [{{\"id\": 1, \"description\": \"...\", \"tool\": \"...\", \"args\": {{}}, \"depends_on\": []}}]}}",
+            strategy_prompt
+        )),
+        messages: vec![Message {
+            role: MessageRole::User,
+            content: format!("Request: {}", request),
+        }],
+        tools: None,
+    };
 
-    let response = model.generate(&prompt, None).await?;
+    let response = model.generate(request_obj).await?;
 
     let json_str = response
+        .content
         .trim()
         .trim_start_matches('`')
         .trim_start_matches("json")
@@ -91,7 +100,7 @@ pub async fn generate_plan(
     let plan: Plan = serde_json::from_str(json_str).map_err(|e| {
         AgentError::Model(agentverse::ModelError::InvalidResponse(format!(
             "Failed to parse plan JSON: {}. Response was: {}",
-            e, response
+            e, response.content
         )))
     })?;
 
@@ -126,14 +135,22 @@ pub async fn decompose_request(
         })
     })?;
 
-    let prompt = format!(
-        "{}\n\nRequest: {}\n\nRespond with ONLY a JSON array of strings.",
-        strategy_prompt, request
-    );
+    let request_obj = GenerateRequest {
+        system: Some(format!(
+            "{}\n\nRespond with ONLY a JSON array of strings.",
+            strategy_prompt
+        )),
+        messages: vec![Message {
+            role: MessageRole::User,
+            content: format!("Request: {}", request),
+        }],
+        tools: None,
+    };
 
-    let response = model.generate(&prompt, None).await?;
+    let response = model.generate(request_obj).await?;
 
     let json_str = response
+        .content
         .trim()
         .trim_start_matches('`')
         .trim_start_matches("json")
@@ -143,7 +160,7 @@ pub async fn decompose_request(
     let sub_goals: Vec<String> = serde_json::from_str(json_str).map_err(|e| {
         AgentError::Model(agentverse::ModelError::InvalidResponse(format!(
             "Failed to parse decomposition: {}. Response was: {}",
-            e, response
+            e, response.content
         )))
     })?;
 

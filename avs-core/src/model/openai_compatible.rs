@@ -6,7 +6,7 @@ use serde_json::Value;
 use super::ModelProvider;
 use crate::config::ProviderConfig;
 use crate::error::ModelError;
-use crate::model::ToolDefinition;
+use crate::model::{GenerateRequest, GenerateResponse, UsageStats};
 
 #[derive(Debug, Clone)]
 pub struct OpenAICompatible {
@@ -44,9 +44,27 @@ struct FunctionDefinition {
     parameters: Value,
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct ChatUsage {
+    #[serde(default)]
+    prompt_tokens: u32,
+    #[serde(default)]
+    completion_tokens: u32,
+    #[serde(default)]
+    prompt_tokens_details: PromptTokensDetails,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct PromptTokensDetails {
+    #[serde(default)]
+    cached_tokens: u32,
+}
+
 #[derive(Debug, Deserialize)]
 struct ChatResponse {
     choices: Vec<Choice>,
+    #[serde(default)]
+    usage: ChatUsage,
 }
 
 #[derive(Debug, Deserialize)]
@@ -98,17 +116,34 @@ impl ModelProvider for OpenAICompatible {
         &self.model_name
     }
 
-    async fn generate(
-        &self,
-        prompt: &str,
-        tools: Option<Vec<ToolDefinition>>,
-    ) -> Result<String, ModelError> {
-        let messages = vec![ChatMessage {
-            role: "user".to_string(),
-            content: prompt.to_string(),
-        }];
+    async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, ModelError> {
+        use crate::memory::MessageRole;
 
-        let chat_tools = tools.map(|t| {
+        let mut messages = Vec::new();
+
+        // System → prepend as role:"system"
+        if let Some(system) = request.system {
+            messages.push(ChatMessage {
+                role: "system".to_string(),
+                content: system,
+            });
+        }
+
+        // Conversation messages — map roles
+        for m in request.messages {
+            let role = match m.role {
+                MessageRole::User => "user",
+                MessageRole::Assistant => "assistant",
+                MessageRole::Tool => "tool",
+                MessageRole::System => continue, // already handled above
+            };
+            messages.push(ChatMessage {
+                role: role.to_string(),
+                content: m.content,
+            });
+        }
+
+        let chat_tools = request.tools.map(|t| {
             t.into_iter()
                 .map(|tool| ChatTool {
                     type_field: "function".to_string(),
@@ -121,7 +156,7 @@ impl ModelProvider for OpenAICompatible {
                 .collect()
         });
 
-        let request = ChatRequest {
+        let req = ChatRequest {
             model: self.model_name.clone(),
             messages,
             tools: chat_tools,
@@ -132,7 +167,7 @@ impl ModelProvider for OpenAICompatible {
             .post(self.chat_url())
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
-            .json(&request)
+            .json(&req)
             .send()
             .await
             .map_err(|e| ModelError::ApiError(e.to_string()))?;
@@ -150,11 +185,21 @@ impl ModelProvider for OpenAICompatible {
         let chat_response: ChatResponse =
             serde_json::from_str(&body).map_err(|e| ModelError::InvalidResponse(e.to_string()))?;
 
-        chat_response
+        let content = chat_response
             .choices
             .into_iter()
             .next()
             .and_then(|c| c.message.content)
-            .ok_or_else(|| ModelError::InvalidResponse("No content in response".to_string()))
+            .ok_or_else(|| ModelError::InvalidResponse("No content in response".to_string()))?;
+
+        Ok(GenerateResponse {
+            content,
+            usage: UsageStats {
+                input_tokens: chat_response.usage.prompt_tokens,
+                output_tokens: chat_response.usage.completion_tokens,
+                cache_write_tokens: 0,
+                cache_read_tokens: chat_response.usage.prompt_tokens_details.cached_tokens,
+            },
+        })
     }
 }

@@ -6,7 +6,7 @@ use serde_json::Value;
 use super::ModelProvider;
 use crate::config::ProviderConfig;
 use crate::error::ModelError;
-use crate::model::ToolDefinition;
+use crate::model::{GenerateRequest, GenerateResponse, UsageStats};
 
 #[derive(Debug, Clone)]
 pub struct GeminiProvider {
@@ -17,7 +17,14 @@ pub struct GeminiProvider {
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct GeminiSystemInstruction {
+    parts: Vec<GeminiPart>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct GeminiRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    system_instruction: Option<GeminiSystemInstruction>,
     contents: Vec<GeminiContent>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<GeminiToolConfig>>,
@@ -98,19 +105,31 @@ impl ModelProvider for GeminiProvider {
         &self.model_name
     }
 
-    async fn generate(
-        &self,
-        prompt: &str,
-        tools: Option<Vec<ToolDefinition>>,
-    ) -> Result<String, ModelError> {
-        let contents = vec![GeminiContent {
-            role: "user".to_string(),
-            parts: vec![GeminiPart::Text {
-                text: prompt.to_string(),
-            }],
-        }];
+    async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, ModelError> {
+        use crate::memory::MessageRole;
 
-        let gemini_tools = tools.map(|t| {
+        let system_instruction = request.system.map(|s| GeminiSystemInstruction {
+            parts: vec![GeminiPart::Text { text: s }],
+        });
+
+        let contents: Vec<GeminiContent> = request
+            .messages
+            .into_iter()
+            .filter_map(|m| {
+                let role = match m.role {
+                    MessageRole::User => "user",
+                    MessageRole::Assistant => "model",
+                    MessageRole::Tool => "user",
+                    MessageRole::System => return None,
+                };
+                Some(GeminiContent {
+                    role: role.to_string(),
+                    parts: vec![GeminiPart::Text { text: m.content }],
+                })
+            })
+            .collect();
+
+        let gemini_tools = request.tools.map(|t| {
             vec![GeminiToolConfig {
                 functions: t
                     .into_iter()
@@ -123,18 +142,18 @@ impl ModelProvider for GeminiProvider {
             }]
         });
 
-        let request = GeminiRequest {
+        let req = GeminiRequest {
+            system_instruction,
             contents,
             tools: gemini_tools,
         };
-
         let url = format!("{}?key={}", self.generate_content_url(), self.api_key);
 
         let response = self
             .client
             .post(&url)
             .header("Content-Type", "application/json")
-            .json(&request)
+            .json(&req)
             .send()
             .await
             .map_err(|e| ModelError::ApiError(e.to_string()))?;
@@ -151,7 +170,6 @@ impl ModelProvider for GeminiProvider {
                 body
             )));
         }
-
         if !status.is_success() {
             return Err(ModelError::ApiError(format!("HTTP {}: {}", status, body)));
         }
@@ -159,7 +177,8 @@ impl ModelProvider for GeminiProvider {
         let resp: GeminiResponse =
             serde_json::from_str(&body).map_err(|e| ModelError::InvalidResponse(e.to_string()))?;
 
-        resp.candidates
+        let content = resp
+            .candidates
             .into_iter()
             .next()
             .and_then(|c| {
@@ -167,6 +186,11 @@ impl ModelProvider for GeminiProvider {
                     GeminiPart::Text { text } => text,
                 })
             })
-            .ok_or_else(|| ModelError::InvalidResponse("No content in response".to_string()))
+            .ok_or_else(|| ModelError::InvalidResponse("No content in response".to_string()))?;
+
+        Ok(GenerateResponse {
+            content,
+            usage: UsageStats::default(), // Gemini context caching is a separate API
+        })
     }
 }

@@ -1,8 +1,10 @@
 //! Tests for the agentverse-react crate.
 
-use agentverse::model::ToolDefinition;
 use agentverse::SyncTool;
-use agentverse::{Memory, Message, ModelProvider, PromptRegistry, ShortTermMemory};
+use agentverse::{
+    GenerateRequest, GenerateResponse, Memory, Message, ModelProvider, PromptRegistry,
+    ShortTermMemory, UsageStats,
+};
 use agentverse_react::{parse::parse_response, CycleAction, ReActStrategy};
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -24,11 +26,13 @@ impl ModelProvider for MockModel {
 
     async fn generate(
         &self,
-        _prompt: &str,
-        _tools: Option<Vec<ToolDefinition>>,
-    ) -> Result<String, agentverse::ModelError> {
+        _request: GenerateRequest,
+    ) -> Result<GenerateResponse, agentverse::ModelError> {
         let idx = self.index.fetch_add(1, Ordering::SeqCst) % self.responses.len();
-        Ok(self.responses[idx].clone())
+        Ok(GenerateResponse {
+            content: self.responses[idx].clone(),
+            usage: UsageStats::default(),
+        })
     }
 }
 
@@ -159,7 +163,7 @@ fn test_cycle_skeleton_execute_tool_not_found() {
 }
 
 #[test]
-fn test_cycle_skeleton_build_prompt() {
+fn test_cycle_skeleton_build_request() {
     let mut memory = ShortTermMemory::new(10);
     memory.append(Message {
         role: agentverse::memory::MessageRole::User,
@@ -177,8 +181,8 @@ fn test_cycle_skeleton_build_prompt() {
         10,
     );
 
-    let prompt = skeleton.build_prompt().unwrap();
-    assert!(prompt.contains("Hello"));
+    let request = skeleton.build_request().unwrap();
+    assert!(request.messages.iter().any(|m| m.content.contains("Hello")));
 }
 
 #[tokio::test]
@@ -202,7 +206,7 @@ async fn test_cycle_run_with_answer() {
         })
         .await;
 
-    assert_eq!(result.unwrap(), "immediate");
+    assert_eq!(result.unwrap().answer, "immediate");
 }
 
 #[tokio::test]

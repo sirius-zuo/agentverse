@@ -1,6 +1,6 @@
 //! Integration tests for StrategyRouter.
 
-use agentverse::ModelError;
+use agentverse::{GenerateRequest, GenerateResponse, ModelError, UsageStats};
 use agentverse_router::{StrategyName, StrategyRouter};
 
 /// Mock model provider for testing.
@@ -14,12 +14,11 @@ impl agentverse::ModelProvider for MockModel {
         "mock-model"
     }
 
-    async fn generate(
-        &self,
-        _prompt: &str,
-        _tools: Option<Vec<agentverse::model::ToolDefinition>>,
-    ) -> Result<String, ModelError> {
-        Ok(self.response.clone())
+    async fn generate(&self, _request: GenerateRequest) -> Result<GenerateResponse, ModelError> {
+        Ok(GenerateResponse {
+            content: self.response.clone(),
+            usage: UsageStats::default(),
+        })
     }
 }
 

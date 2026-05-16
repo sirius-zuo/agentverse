@@ -2,8 +2,10 @@
 //!
 //! Tests the PlanStep, Plan, and strategy structures with mock models.
 
-use agentverse::model::ToolDefinition;
-use agentverse::{ModelError, ModelProvider, SyncTool};
+use agentverse::memory::{Message, MessageRole};
+use agentverse::{
+    GenerateRequest, GenerateResponse, ModelError, ModelProvider, SyncTool, UsageStats,
+};
 use agentverse_plan::{Plan, PlanStep};
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -22,13 +24,12 @@ impl ModelProvider for MockModel {
         "mock-model"
     }
 
-    async fn generate(
-        &self,
-        _prompt: &str,
-        _tools: Option<Vec<ToolDefinition>>,
-    ) -> Result<String, ModelError> {
+    async fn generate(&self, _request: GenerateRequest) -> Result<GenerateResponse, ModelError> {
         let idx = self.index.fetch_add(1, Ordering::SeqCst) % self.responses.len();
-        Ok(self.responses[idx].clone())
+        Ok(GenerateResponse {
+            content: self.responses[idx].clone(),
+            usage: UsageStats::default(),
+        })
     }
 }
 
@@ -177,17 +178,26 @@ async fn test_mock_model_responses() {
         index: AtomicUsize::new(0),
     };
 
+    let req = || GenerateRequest {
+        system: None,
+        messages: vec![Message {
+            role: MessageRole::User,
+            content: "prompt".to_string(),
+        }],
+        tools: None,
+    };
+
     // First call
-    let resp1 = model.generate("prompt", None).await.unwrap();
-    assert_eq!(resp1, "Hello");
+    let resp1 = model.generate(req()).await.unwrap();
+    assert_eq!(resp1.content, "Hello");
 
     // Second call
-    let resp2 = model.generate("prompt", None).await.unwrap();
-    assert_eq!(resp2, "World");
+    let resp2 = model.generate(req()).await.unwrap();
+    assert_eq!(resp2.content, "World");
 
     // Third call (cycles back)
-    let resp3 = model.generate("prompt", None).await.unwrap();
-    assert_eq!(resp3, "Hello");
+    let resp3 = model.generate(req()).await.unwrap();
+    assert_eq!(resp3.content, "Hello");
 }
 
 #[test]

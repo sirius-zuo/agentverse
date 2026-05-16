@@ -6,7 +6,7 @@ use tokio::sync::RwLock;
 
 use super::ModelProvider;
 use crate::error::ModelError;
-use crate::model::ToolDefinition;
+use crate::model::{GenerateRequest, GenerateResponse};
 
 /// Wrapper around a ModelProvider that adds retry and circuit breaker logic.
 pub struct ProviderWrapper {
@@ -115,12 +115,7 @@ impl ModelProvider for ProviderWrapper {
         self.inner.name()
     }
 
-    async fn generate(
-        &self,
-        prompt: &str,
-        tools: Option<Vec<ToolDefinition>>,
-    ) -> Result<String, ModelError> {
-        // Check circuit breaker
+    async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, ModelError> {
         let mut cb = self.circuit_breaker.write().await;
         if !cb.can_execute() {
             return Err(ModelError::CircuitOpen(
@@ -131,7 +126,7 @@ impl ModelProvider for ProviderWrapper {
 
         let mut last_error = None;
         for attempt in 0..=self.max_retries {
-            let result = self.inner.generate(prompt, tools.clone()).await;
+            let result = self.inner.generate(request.clone()).await;
 
             match result {
                 Ok(response) => {

@@ -2,7 +2,8 @@
 //!
 //! At runtime, the router asks the LLM which strategy to use for a given request.
 
-use agentverse::{AgentError, ModelProvider, PromptRegistry};
+use agentverse::memory::{Message, MessageRole};
+use agentverse::{AgentError, GenerateRequest, ModelProvider, PromptRegistry};
 use agentverse_guardrails::check_prompt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -74,7 +75,7 @@ where
             .collect::<Vec<_>>()
             .join("\n");
 
-        let prompt = if let Some(ref registry) = self.registry {
+        let system = if let Some(ref registry) = self.registry {
             let mut context = HashMap::new();
             context.insert(
                 "conversation".to_string(),
@@ -102,30 +103,38 @@ where
             })?;
 
             format!(
-                "{}\n\nRequest: {}\n\nRespond with ONLY the strategy name.",
-                strategy_prompt, request
+                "{}\n\nRespond with ONLY the strategy name.",
+                strategy_prompt
             )
         } else {
             // Fallback to hardcoded prompt if no registry
             format!(
                 "Choose the best orchestration strategy for the following request.\n\n\
-                 Request: {}\n\n\
                  Available strategies:\n{}\n\n\
                  Respond with ONLY the strategy name (e.g., 'react', 'plan_and_execute', 'hierarchical').\n\
                  Do not include any explanation.",
-                request, strategy_list
+                strategy_list
             )
         };
 
-        let response = self.model.generate(&prompt, None).await?;
-        let selected = response.trim().to_lowercase();
+        let gen_request = GenerateRequest {
+            system: Some(system),
+            messages: vec![Message {
+                role: MessageRole::User,
+                content: format!("Request: {}", request),
+            }],
+            tools: None,
+        };
+
+        let response = self.model.generate(gen_request).await?;
+        let selected = response.content.trim().to_lowercase();
 
         match selected.as_str() {
             "react" => Ok(StrategyName::ReAct),
             "plan_and_execute" | "plan-and-execute" => Ok(StrategyName::PlanAndExecute),
             "hierarchical" => Ok(StrategyName::Hierarchical),
             _ => Err(AgentError::Model(agentverse::ModelError::InvalidResponse(
-                format!("Unknown strategy: {}", response),
+                format!("Unknown strategy: {}", response.content),
             ))),
         }
     }

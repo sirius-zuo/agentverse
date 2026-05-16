@@ -1,4 +1,5 @@
-use agentverse::model::{ModelProvider, OpenAICompatible};
+use agentverse::memory::{Message, MessageRole};
+use agentverse::model::{GenerateRequest, ModelProvider, OpenAICompatible};
 use httpmock::prelude::*;
 
 #[tokio::test]
@@ -24,9 +25,18 @@ async fn test_openai_compatible_generate() {
 
     let model = OpenAICompatible::new(&server.base_url(), "test-model", "test-key");
 
-    let result = model.generate("hello", None).await;
+    let result = model
+        .generate(GenerateRequest {
+            system: None,
+            messages: vec![Message {
+                role: MessageRole::User,
+                content: "hello".to_string(),
+            }],
+            tools: None,
+        })
+        .await;
     assert!(result.is_ok());
-    assert_eq!(result.unwrap(), "Hello! How can I help you?");
+    assert_eq!(result.unwrap().content, "Hello! How can I help you?");
 
     mock.assert();
 }

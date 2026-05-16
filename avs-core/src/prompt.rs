@@ -11,7 +11,11 @@ use crate::Example;
 const DEFAULT_SYSTEM_TEMPLATE: &str =
     "You are a helpful AI assistant that executes tasks using available tools.\n\
      You are concise and accurate. Never claim to have done something you haven't.\n\
-     If you don't know something, say so.";
+     If you don't know something, say so.\
+     {% if tools %}\n\n\
+     Available tools:\n\
+     {{ tools }}\
+     {% endif %}";
 
 const DEFAULT_REACT_TEMPLATE: &str = "You are using the ReAct pattern: Think → Act → Observe.\n\n\
      Current conversation:\n\
