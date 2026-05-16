@@ -9,3 +9,4 @@ pub mod react;
 
 pub use cycle::{CycleAction, CycleSkeleton};
 pub use react::ReActStrategy;
+pub use agentverse::CycleResult;

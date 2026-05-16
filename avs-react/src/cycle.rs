@@ -6,7 +6,6 @@
 use agentverse::{AgentError, Message, ModelProvider, PromptRegistry, SyncTool};
 use agentverse_guardrails::{check_output, check_prompt};
 use serde_json::Value;
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tracing::{debug, error, info};
 
@@ -25,6 +24,7 @@ where
     memory: Arc<Mutex<M>>,
     max_iterations: usize,
     current_iteration: usize,
+    total_usage: agentverse::UsageStats,
 }
 
 /// Represents the strategy's decision for the next action.
@@ -60,6 +60,7 @@ where
             memory,
             max_iterations,
             current_iteration: 0,
+            total_usage: agentverse::UsageStats::default(),
         }
     }
 
@@ -70,7 +71,7 @@ where
         &mut self,
         initial_message: String,
         mut step: F,
-    ) -> Result<String, AgentError>
+    ) -> Result<agentverse::CycleResult, AgentError>
     where
         F: FnMut(&mut Self) -> Fut,
         Fut: std::future::Future<Output = Result<CycleAction, AgentError>>,
@@ -115,7 +116,10 @@ where
                         content: answer.clone(),
                     });
                     info!(iteration = self.current_iteration, "Strategy completed");
-                    return Ok(answer);
+                    return Ok(agentverse::CycleResult {
+                        answer,
+                        total_usage: self.total_usage,
+                    });
                 }
                 CycleAction::Error { message } => {
                     error!(error = %message, "Strategy error");
@@ -146,52 +150,66 @@ where
         Ok(result.to_string())
     }
 
-    /// Build the prompt for the LLM from conversation history and tool descriptions.
-    pub fn build_prompt(&self) -> Result<String, AgentError> {
-        let last_messages = self.memory.lock().unwrap().last_n(20);
-        let mut context = HashMap::new();
+    /// Build a structured GenerateRequest from the system template, memory, and tools.
+    pub fn build_request(&self) -> Result<agentverse::GenerateRequest, AgentError> {
+        use std::collections::HashMap;
+        use serde_json::Value;
 
-        // Format conversation as a string for the template
-        let conversation: String = last_messages
-            .iter()
-            .map(|m| {
-                let role_str = match m.role {
-                    agentverse::memory::MessageRole::System => "System",
-                    agentverse::memory::MessageRole::User => "User",
-                    agentverse::memory::MessageRole::Assistant => "Assistant",
-                    agentverse::memory::MessageRole::Tool => "Tool",
-                };
-                format!("{}: {}", role_str, m.content)
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        context.insert("conversation".to_string(), Value::String(conversation));
-
-        // Format tools as a string
-        let tools: String = self
+        let tools_str: String = self
             .tools
             .iter()
             .map(|t| format!("- {}: {}", t.name(), t.description()))
             .collect::<Vec<_>>()
             .join("\n");
-        context.insert("tools".to_string(), Value::String(tools));
 
-        self.prompt_registry.render("react", context)
+        let mut sys_context = HashMap::new();
+        sys_context.insert("tools".to_string(), Value::String(tools_str));
+        let system = self.prompt_registry.render("system", sys_context).ok();
+
+        let messages = self.memory.lock().unwrap().last_n(20);
+
+        let tool_defs: Vec<agentverse::model::ToolDefinition> = self
+            .tools
+            .iter()
+            .map(|t| agentverse::model::ToolDefinition {
+                name: t.name().to_string(),
+                description: t.description().to_string(),
+                parameters: t.parameters(),
+            })
+            .collect();
+
+        Ok(agentverse::GenerateRequest {
+            system,
+            messages,
+            tools: if tool_defs.is_empty() { None } else { Some(tool_defs) },
+        })
     }
 
-    /// Build the prompt with guardrail checking on the rendered prompt.
-    pub fn build_prompt_with_guardrails(&self) -> Result<String, AgentError> {
-        let prompt = self.build_prompt()?;
-        check_prompt(&prompt).map_err(|e| match e {
-            agentverse_guardrails::GuardrailError::PromptInjection(msg) => {
-                AgentError::Guardrail(agentverse::GuardrailError::PromptInjection(msg))
-            }
-            agentverse_guardrails::GuardrailError::OutputFiltered(msg) => {
-                AgentError::Guardrail(agentverse::GuardrailError::OutputFiltered(msg))
-            }
-            _ => AgentError::Guardrail(agentverse::GuardrailError::PromptInjection(e.to_string())),
-        })?;
-        Ok(prompt)
+    /// Build the request with guardrail checking on the rendered system prompt.
+    pub fn build_request_with_guardrails(&self) -> Result<agentverse::GenerateRequest, AgentError> {
+        let request = self.build_request()?;
+        if let Some(ref system) = request.system {
+            check_prompt(system).map_err(|e| match e {
+                agentverse_guardrails::GuardrailError::PromptInjection(msg) => {
+                    AgentError::Guardrail(agentverse::GuardrailError::PromptInjection(msg))
+                }
+                agentverse_guardrails::GuardrailError::OutputFiltered(msg) => {
+                    AgentError::Guardrail(agentverse::GuardrailError::OutputFiltered(msg))
+                }
+                _ => AgentError::Guardrail(agentverse::GuardrailError::PromptInjection(e.to_string())),
+            })?;
+        }
+        Ok(request)
+    }
+
+    /// Accumulate usage stats from a single generate() call.
+    pub fn accumulate_usage(&mut self, usage: agentverse::UsageStats) {
+        self.total_usage += usage;
+    }
+
+    /// Return accumulated usage stats across all iterations.
+    pub fn total_usage(&self) -> agentverse::UsageStats {
+        self.total_usage
     }
 
     /// Apply output guardrail to a model response.
