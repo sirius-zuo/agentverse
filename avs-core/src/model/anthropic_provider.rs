@@ -83,6 +83,7 @@ struct AnthropicRequest {
 #[derive(Debug, Deserialize)]
 struct AnthropicResponse {
     content: Vec<AnthropicContent>,
+    #[serde(default)]
     usage: AnthropicUsage,
 }
 
@@ -219,6 +220,7 @@ impl ModelProvider for AnthropicProvider {
             .post(format!("{}/v1/messages", self.api_base))
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
+            .header("anthropic-beta", "prompt-caching-2024-07-31")
             .header("Content-Type", "application/json")
             .json(&wire_request)
             .send()
