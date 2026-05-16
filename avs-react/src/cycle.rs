@@ -25,6 +25,10 @@ where
     max_iterations: usize,
     current_iteration: usize,
     total_usage: agentverse::UsageStats,
+    /// Set after the react preamble has been pushed to memory, so it only
+    /// happens once per agent lifetime and build_request() knows to skip
+    /// embedding tools in the system prompt.
+    react_primed: bool,
 }
 
 /// Represents the strategy's decision for the next action.
@@ -61,6 +65,7 @@ where
             max_iterations,
             current_iteration: 0,
             total_usage: agentverse::UsageStats::default(),
+            react_primed: false,
         }
     }
 
@@ -150,13 +155,9 @@ where
         Ok(result.to_string())
     }
 
-    /// Build a structured GenerateRequest from the system template, memory, and tools.
-    pub fn build_request(&self) -> Result<agentverse::GenerateRequest, AgentError> {
-        use serde_json::Value;
-        use std::collections::HashMap;
-
-        let tools_str: String = self
-            .tools
+    /// Render tool descriptions as a human-readable string for prompt injection.
+    fn build_tools_str(&self) -> String {
+        self.tools
             .iter()
             .map(|t| {
                 let params = t.parameters();
@@ -190,17 +191,74 @@ where
                 }
             })
             .collect::<Vec<_>>()
-            .join("\n\n");
+            .join("\n\n")
+    }
 
-        let mut sys_context = HashMap::new();
-        sys_context.insert("tools".to_string(), Value::String(tools_str));
+    /// Prime the conversation with the react preamble if a `react.j2` file was
+    /// loaded into the registry.  Called once before the first user message.
+    ///
+    /// The rendered preamble contains tool descriptions and few-shot examples.
+    /// Because it is inserted as the first `User` message and never changes, it
+    /// stays inside the stable prefix that the penultimate-message cache
+    /// breakpoint captures on every subsequent turn — it is effectively free
+    /// after the first round-trip.
+    pub fn prime_react_preamble(&mut self) {
+        if self.react_primed || !self.prompt_registry.has_react_template() {
+            return;
+        }
+
+        let tools_str = self.build_tools_str();
+
+        let mut ctx = std::collections::HashMap::new();
+        ctx.insert("tools".to_string(), serde_json::Value::String(tools_str));
+
+        // Inject "react_examples" set if present, under the key "examples".
+        if let Some(examples) = self.prompt_registry.get_examples("react_examples") {
+            if let Ok(val) = serde_json::to_value(examples) {
+                ctx.insert("examples".to_string(), val);
+            }
+        }
+
+        if let Ok(preamble) = self.prompt_registry.render("react", ctx) {
+            if !preamble.trim().is_empty() {
+                self.memory.lock().unwrap().append(agentverse::Message {
+                    role: agentverse::memory::MessageRole::User,
+                    content: preamble,
+                });
+            }
+        }
+
+        self.react_primed = true;
+    }
+
+    /// Returns true after `prime_react_preamble` has run successfully.
+    pub fn is_react_primed(&self) -> bool {
+        self.react_primed
+    }
+
+    /// Build a structured GenerateRequest from the system template, memory, and tools.
+    ///
+    /// When the react preamble is active (`react_primed`), tool descriptions
+    /// live in the stable preamble message and are NOT duplicated in the system
+    /// prompt.  When there is no react preamble, tools are embedded in the
+    /// system prompt as before (backward-compatible with examples that use the
+    /// default registry).
+    pub fn build_request(&self) -> Result<agentverse::GenerateRequest, AgentError> {
+        let mut sys_context = std::collections::HashMap::new();
+        if !self.react_primed {
+            // No react preamble — embed tools in system prompt (default behaviour).
+            sys_context.insert(
+                "tools".to_string(),
+                serde_json::Value::String(self.build_tools_str()),
+            );
+        }
         let system = self.prompt_registry.render("system", sys_context).ok();
 
         let messages = self.memory.lock().unwrap().last_n(20);
 
-        // ReAct uses text-based tool descriptions embedded in the system prompt.
-        // Do not send native tool schemas — that would trigger native function-calling
-        // format (tool_calls) instead of text Thought/Action/Answer responses.
+        // ReAct uses text-based tool descriptions — do not send native tool
+        // schemas, which would cause the model to emit tool_calls instead of
+        // Thought/Action/Answer text.
         Ok(agentverse::GenerateRequest {
             system,
             messages,

@@ -102,6 +102,9 @@ pub struct PromptConfig {
 pub struct PromptRegistry {
     env: Environment<'static>,
     examples: HashMap<String, Vec<Example>>,
+    /// True when a `react.j2` file was loaded from a prompts directory,
+    /// meaning the cycle should use it as a one-time preamble message.
+    react_template_loaded: bool,
 }
 
 impl PromptRegistry {
@@ -175,6 +178,12 @@ impl PromptRegistry {
         self.examples.get(name).map(|v| v.as_slice())
     }
 
+    /// Returns true if a `react.j2` file was loaded from a prompts directory.
+    /// Used by the cycle to decide whether to prime a react preamble message.
+    pub fn has_react_template(&self) -> bool {
+        self.react_template_loaded
+    }
+
     /// Load templates and examples from a directory.
     fn load_from_directory(&mut self, dir: &str) -> Result<(), AgentError> {
         let path = Path::new(dir);
@@ -211,6 +220,9 @@ impl PromptRegistry {
                             e
                         )))
                     })?;
+                    if name == "react" {
+                        self.react_template_loaded = true;
+                    }
                     self.add_template(&name, &template);
                 }
                 Some("toml") => {
@@ -260,6 +272,7 @@ impl Default for PromptRegistry {
         Self {
             env,
             examples: HashMap::new(),
+            react_template_loaded: false,
         }
     }
 }

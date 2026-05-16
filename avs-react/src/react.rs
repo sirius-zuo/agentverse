@@ -42,6 +42,10 @@ where
     /// The loop runs until the model returns an answer, an error occurs,
     /// or max iterations is reached.
     pub async fn run(&mut self, input: String) -> Result<agentverse::CycleResult, AgentError> {
+        // Insert the react preamble as the first message when a react.j2 file
+        // was loaded.  Idempotent — does nothing on subsequent calls.
+        self.skeleton.prime_react_preamble();
+
         self.skeleton
             .memory()
             .lock()
