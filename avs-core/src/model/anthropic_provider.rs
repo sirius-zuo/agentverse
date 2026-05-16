@@ -6,7 +6,8 @@ use serde_json::Value;
 use super::ModelProvider;
 use crate::config::ProviderConfig;
 use crate::error::ModelError;
-use crate::model::ToolDefinition;
+use crate::memory::MessageRole;
+use crate::model::{GenerateRequest, GenerateResponse, ToolDefinition, UsageStats};
 
 #[derive(Debug, Clone)]
 pub struct AnthropicProvider {
@@ -16,19 +17,47 @@ pub struct AnthropicProvider {
     api_key: String,
 }
 
+// ── Wire types ────────────────────────────────────────────────────────────────
+
 #[derive(Debug, Clone, Serialize)]
-struct AnthropicRequest {
-    model: String,
-    messages: Vec<AnthropicMessage>,
+struct CacheControl {
+    #[serde(rename = "type")]
+    cache_type: &'static str, // "ephemeral"
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AnthropicContentBlock {
+    #[serde(rename = "type")]
+    block_type: &'static str, // "text"
+    text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tools: Option<Vec<AnthropicTool>>,
-    max_tokens: usize,
+    cache_control: Option<CacheControl>,
+}
+
+impl AnthropicContentBlock {
+    fn text(text: String) -> Self {
+        Self {
+            block_type: "text",
+            text,
+            cache_control: None,
+        }
+    }
+
+    fn text_cached(text: String) -> Self {
+        Self {
+            block_type: "text",
+            text,
+            cache_control: Some(CacheControl {
+                cache_type: "ephemeral",
+            }),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
 struct AnthropicMessage {
-    role: String,
-    content: String,
+    role: &'static str,
+    content: Vec<AnthropicContentBlock>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -36,11 +65,25 @@ struct AnthropicTool {
     name: String,
     description: String,
     input_schema: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_control: Option<CacheControl>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AnthropicRequest {
+    model: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    system: Vec<AnthropicContentBlock>,
+    messages: Vec<AnthropicMessage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<AnthropicTool>>,
+    max_tokens: usize,
 }
 
 #[derive(Debug, Deserialize)]
 struct AnthropicResponse {
     content: Vec<AnthropicContent>,
+    usage: AnthropicUsage,
 }
 
 #[derive(Debug, Deserialize)]
@@ -48,13 +91,22 @@ struct AnthropicResponse {
 struct AnthropicContent {
     #[serde(rename = "type")]
     content_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     text: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    input: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    id: Option<String>,
 }
+
+#[derive(Debug, Deserialize, Default)]
+struct AnthropicUsage {
+    #[serde(default)]
+    input_tokens: u32,
+    #[serde(default)]
+    output_tokens: u32,
+    #[serde(default)]
+    cache_creation_input_tokens: u32,
+    #[serde(default)]
+    cache_read_input_tokens: u32,
+}
+
+// ── Constructor ───────────────────────────────────────────────────────────────
 
 impl AnthropicProvider {
     pub fn new(api_base: &str, model_name: &str, api_key: &str) -> Self {
@@ -82,7 +134,19 @@ impl AnthropicProvider {
             )),
         }
     }
+
+    /// Map MessageRole to Anthropic role string. Returns None for System (filtered out).
+    fn map_role(role: MessageRole) -> Option<&'static str> {
+        match role {
+            MessageRole::User => Some("user"),
+            MessageRole::Assistant => Some("assistant"),
+            MessageRole::Tool => Some("user"), // tool results are user-turn content
+            MessageRole::System => None,       // filtered: system goes in the system field
+        }
+    }
 }
+
+// ── ModelProvider impl ────────────────────────────────────────────────────────
 
 #[async_trait]
 impl ModelProvider for AnthropicProvider {
@@ -90,30 +154,63 @@ impl ModelProvider for AnthropicProvider {
         &self.model_name
     }
 
-    async fn generate(
-        &self,
-        prompt: &str,
-        tools: Option<Vec<ToolDefinition>>,
-    ) -> Result<String, ModelError> {
-        let messages = vec![AnthropicMessage {
-            role: "user".to_string(),
-            content: prompt.to_string(),
-        }];
+    async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, ModelError> {
+        // Caching render order: tools → system → messages
+        // Cache breakpoint on the LAST item in each stable section.
 
-        let anthropic_tools = tools.map(|t| {
-            t.into_iter()
-                .map(|tool| AnthropicTool {
-                    name: tool.name,
-                    description: tool.description,
-                    input_schema: tool.parameters,
+        // 1. Tools — cache_control on the last entry
+        let tools = request.tools.map(|defs| {
+            let mut tools: Vec<AnthropicTool> = defs
+                .into_iter()
+                .map(|d: ToolDefinition| AnthropicTool {
+                    name: d.name,
+                    description: d.description,
+                    input_schema: d.parameters,
+                    cache_control: None,
                 })
-                .collect()
+                .collect();
+            if let Some(last) = tools.last_mut() {
+                last.cache_control = Some(CacheControl {
+                    cache_type: "ephemeral",
+                });
+            }
+            tools
         });
 
-        let request = AnthropicRequest {
+        // 2. System — single block, always cached
+        let system: Vec<AnthropicContentBlock> = request
+            .system
+            .map(|s| vec![AnthropicContentBlock::text_cached(s)])
+            .unwrap_or_default();
+
+        // 3. Messages — filter System role, preserve user/assistant/tool roles
+        //    cache_control on the penultimate message (last stable turn before current user query)
+        let mut messages: Vec<AnthropicMessage> = request
+            .messages
+            .into_iter()
+            .filter_map(|m| {
+                Self::map_role(m.role).map(|role| AnthropicMessage {
+                    role,
+                    content: vec![AnthropicContentBlock::text(m.content)],
+                })
+            })
+            .collect();
+
+        // Mark penultimate message's last block as cached (if at least 2 messages exist)
+        if messages.len() >= 2 {
+            let penultimate = messages.len() - 2;
+            if let Some(block) = messages[penultimate].content.last_mut() {
+                block.cache_control = Some(CacheControl {
+                    cache_type: "ephemeral",
+                });
+            }
+        }
+
+        let wire_request = AnthropicRequest {
             model: self.model_name.clone(),
+            system,
             messages,
-            tools: anthropic_tools,
+            tools,
             max_tokens: 4096,
         };
 
@@ -123,7 +220,7 @@ impl ModelProvider for AnthropicProvider {
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
             .header("Content-Type", "application/json")
-            .json(&request)
+            .json(&wire_request)
             .send()
             .await
             .map_err(|e| ModelError::ApiError(e.to_string()))?;
@@ -140,7 +237,6 @@ impl ModelProvider for AnthropicProvider {
                 body
             )));
         }
-
         if !status.is_success() {
             return Err(ModelError::ApiError(format!("HTTP {}: {}", status, body)));
         }
@@ -148,11 +244,23 @@ impl ModelProvider for AnthropicProvider {
         let resp: AnthropicResponse =
             serde_json::from_str(&body).map_err(|e| ModelError::InvalidResponse(e.to_string()))?;
 
-        // Return first text content
-        resp.content
+        let content = resp
+            .content
             .into_iter()
             .find(|c| c.content_type == "text")
             .and_then(|c| c.text)
-            .ok_or_else(|| ModelError::InvalidResponse("No text content in response".to_string()))
+            .ok_or_else(|| {
+                ModelError::InvalidResponse("No text content in response".to_string())
+            })?;
+
+        Ok(GenerateResponse {
+            content,
+            usage: UsageStats {
+                input_tokens: resp.usage.input_tokens,
+                output_tokens: resp.usage.output_tokens,
+                cache_write_tokens: resp.usage.cache_creation_input_tokens,
+                cache_read_tokens: resp.usage.cache_read_input_tokens,
+            },
+        })
     }
 }
