@@ -4,7 +4,8 @@
 //! a plan for each sub-goal, and finally synthesizes results from all sub-goals.
 
 use super::planner::{decompose_request, generate_plan};
-use agentverse::{AgentError, ModelProvider, PromptRegistry, SyncTool};
+use agentverse::memory::{Message, MessageRole};
+use agentverse::{AgentError, GenerateRequest, ModelProvider, PromptRegistry, SyncTool};
 use agentverse_guardrails::check_output;
 use std::sync::{Arc, Mutex};
 
@@ -179,13 +180,22 @@ where
             conversation_history
         );
 
+        let gen_request = GenerateRequest {
+            system: Some(final_prompt),
+            messages: vec![Message {
+                role: MessageRole::User,
+                content: "Based on the completed sub-goals, provide the final answer.".to_string(),
+            }],
+            tools: None,
+        };
+
         let answer = self
             .model
-            .generate(&final_prompt, None)
+            .generate(gen_request)
             .await
             .map_err(AgentError::Model)?;
 
-        check_output(&answer).map_err(|e| {
+        check_output(&answer.content).map_err(|e| {
             AgentError::Guardrail(match e {
                 agentverse_guardrails::GuardrailError::OutputFiltered(msg) => {
                     agentverse::GuardrailError::OutputFiltered(msg)
@@ -197,7 +207,7 @@ where
             })
         })?;
 
-        Ok(answer)
+        Ok(answer.content)
     }
 
     /// Execute a single tool by name.

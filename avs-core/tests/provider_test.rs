@@ -1,8 +1,20 @@
+use agentverse::memory::{Message, MessageRole};
 use agentverse::{
-    AnthropicProvider, GeminiProvider, ModelProvider, OpenAICompatible, ProviderConfig,
-    ProviderWrapper,
+    AnthropicProvider, GeminiProvider, GenerateRequest, ModelProvider, OpenAICompatible,
+    ProviderConfig, ProviderWrapper,
 };
 use httpmock::prelude::*;
+
+fn hello_request() -> GenerateRequest {
+    GenerateRequest {
+        system: None,
+        messages: vec![Message {
+            role: MessageRole::User,
+            content: "hello".to_string(),
+        }],
+        tools: None,
+    }
+}
 
 #[tokio::test]
 async fn test_provider_wrapper_retry_on_429() {
@@ -19,7 +31,7 @@ async fn test_provider_wrapper_retry_on_429() {
     let wrapper = ProviderWrapper::new(provider);
 
     // Should retry 3 times (default) then fail with RateLimited
-    let result = wrapper.generate("hello", None).await;
+    let result = wrapper.generate(hello_request()).await;
     match &result {
         Ok(_) => panic!("Expected Err, got Ok"),
         Err(e) => {
@@ -53,9 +65,9 @@ async fn test_provider_wrapper_success_after_retry() {
     let wrapper = ProviderWrapper::new(provider);
 
     // Should succeed on first call (no retry needed)
-    let result = wrapper.generate("hello", None).await;
+    let result = wrapper.generate(hello_request()).await;
     assert!(result.is_ok());
-    assert_eq!(result.unwrap(), "Hello after retry!");
+    assert_eq!(result.unwrap().content, "Hello after retry!");
 }
 
 #[tokio::test]
@@ -73,15 +85,15 @@ async fn test_provider_wrapper_circuit_breaker_opens() {
     let wrapper = ProviderWrapper::new(provider).with_circuit_breaker(2, 30); // Open after 2 failures
 
     // First call fails
-    let result = wrapper.generate("hello", None).await;
+    let result = wrapper.generate(hello_request()).await;
     assert!(result.is_err());
 
     // Second call fails
-    let result = wrapper.generate("hello", None).await;
+    let result = wrapper.generate(hello_request()).await;
     assert!(result.is_err());
 
     // Third call: circuit is open (no HTTP call)
-    let result = wrapper.generate("hello", None).await;
+    let result = wrapper.generate(hello_request()).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("Circuit breaker"));
 }
@@ -102,9 +114,9 @@ async fn test_anthropic_provider_basic() {
 
     let provider = AnthropicProvider::new(&server.base_url(), "claude-3", "test-key");
 
-    let result = provider.generate("hello", None).await;
+    let result = provider.generate(hello_request()).await;
     match &result {
-        Ok(text) => assert_eq!(text, "Hello from Anthropic!"),
+        Ok(r) => assert_eq!(r.content, "Hello from Anthropic!"),
         Err(e) => panic!("Expected Ok, got Err: {}", e),
     }
 
@@ -131,9 +143,9 @@ async fn test_gemini_provider_basic() {
 
     let provider = GeminiProvider::new(&server.base_url(), "test-model", "test-key");
 
-    let result = provider.generate("hello", None).await;
+    let result = provider.generate(hello_request()).await;
     assert!(result.is_ok());
-    assert_eq!(result.unwrap(), "Hello from Gemini!");
+    assert_eq!(result.unwrap().content, "Hello from Gemini!");
 
     mock.assert();
 }
