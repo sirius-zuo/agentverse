@@ -185,18 +185,100 @@ Response:
 
 ## Examples
 
-| Example | Strategy | Description |
-|---|---|---|
-| `hello-agent` | ReAct | Simple agent, no tools |
-| `slack-hr-assistant` | ReAct + Adapter | Slack integration with built-in tools |
-| `rag-qa` | ReAct + Vector DB | Document Q&A via HttpClient |
-| `web-search-agent` | Plan-and-Execute | Web research with HttpClient + FileSearch |
-| `code-review-agent` | Hierarchical | Code analysis with FileSearch + Calculator |
+| Example | Strategy | Tools | Description |
+|---|---|---|---|
+| `hello-agent` | ReAct | — | Minimal agent, no tools — best starting point |
+| `rag-qa` | ReAct | Calculator | Tool-use loop with step-by-step arithmetic |
+| `web-search-agent` | ReAct | FileSearch | File search + multi-step reasoning |
+| `code-review-agent` | Hierarchical | FileSearch, Calculator | Decompose → plan per sub-goal → execute → synthesize |
+| `anthropic-react` | ReAct | Calculator | Anthropic Claude with prompt caching (system + preamble) |
+| `slack-hr-assistant` | Plan-and-Execute | — | Slack bot using plan-and-execute via `AgentBuilder` |
 
 ```bash
-# Run an example (uses ProviderConfig::OpenAI by default)
-OPENAI_API_KEY=sk-xxx cargo run -p example-hello-agent
+# Local LLM (llama.cpp / Ollama)
+MODEL_BASE_URL=http://localhost:9090/v1 \
+MODEL_NAME=your-model \
+cargo run -p example-hello-agent
+
+# Anthropic Claude
+ANTHROPIC_API_KEY=sk-ant-... cargo run -p example-anthropic-react
 ```
+
+Each example has a `prompts/` directory with `system.j2` (identity), strategy template (e.g. `react.j2`, `hierarchical.j2`), and optional few-shot examples in `.toml` files. See [Prompt Templates](#prompt-templates) below.
+
+## Prompt Templates
+
+AgentVerse uses a three-layer prompt design that maximises LLM prompt cache reuse across multi-turn conversations.
+
+### Template roles
+
+| File | Purpose | Cache behaviour |
+|---|---|---|
+| `system.j2` | Agent identity + rules | Cached in system block — paid once per session |
+| `react.j2` | Tool descriptions + format instructions + few-shot examples | Inserted as the first user message once; sits in the stable prefix captured by the penultimate-message cache breakpoint |
+| Conversation messages | Actual Thought / Action / Tool Result / Answer exchanges | Volatile; only the current message is uncharged |
+
+Because `react.j2` never changes within a session, it is effectively free after the first request — the prefix cache serves it on every subsequent turn. `system.j2` is cached independently via the system-block breakpoint.
+
+### Directory layout
+
+Each example ships a `prompts/` directory. The layout depends on the strategy:
+
+**ReAct** (`hello-agent`, `rag-qa`, `web-search-agent`, `anthropic-react`):
+```
+prompts/
+  system.j2              # Identity + rules (no tools here)
+  react.j2               # Tools + format + {% if examples %}...{% endif %}
+  react_examples.toml    # Few-shot examples injected into react.j2
+  examples.toml          # General examples (available to other strategies)
+```
+
+**Hierarchical** (`code-review-agent`):
+```
+prompts/
+  system.j2                   # Identity + rules
+  hierarchical.j2             # Decomposition prompt → "strategies.hierarchical.decompose"
+  hierarchical_examples.toml  # input / output pairs showing decomposition
+  examples.toml
+```
+
+**Plan-and-Execute** (`slack-hr-assistant`):
+```
+prompts/
+  system.j2             # Identity + rules
+  plan_and_execute.j2   # Planning prompt → "strategies.plan_and_execute"
+  plan_examples.toml    # input / output pairs showing planning
+  examples.toml
+```
+
+### Wiring it up
+
+```rust
+use agentverse::{PromptConfig, PromptRegistry};
+
+let registry = Arc::new(
+    PromptRegistry::from_config(&PromptConfig {
+        prompts_dir: Some(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string(),
+        ),
+        ..Default::default()
+    })
+    .expect("prompt config"),
+);
+```
+
+### Example files
+
+All example files use the `[[example]]` TOML array-of-tables syntax:
+
+```toml
+# prompts/react_examples.toml
+[[example]]
+input = "What is 6 * 7?"
+output = "Thought: I need to multiply.\nAction: calculator\nAction Input: {\"operation\": \"multiply\", \"a\": 6, \"b\": 7}"
+```
+
+The file stem becomes the example-set name (`react_examples.toml` → `"react_examples"`). The `react.j2` template receives this set automatically via `{{ examples }}`.
 
 ## Documentation
 

@@ -389,100 +389,162 @@ let result = registry.execute("my_tool", json!({"query": "hello"})).await;
 
 ## Prompt Engineering
 
-AgentVerse uses a **hybrid prompt system**: embedded defaults + optional file overrides.
+AgentVerse uses a **three-layer prompt system** designed to maximise LLM prompt cache reuse across multi-turn agent loops.
 
-### Directory Structure
+### Template Roles
 
+| Layer | File | Contains | Cache behaviour |
+|---|---|---|---|
+| System | `system.j2` | Agent identity + rules | Cached in the system block — paid once per session |
+| Preamble | `react.j2` | Tool descriptions + format instructions + few-shot examples | Inserted as `messages[0]` once; sits inside the stable prefix captured by the penultimate-message cache breakpoint |
+| Conversation | *(memory)* | Thought / Action / Tool Result / Answer exchanges | Volatile; only the current message is uncharged |
+
+**Why this split matters:** Repeating tools and examples in every user message defeats prefix caching. By placing them in a stable first message that never changes, they are paid for on the first request and cached on every subsequent turn.
+
+### Directory Layout
+
+**ReAct strategy:**
 ```
-my-agent/
-├── Cargo.toml
-├── src/main.rs
-└── prompts/
-    ├── system.j2          # System prompt template
-    ├── react.j2           # ReAct strategy template
-    ├── examples.toml      # Few-shot examples
-    └── react_examples.toml # Strategy-specific examples
+prompts/
+  system.j2              # Identity + rules only — no tool descriptions here
+  react.j2               # Tools + format + {% if examples %}...{% endif %}
+  react_examples.toml    # Few-shot examples for react.j2 (set name: "react_examples")
+  examples.toml          # General examples available to other strategies
 ```
+
+**Hierarchical strategy:**
+```
+prompts/
+  system.j2                   # Identity + rules
+  hierarchical.j2             # Decomposition prompt (registers as "strategies.hierarchical.decompose")
+  hierarchical_examples.toml  # Decomposition few-shot (set name: "hierarchical_examples")
+  examples.toml
+```
+
+**Plan-and-Execute strategy:**
+```
+prompts/
+  system.j2             # Identity + rules
+  plan_and_execute.j2   # Planning prompt (registers as "strategies.plan_and_execute")
+  plan_examples.toml    # Planning few-shot (set name: "plan_examples")
+  examples.toml
+```
+
+> **File stem → registry key mapping:** `hierarchical.j2` and `plan_and_execute.j2` are automatically mapped to their canonical strategy names (`"strategies.hierarchical.decompose"` and `"strategies.plan_and_execute"`) when loaded from a `prompts/` directory.
 
 ### Template Files (.j2)
 
-Minijinja templates support all Jinja2 features:
+Minijinja templates. `system.j2` contains only identity and rules:
+
+```jinja2
+{# prompts/system.j2 #}
+You are a precise calculator assistant that solves problems step-by-step.
+Always verify every arithmetic operation with the calculator tool.
+Never guess a result — compute it.
+```
+
+`react.j2` contains tool descriptions, format instructions, and optional examples. It is rendered **once** at agent startup and prepended to the conversation as a stable user message:
 
 ```jinja2
 {# prompts/react.j2 #}
-You are using the ReAct pattern: Think → Act → Observe.
-
 Available tools:
 {{ tools }}
 
+Always respond in this exact format:
+
+    Thought: <your reasoning>
+    Action: <tool_name>
+    Action Input: <json arguments>
+
+When you have the final answer:
+
+    Thought: <brief summary>
+    Answer: <final result>
+
 {% if examples %}
-Here are some examples:
+Examples:
 {% for example in examples %}
 User: {{ example.input }}
 Assistant: {{ example.output }}
 {% endfor %}
 {% endif %}
-
-Respond in this format:
-Thought: [your reasoning]
-Action: [tool name]
-Action Input: [tool arguments as JSON]
 ```
 
 ### Example Files (.toml)
 
-Two TOML formats are supported:
+All example files use the `[[example]]` array-of-tables format. The file stem becomes the example-set name:
 
-**Array-of-tables format** (multiple examples):
 ```toml
+# prompts/react_examples.toml  →  example set "react_examples"
 [[example]]
-input = "What is 2+2?"
-output = "Thought: I can calculate this.\nAction: calculator\nAction Input: {\"expression\": \"2 + 2\"}"
+input = "What is 6 * 7?"
+output = "Thought: I need to multiply.\nAction: calculator\nAction Input: {\"operation\": \"multiply\", \"a\": 6, \"b\": 7}"
 
 [[example]]
-input = "What time is it?"
-output = "Thought: I can get the current time.\nAction: datetime\nAction Input: {\"format\": \"%Y-%m-%d %H:%M:%S\"}"
+input = "What is 100 / 4?"
+output = "Thought: I need to divide.\nAction: calculator\nAction Input: {\"operation\": \"divide\", \"a\": 100, \"b\": 4}"
 ```
 
-**Single example format**:
+For decomposition examples (hierarchical), use `output` to hold the expected JSON array of sub-goals:
+
 ```toml
-[input]
-input = "What is the capital of France?"
-output = "Paris"
+# prompts/hierarchical_examples.toml  →  example set "hierarchical_examples"
+[[example]]
+input = "Audit avs-core/src for security issues"
+output = "[\"Find all .rs files in avs-core/src\", \"Search for unsafe blocks\", \"Check error handling patterns\"]"
 ```
+
+### Wiring the Registry
+
+```rust
+use agentverse::{PromptConfig, PromptRegistry};
+use std::sync::Arc;
+
+let registry = Arc::new(
+    PromptRegistry::from_config(&PromptConfig {
+        // CARGO_MANIFEST_DIR resolves at compile time to the crate root,
+        // so the path works regardless of where `cargo run` is invoked from.
+        prompts_dir: Some(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string(),
+        ),
+        ..Default::default()
+    })
+    .expect("prompt config"),
+);
+```
+
+Do **not** use `PromptRegistry::default()` in examples — it ignores all files in `prompts/`.
 
 ### Prompt Registry API
 
 ```rust
-use agentverse::PromptRegistry;
-
-// Create from config (loads defaults + directory)
-let registry = PromptRegistry::from_config(&prompt_config)?;
-
-// Add templates programmatically
-registry.add_template("custom", "You are {{ persona }}.");
-
-// Add examples
-registry.add_examples("my_examples", vec![example]);
-
-// Render a template
+// Render a template with context variables
 let mut context = std::collections::HashMap::new();
-context.insert("tools".to_string(), serde_json::json!("calculator, weather"));
-context.insert("conversation".to_string(), serde_json::json!("User: hello"));
-let rendered = registry.render("react", context)?;
+context.insert("tools".to_string(), serde_json::json!("calculator"));
+let rendered = registry.render("system", context)?;
+
+// Access a named example set
+let examples = registry.get_examples("react_examples");
+
+// Check whether a react.j2 file was loaded (used internally by ReActStrategy)
+let has_preamble = registry.has_react_template();
+
+// Add templates or examples programmatically
+registry.add_template("custom", "You are {{ persona }}.");
+registry.add_examples("my_set", vec![example]);
 ```
 
 ### Default Templates
 
-The following templates are always available:
+These are always available and can be overridden by placing the corresponding file in `prompts/`:
 
-| Template Name | Description |
-|---------------|-------------|
-| `system` | System prompt |
-| `react` / `strategies.react` | ReAct strategy |
-| `strategies.plan_and_execute` | Plan-and-Execute strategy |
-| `strategies.hierarchical.decompose` | Hierarchical decomposition |
-| `router` | Strategy router |
+| Registry name | Override file | Used by |
+|---|---|---|
+| `system` | `system.j2` | Every strategy |
+| `react` | `react.j2` | `ReActStrategy` preamble |
+| `strategies.plan_and_execute` | `plan_and_execute.j2` | `PlanStrategy` |
+| `strategies.hierarchical.decompose` | `hierarchical.j2` | `HierarchicalStrategy` |
+| `router` | `router.j2` | `RouterStrategy` |
 
 ---
 
