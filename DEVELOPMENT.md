@@ -42,7 +42,8 @@ AgentVerse/
     ├── slack-hr-assistant/ # Slack integration
     ├── rag-qa/            # Document Q&A
     ├── web-search-agent/  # Plan-and-Execute
-    └── code-review-agent/ # Hierarchical planning
+    ├── code-review-agent/ # Hierarchical planning
+    └── anthropic-react/   # Anthropic Claude with prompt caching
 ```
 
 ### Key Concepts
