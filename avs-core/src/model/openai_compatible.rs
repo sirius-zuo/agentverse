@@ -14,6 +14,10 @@ pub struct OpenAICompatible {
     api_base: String,
     model_name: String,
     api_key: String,
+    /// When true, sends `chat_template_kwargs: {"enable_thinking": false}`.
+    /// Needed for Qwen3 models on llama.cpp to avoid assistant-prefill conflicts.
+    /// Set via env var `LLAMA_DISABLE_THINKING=1`.
+    disable_thinking: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -22,6 +26,8 @@ struct ChatRequest {
     messages: Vec<ChatMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<ChatTool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chat_template_kwargs: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -77,6 +83,12 @@ struct ResponseMessage {
     content: Option<String>,
 }
 
+fn read_disable_thinking() -> bool {
+    std::env::var("LLAMA_DISABLE_THINKING")
+        .map(|v| v == "1" || v.to_lowercase() == "true")
+        .unwrap_or(false)
+}
+
 impl OpenAICompatible {
     pub fn new(api_base: &str, model_name: &str, api_key: &str) -> Self {
         Self {
@@ -84,6 +96,7 @@ impl OpenAICompatible {
             api_base: api_base.to_string(),
             model_name: model_name.to_string(),
             api_key: api_key.to_string(),
+            disable_thinking: read_disable_thinking(),
         }
     }
 
@@ -98,6 +111,7 @@ impl OpenAICompatible {
                 api_base: base_url.unwrap_or_else(|| "http://localhost:9090/v1".to_string()),
                 model_name,
                 api_key,
+                disable_thinking: read_disable_thinking(),
             }),
             _ => Err(ModelError::ApiError(
                 "ProviderConfig is not OpenAI".to_string(),
@@ -156,10 +170,17 @@ impl ModelProvider for OpenAICompatible {
                 .collect()
         });
 
+        let chat_template_kwargs = if self.disable_thinking {
+            Some(serde_json::json!({"enable_thinking": false}))
+        } else {
+            None
+        };
+
         let req = ChatRequest {
             model: self.model_name.clone(),
             messages,
             tools: chat_tools,
+            chat_template_kwargs,
         };
 
         let response = self

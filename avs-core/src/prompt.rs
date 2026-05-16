@@ -8,13 +8,22 @@ use crate::error::{AgentError, ConfigError};
 use crate::Example;
 
 /// Default embedded templates shipped with the library.
-const DEFAULT_SYSTEM_TEMPLATE: &str =
-    "You are a helpful AI assistant that executes tasks using available tools.\n\
+const DEFAULT_SYSTEM_TEMPLATE: &str = "You are a helpful AI assistant.\n\
      You are concise and accurate. Never claim to have done something you haven't.\n\
      If you don't know something, say so.\
      {% if tools %}\n\n\
      Available tools:\n\
-     {{ tools }}\
+     {{ tools }}\n\n\
+     Always respond in this exact format:\n\
+     Thought: <your reasoning>\n\
+     Action: <tool_name>\n\
+     Action Input: <json args>\n\n\
+     When you have the final answer:\n\
+     Thought: <your reasoning>\n\
+     Answer: <final answer>\
+     {% else %}\n\n\
+     Always end your response with:\n\
+     Answer: <your answer>\
      {% endif %}";
 
 const DEFAULT_REACT_TEMPLATE: &str = "You are using the ReAct pattern: Think → Act → Observe.\n\n\

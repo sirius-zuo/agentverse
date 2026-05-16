@@ -158,9 +158,39 @@ where
         let tools_str: String = self
             .tools
             .iter()
-            .map(|t| format!("- {}: {}", t.name(), t.description()))
+            .map(|t| {
+                let params = t.parameters();
+                let props = params["properties"].as_object();
+                let required: Vec<&str> = params["required"]
+                    .as_array()
+                    .map(|r| r.iter().filter_map(|v| v.as_str()).collect())
+                    .unwrap_or_default();
+                if let Some(props) = props {
+                    let param_lines = props
+                        .iter()
+                        .map(|(k, v)| {
+                            let req = if required.contains(&k.as_str()) {
+                                "required"
+                            } else {
+                                "optional"
+                            };
+                            let desc = v["description"].as_str().unwrap_or("");
+                            format!("    - {} ({}): {}", k, req, desc)
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    format!(
+                        "- {}: {}\n  Parameters:\n{}",
+                        t.name(),
+                        t.description(),
+                        param_lines
+                    )
+                } else {
+                    format!("- {}: {}", t.name(), t.description())
+                }
+            })
             .collect::<Vec<_>>()
-            .join("\n");
+            .join("\n\n");
 
         let mut sys_context = HashMap::new();
         sys_context.insert("tools".to_string(), Value::String(tools_str));
@@ -168,24 +198,13 @@ where
 
         let messages = self.memory.lock().unwrap().last_n(20);
 
-        let tool_defs: Vec<agentverse::model::ToolDefinition> = self
-            .tools
-            .iter()
-            .map(|t| agentverse::model::ToolDefinition {
-                name: t.name().to_string(),
-                description: t.description().to_string(),
-                parameters: t.parameters(),
-            })
-            .collect();
-
+        // ReAct uses text-based tool descriptions embedded in the system prompt.
+        // Do not send native tool schemas — that would trigger native function-calling
+        // format (tool_calls) instead of text Thought/Action/Answer responses.
         Ok(agentverse::GenerateRequest {
             system,
             messages,
-            tools: if tool_defs.is_empty() {
-                None
-            } else {
-                Some(tool_defs)
-            },
+            tools: None,
         })
     }
 
