@@ -231,7 +231,14 @@ impl PromptRegistry {
                     if name == "react" {
                         self.react_template_loaded = true;
                     }
-                    self.add_template(&name, &template);
+                    // Map short file names to the canonical registry keys used by
+                    // the strategy crates, so file-based overrides actually land.
+                    let registry_name = match name.as_str() {
+                        "plan_and_execute" => "strategies.plan_and_execute",
+                        "hierarchical" => "strategies.hierarchical.decompose",
+                        other => other,
+                    };
+                    self.add_template(registry_name, &template);
                 }
                 Some("toml") => {
                     let name = path.file_stem().unwrap().to_string_lossy().to_string();

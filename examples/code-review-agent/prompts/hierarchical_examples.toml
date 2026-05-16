@@ -1,7 +1,7 @@
 [[example]]
-input = "Review the avs-core crate for security vulnerabilities"
-strategy = "hierarchical"
+input = "Review the avs-core/src codebase: find all Rust files and count them"
+output = "[\"Find all .rs files in avs-core/src using file_search\", \"Count the number of files found using calculator\"]"
 
 [[example]]
-input = "Plan a security audit of the HTTP client module"
-strategy = "plan_and_execute"
+input = "Audit avs-react/src: list source files and report total line count"
+output = "[\"Search for all .rs files in avs-react/src\", \"Count total files with calculator\", \"Summarize the findings\"]"

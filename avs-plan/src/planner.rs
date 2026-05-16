@@ -58,6 +58,11 @@ pub async fn generate_plan(
         "conversation".to_string(),
         serde_json::Value::String(conversation.to_string()),
     );
+    if let Some(examples) = registry.get_examples("plan_examples") {
+        if let Ok(val) = serde_json::to_value(examples) {
+            context.insert("examples".to_string(), val);
+        }
+    }
 
     let strategy_prompt = registry
         .render("strategies.plan_and_execute", context)
@@ -118,6 +123,11 @@ pub async fn decompose_request(
         "conversation".to_string(),
         serde_json::Value::String(format!("User: {}", request)),
     );
+    if let Some(examples) = registry.get_examples("hierarchical_examples") {
+        if let Ok(val) = serde_json::to_value(examples) {
+            context.insert("examples".to_string(), val);
+        }
+    }
 
     let strategy_prompt = registry
         .render("strategies.hierarchical.decompose", context)

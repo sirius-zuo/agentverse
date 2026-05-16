@@ -1,13 +1,19 @@
 // examples/code-review-agent/src/main.rs
 //
-// Agent with FileSearch + Calculator — exercises multi-tool ReAct loop.
+// Demonstrates the Hierarchical Planning strategy:
+//   1. Decompose — model breaks the request into independent sub-goals
+//   2. Plan      — for each sub-goal a step-by-step plan is generated
+//   3. Execute   — each plan step runs a tool or reasons inline
+//   4. Synthesize — all results are combined into a final answer
+//
 // Run:
 //   MODEL_BASE_URL=http://localhost:9090/v1 \
 //   MODEL_NAME=Qwen3.6-35B-A3B-GGUF \
+//   PROJECT_DIR=/path/to/AgentVerse \
 //   cargo run -p example-code-review-agent
 
 use agentverse::{OpenAICompatible, PromptConfig, PromptRegistry, ShortTermMemory};
-use agentverse_react::ReActStrategy;
+use agentverse_plan::HierarchicalStrategy;
 use agentverse_tools::{Calculator, FileSearch};
 use std::sync::{Arc, Mutex};
 
@@ -22,7 +28,9 @@ async fn main() {
         .unwrap_or_else(|_| "/Users/jinzuo/projects/AgentVerse".to_string());
 
     println!("Code Review Agent — model: {} @ {}", model_name, base_url);
+    println!("Strategy: Hierarchical Planning");
     println!("Tools: FileSearch + Calculator");
+    println!();
 
     let model = Arc::new(OpenAICompatible::new(&base_url, &model_name, &api_key));
     let registry = Arc::new(
@@ -37,26 +45,27 @@ async fn main() {
     let memory = Arc::new(Mutex::new(ShortTermMemory::new(50)));
     let tools: Vec<Box<dyn agentverse::SyncTool>> =
         vec![Box::new(FileSearch), Box::new(Calculator)];
-    let mut agent = ReActStrategy::new(registry, model, tools, memory, 15);
+
+    let mut agent = HierarchicalStrategy::new(
+        model,
+        registry,
+        tools,
+        memory,
+        10, // max_iterations per sub-goal plan
+        5,  // max_decompose_depth
+    );
 
     let question = format!(
-        "Find all .rs files in {}/avs-react/src using file_search, \
-         count how many there are, then use calculator to multiply that count by 100.",
+        "Review the avs-react/src codebase in {}: \
+         find all Rust source files, count how many there are, \
+         and summarize what each file is responsible for.",
         project_dir
     );
     println!("> {}", question);
+    println!();
 
     match agent.run(question).await {
-        Ok(result) => {
-            println!("\nAgent: {}", result.answer);
-            println!(
-                "\n[tokens] input={} output={} cache_read={} cache_write={}",
-                result.total_usage.input_tokens,
-                result.total_usage.output_tokens,
-                result.total_usage.cache_read_tokens,
-                result.total_usage.cache_write_tokens,
-            );
-        }
+        Ok(answer) => println!("Agent:\n{}", answer),
         Err(e) => eprintln!("Error: {}", e),
     }
 }
