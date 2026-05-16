@@ -209,3 +209,50 @@ fn test_registry_register_many() {
     registry.register_many(vec![Box::new(Calculator), Box::new(DateTimeTool)]);
     assert_eq!(registry.tool_names().len(), 2);
 }
+
+// ─── Additional FileSearch tests ─────────────────────────────────────────────
+
+#[test]
+fn test_file_search_no_matches() {
+    let tool = FileSearch;
+    let result = tool.execute(json!({
+        "path": ".",
+        "pattern": "*.zzznonexistent_extension_xyz"
+    }));
+    assert!(result.is_ok());
+    let val = result.unwrap();
+    assert_eq!(val["count"], 0);
+    assert_eq!(val["matches"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn test_file_search_rs_files() {
+    let tool = FileSearch;
+    let src_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src");
+    let result = tool.execute(json!({
+        "path": src_dir,
+        "pattern": "*.rs"
+    }));
+    assert!(result.is_ok());
+    let val = result.unwrap();
+    let count = val["count"].as_u64().unwrap_or(0);
+    assert!(count > 0, "Expected .rs files in avs-tools/src");
+}
+
+#[test]
+fn test_file_search_pattern_missing_param() {
+    let tool = FileSearch;
+    let result = tool.execute(json!({ "path": "." }));
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("pattern"));
+}
+
+#[test]
+fn test_file_search_tool_metadata() {
+    let tool = FileSearch;
+    assert_eq!(tool.name(), "file_search");
+    let params = tool.parameters();
+    let required = params["required"].as_array().unwrap();
+    assert!(required.contains(&json!("path")));
+    assert!(required.contains(&json!("pattern")));
+}

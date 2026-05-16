@@ -223,6 +223,138 @@ async fn test_anthropic_rate_limited_returns_rate_limited_error() {
     );
 }
 
+// ── GeminiProvider tests ──────────────────────────────────────────────────────
+
+fn gemini_ok_body() -> serde_json::Value {
+    json!({
+        "candidates": [{
+            "content": {
+                "role": "model",
+                "parts": [{"text": "Hello from Gemini!"}]
+            }
+        }]
+    })
+}
+
+#[test]
+fn test_gemini_from_config_success() {
+    let config = ProviderConfig::Gemini {
+        model_name: "gemini-pro".to_string(),
+        api_key: "key".to_string(),
+    };
+    let provider = GeminiProvider::from_config(config);
+    assert!(provider.is_ok());
+    assert_eq!(provider.unwrap().name(), "gemini-pro");
+}
+
+#[test]
+fn test_gemini_from_config_wrong_variant() {
+    let config = ProviderConfig::OpenAI {
+        model_name: "gpt-4".to_string(),
+        api_key: "key".to_string(),
+        base_url: None,
+    };
+    let err = GeminiProvider::from_config(config).unwrap_err();
+    assert!(err.to_string().contains("not Gemini"));
+}
+
+#[tokio::test]
+async fn test_gemini_generate_rate_limited() {
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method("POST")
+            .path("/v1beta/models/test-model:generateContent");
+        then.status(429).body("rate limited");
+    });
+
+    let provider = GeminiProvider::new(&server.base_url(), "test-model", "test-key");
+    let err = provider.generate(hello_request()).await.unwrap_err();
+    assert!(err.to_string().contains("rate limit") || err.to_string().contains("Rate limit"));
+}
+
+#[tokio::test]
+async fn test_gemini_generate_api_error() {
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method("POST")
+            .path("/v1beta/models/test-model:generateContent");
+        then.status(500).body("internal error");
+    });
+
+    let provider = GeminiProvider::new(&server.base_url(), "test-model", "test-key");
+    let err = provider.generate(hello_request()).await.unwrap_err();
+    assert!(err.to_string().contains("500") || err.to_string().contains("HTTP"));
+}
+
+#[tokio::test]
+async fn test_gemini_generate_empty_candidates() {
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method("POST")
+            .path("/v1beta/models/test-model:generateContent");
+        then.status(200).json_body(json!({"candidates": []}));
+    });
+
+    let provider = GeminiProvider::new(&server.base_url(), "test-model", "test-key");
+    let err = provider.generate(hello_request()).await.unwrap_err();
+    assert!(err.to_string().contains("No content"));
+}
+
+#[tokio::test]
+async fn test_gemini_generate_system_message_filtered() {
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method("POST")
+            .path("/v1beta/models/test-model:generateContent");
+        then.status(200).json_body(gemini_ok_body());
+    });
+
+    let provider = GeminiProvider::new(&server.base_url(), "test-model", "test-key");
+    let req = GenerateRequest {
+        system: Some("System instruction".to_string()),
+        messages: vec![
+            Message {
+                role: MessageRole::System,
+                content: "this should be filtered".to_string(),
+            },
+            Message {
+                role: MessageRole::User,
+                content: "hello".to_string(),
+            },
+        ],
+        tools: None,
+    };
+    let result = provider.generate(req).await.unwrap();
+    assert_eq!(result.content, "Hello from Gemini!");
+}
+
+#[tokio::test]
+async fn test_gemini_generate_with_tools() {
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method("POST")
+            .path("/v1beta/models/test-model:generateContent");
+        then.status(200).json_body(gemini_ok_body());
+    });
+
+    use agentverse::ToolDefinition;
+    let provider = GeminiProvider::new(&server.base_url(), "test-model", "test-key");
+    let req = GenerateRequest {
+        system: None,
+        messages: vec![Message {
+            role: MessageRole::User,
+            content: "hello".to_string(),
+        }],
+        tools: Some(vec![ToolDefinition {
+            name: "calc".to_string(),
+            description: "Calculate".to_string(),
+            parameters: json!({"type": "object", "properties": {}}),
+        }]),
+    };
+    let result = provider.generate(req).await.unwrap();
+    assert_eq!(result.content, "Hello from Gemini!");
+}
+
 #[test]
 fn test_provider_config_serialization() {
     let config = ProviderConfig::OpenAI {

@@ -4,11 +4,13 @@
 
 use agentverse::memory::{Message, MessageRole};
 use agentverse::{
-    GenerateRequest, GenerateResponse, ModelError, ModelProvider, SyncTool, UsageStats,
+    GenerateRequest, GenerateResponse, ModelError, ModelProvider, PromptRegistry, ShortTermMemory,
+    SyncTool, UsageStats,
 };
-use agentverse_plan::{Plan, PlanStep};
+use agentverse_plan::{HierarchicalStrategy, Plan, PlanStep, PlanStrategy};
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 // ─── Mock types ───────────────────────────────────────────────────────────────
 
@@ -260,4 +262,235 @@ fn test_plan_step_complex_args() {
     let deserialized: PlanStep =
         serde_json::from_str(&serde_json::to_string(&step).unwrap()).unwrap();
     assert_eq!(deserialized.args, Some(args));
+}
+
+// ─── Planner function tests ───────────────────────────────────────────────────
+
+fn simple_plan_json() -> String {
+    r#"{"description":"Test plan","steps":[{"id":1,"description":"Reason about it","depends_on":[]}]}"#
+        .to_string()
+}
+
+fn tool_plan_json() -> String {
+    r#"{"description":"Tool plan","steps":[{"id":1,"description":"Run tool","tool":"echo","depends_on":[]}]}"#
+        .to_string()
+}
+
+#[tokio::test]
+async fn test_generate_plan_success() {
+    let model = MockModel {
+        responses: vec![simple_plan_json()],
+        index: AtomicUsize::new(0),
+    };
+    let registry = PromptRegistry::default();
+    let plan = agentverse_plan::planner::generate_plan(&model, &registry, "do something", &[], "")
+        .await
+        .unwrap();
+    assert_eq!(plan.description, "Test plan");
+    assert_eq!(plan.steps.len(), 1);
+}
+
+#[tokio::test]
+async fn test_generate_plan_invalid_json() {
+    let model = MockModel {
+        responses: vec!["not valid json at all".to_string()],
+        index: AtomicUsize::new(0),
+    };
+    let registry = PromptRegistry::default();
+    let err =
+        agentverse_plan::planner::generate_plan(&model, &registry, "do something", &[], "")
+            .await
+            .unwrap_err();
+    assert!(err.to_string().contains("Failed to parse plan JSON"));
+}
+
+#[tokio::test]
+async fn test_generate_plan_with_tools() {
+    let model = MockModel {
+        responses: vec![tool_plan_json()],
+        index: AtomicUsize::new(0),
+    };
+    let registry = PromptRegistry::default();
+    let plan = agentverse_plan::planner::generate_plan(
+        &model,
+        &registry,
+        "do something",
+        &["echo".to_string()],
+        "User: do something",
+    )
+    .await
+    .unwrap();
+    assert_eq!(plan.steps[0].tool, Some("echo".to_string()));
+}
+
+#[tokio::test]
+async fn test_decompose_request_success() {
+    let model = MockModel {
+        responses: vec![r#"["Sub-goal 1","Sub-goal 2"]"#.to_string()],
+        index: AtomicUsize::new(0),
+    };
+    let registry = PromptRegistry::default();
+    let sub_goals =
+        agentverse_plan::planner::decompose_request(&model, &registry, "big request")
+            .await
+            .unwrap();
+    assert_eq!(sub_goals, vec!["Sub-goal 1", "Sub-goal 2"]);
+}
+
+#[tokio::test]
+async fn test_decompose_request_invalid_json() {
+    let model = MockModel {
+        responses: vec!["not json".to_string()],
+        index: AtomicUsize::new(0),
+    };
+    let registry = PromptRegistry::default();
+    let err =
+        agentverse_plan::planner::decompose_request(&model, &registry, "big request")
+            .await
+            .unwrap_err();
+    assert!(err.to_string().contains("Failed to parse decomposition"));
+}
+
+// ─── PlanStrategy::run() tests ───────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_plan_strategy_reasoning_steps() {
+    let model = MockModel {
+        responses: vec![simple_plan_json(), "Final answer.".to_string()],
+        index: AtomicUsize::new(0),
+    };
+    let mut strategy = PlanStrategy::new(
+        Arc::new(model),
+        Arc::new(PromptRegistry::default()),
+        vec![],
+        Arc::new(Mutex::new(ShortTermMemory::new(20))),
+        10,
+    );
+    let result = strategy.run("do something".to_string()).await.unwrap();
+    assert_eq!(result, "Final answer.");
+}
+
+#[tokio::test]
+async fn test_plan_strategy_tool_steps() {
+    let model = MockModel {
+        responses: vec![tool_plan_json(), "Final answer.".to_string()],
+        index: AtomicUsize::new(0),
+    };
+    let tool = MockTool::new("echo", "Echo tool");
+    let mut strategy = PlanStrategy::new(
+        Arc::new(model),
+        Arc::new(PromptRegistry::default()),
+        vec![Box::new(tool)],
+        Arc::new(Mutex::new(ShortTermMemory::new(20))),
+        10,
+    );
+    let result = strategy.run("use echo".to_string()).await.unwrap();
+    assert_eq!(result, "Final answer.");
+}
+
+#[tokio::test]
+async fn test_plan_strategy_tool_not_found_graceful() {
+    // Plan references "missing_tool" but no tool is registered — should not panic
+    let plan_with_unknown = r#"{"description":"Bad tool","steps":[{"id":1,"description":"Use missing","tool":"missing_tool","depends_on":[]}]}"#.to_string();
+    let model = MockModel {
+        responses: vec![plan_with_unknown, "Graceful answer.".to_string()],
+        index: AtomicUsize::new(0),
+    };
+    let mut strategy = PlanStrategy::new(
+        Arc::new(model),
+        Arc::new(PromptRegistry::default()),
+        vec![],
+        Arc::new(Mutex::new(ShortTermMemory::new(20))),
+        10,
+    );
+    let result = strategy.run("test".to_string()).await.unwrap();
+    assert_eq!(result, "Graceful answer.");
+}
+
+#[tokio::test]
+async fn test_plan_strategy_max_iterations_skips_steps() {
+    // max_iterations=0 means every step (id>0) is skipped
+    let plan = r#"{"description":"Big plan","steps":[{"id":1,"description":"Step 1","depends_on":[]},{"id":2,"description":"Step 2","depends_on":[]}]}"#.to_string();
+    let model = MockModel {
+        responses: vec![plan, "Short answer.".to_string()],
+        index: AtomicUsize::new(0),
+    };
+    let mut strategy = PlanStrategy::new(
+        Arc::new(model),
+        Arc::new(PromptRegistry::default()),
+        vec![],
+        Arc::new(Mutex::new(ShortTermMemory::new(20))),
+        0,
+    );
+    let result = strategy.run("test".to_string()).await.unwrap();
+    assert_eq!(result, "Short answer.");
+}
+
+// ─── HierarchicalStrategy::run() tests ───────────────────────────────────────
+
+#[tokio::test]
+async fn test_hierarchical_strategy_run() {
+    let model = MockModel {
+        responses: vec![
+            r#"["Sub-goal 1"]"#.to_string(),  // decompose
+            simple_plan_json(),               // plan for sub-goal 1
+            "Hierarchical answer.".to_string(), // synthesis
+        ],
+        index: AtomicUsize::new(0),
+    };
+    let mut strategy = HierarchicalStrategy::new(
+        Arc::new(model),
+        Arc::new(PromptRegistry::default()),
+        vec![],
+        Arc::new(Mutex::new(ShortTermMemory::new(30))),
+        10,
+        5,
+    );
+    let result = strategy.run("complex task".to_string()).await.unwrap();
+    assert_eq!(result, "Hierarchical answer.");
+}
+
+#[tokio::test]
+async fn test_hierarchical_strategy_max_depth_limits_subgoals() {
+    // decompose returns 2 sub-goals but max_decompose_depth=1 means only 1 is processed
+    let model = MockModel {
+        responses: vec![
+            r#"["Sub-goal 1","Sub-goal 2"]"#.to_string(), // decompose
+            simple_plan_json(),                           // plan for sub-goal 1 only
+            "Depth-limited answer.".to_string(),          // synthesis
+        ],
+        index: AtomicUsize::new(0),
+    };
+    let mut strategy = HierarchicalStrategy::new(
+        Arc::new(model),
+        Arc::new(PromptRegistry::default()),
+        vec![],
+        Arc::new(Mutex::new(ShortTermMemory::new(30))),
+        10,
+        1, // max_decompose_depth = 1
+    );
+    let result = strategy.run("complex task".to_string()).await.unwrap();
+    assert_eq!(result, "Depth-limited answer.");
+}
+
+#[tokio::test]
+async fn test_hierarchical_strategy_zero_subgoals() {
+    // decompose returns empty list — goes straight to synthesis
+    let model = MockModel {
+        responses: vec![
+            r#"[]"#.to_string(),                      // decompose: no sub-goals
+            "Empty synthesis.".to_string(),            // synthesis
+        ],
+        index: AtomicUsize::new(0),
+    };
+    let mut strategy = HierarchicalStrategy::new(
+        Arc::new(model),
+        Arc::new(PromptRegistry::default()),
+        vec![],
+        Arc::new(Mutex::new(ShortTermMemory::new(30))),
+        10,
+        5,
+    );
+    let result = strategy.run("simple task".to_string()).await.unwrap();
+    assert_eq!(result, "Empty synthesis.");
 }

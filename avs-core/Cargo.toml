@@ -31,3 +31,4 @@ tracing = ["opentelemetry", "opentelemetry-otlp"]
 tokio.workspace = true
 httpmock = "0.7"
 mockall = "0.13"
+tempfile = "3"
