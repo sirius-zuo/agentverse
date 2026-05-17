@@ -1,5 +1,7 @@
-pub mod long_term;
-pub mod summary;
+pub mod traits;
+pub mod noop;
+pub mod simple;
+pub mod agent;
 
-pub use long_term::{LongTermMemory, LongTermMemoryError, MemoryEntry};
-pub use summary::{should_trigger_summary, truncate_messages};
+pub use traits::{Embedder, LongTermBackend, Summarizer};
+pub use noop::{NoopBackend, NoopSummarizer};
