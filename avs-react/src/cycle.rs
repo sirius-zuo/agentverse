@@ -6,7 +6,8 @@
 use agentverse::{AgentError, Message, ModelProvider, PromptRegistry, SyncTool};
 use agentverse_guardrails::{check_output, check_prompt};
 use serde_json::Value;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tracing::{debug, error, info};
 
 /// The fixed cycle skeleton that all strategies share.
@@ -81,7 +82,7 @@ where
         F: FnMut(&mut Self) -> Fut,
         Fut: std::future::Future<Output = Result<CycleAction, AgentError>>,
     {
-        self.memory.lock().unwrap().append(Message {
+        self.memory.lock().await.append(Message {
             role: agentverse::memory::MessageRole::User,
             content: initial_message,
         });
@@ -94,7 +95,7 @@ where
 
             match action {
                 CycleAction::Continue { thought } => {
-                    self.memory.lock().unwrap().append(Message {
+                    self.memory.lock().await.append(Message {
                         role: agentverse::memory::MessageRole::Assistant,
                         content: format!("Thought: {}", thought),
                     });
@@ -105,7 +106,7 @@ where
                 }
                 CycleAction::ToolCall { tool_name, args } => {
                     let result = self.execute_tool(&tool_name, args)?;
-                    self.memory.lock().unwrap().append(Message {
+                    self.memory.lock().await.append(Message {
                         role: agentverse::memory::MessageRole::Tool,
                         content: format!("Tool: {}\nResult: {}", tool_name, result),
                     });
@@ -116,7 +117,7 @@ where
                     );
                 }
                 CycleAction::Done { answer } => {
-                    self.memory.lock().unwrap().append(Message {
+                    self.memory.lock().await.append(Message {
                         role: agentverse::memory::MessageRole::Assistant,
                         content: answer.clone(),
                     });
@@ -202,7 +203,7 @@ where
     /// stays inside the stable prefix that the penultimate-message cache
     /// breakpoint captures on every subsequent turn — it is effectively free
     /// after the first round-trip.
-    pub fn prime_react_preamble(&mut self) {
+    pub async fn prime_react_preamble(&mut self) {
         if self.react_primed || !self.prompt_registry.has_react_template() {
             return;
         }
@@ -221,10 +222,10 @@ where
 
         if let Ok(preamble) = self.prompt_registry.render("react", ctx) {
             if !preamble.trim().is_empty() {
-                self.memory.lock().unwrap().append(agentverse::Message {
+                self.memory.lock().await.pin(vec![agentverse::Message {
                     role: agentverse::memory::MessageRole::User,
                     content: preamble,
-                });
+                }]);
             }
         }
 
@@ -243,7 +244,7 @@ where
     /// prompt.  When there is no react preamble, tools are embedded in the
     /// system prompt as before (backward-compatible with examples that use the
     /// default registry).
-    pub fn build_request(&self) -> Result<agentverse::GenerateRequest, AgentError> {
+    pub async fn build_request(&self) -> Result<agentverse::GenerateRequest, AgentError> {
         let mut sys_context = std::collections::HashMap::new();
         if !self.react_primed {
             // No react preamble — embed tools in system prompt (default behaviour).
@@ -254,7 +255,13 @@ where
         }
         let system = self.prompt_registry.render("system", sys_context).ok();
 
-        let messages = self.memory.lock().unwrap().last_n(20);
+        let messages = self
+            .memory
+            .lock()
+            .await
+            .last_n(20)
+            .await
+            .map_err(|e| AgentError::Memory(e.to_string()))?;
 
         // ReAct uses text-based tool descriptions — do not send native tool
         // schemas, which would cause the model to emit tool_calls instead of
@@ -267,8 +274,10 @@ where
     }
 
     /// Build the request with guardrail checking on the rendered system prompt.
-    pub fn build_request_with_guardrails(&self) -> Result<agentverse::GenerateRequest, AgentError> {
-        let request = self.build_request()?;
+    pub async fn build_request_with_guardrails(
+        &self,
+    ) -> Result<agentverse::GenerateRequest, AgentError> {
+        let request = self.build_request().await?;
         if let Some(ref system) = request.system {
             check_prompt(system).map_err(|e| match e {
                 agentverse_guardrails::GuardrailError::PromptInjection(msg) => {

@@ -6,9 +6,11 @@
 //   MODEL_NAME=Qwen3.6-35B-A3B-GGUF \
 //   cargo run -p example-hello-agent
 
-use agentverse::{OpenAICompatible, PromptConfig, PromptRegistry, ShortTermMemory};
+use agentverse::{OpenAICompatible, PromptConfig, PromptRegistry};
+use agentverse_memory::SimpleMemory;
 use agentverse_react::ReActStrategy;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() {
@@ -23,14 +25,12 @@ async fn main() {
     let model = Arc::new(OpenAICompatible::new(&base_url, &model_name, &api_key));
     let registry = Arc::new(
         PromptRegistry::from_config(&PromptConfig {
-            prompts_dir: Some(
-                concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string(),
-            ),
+            prompts_dir: Some(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string()),
             ..Default::default()
         })
         .expect("prompt config"),
     );
-    let memory = Arc::new(Mutex::new(ShortTermMemory::new(50)));
+    let memory = Arc::new(Mutex::new(SimpleMemory::new(50)));
     let mut agent = ReActStrategy::new(registry, model, vec![], memory, 10);
 
     let question = "Hello! Introduce yourself briefly and name two things you can help with.";

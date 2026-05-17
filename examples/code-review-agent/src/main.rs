@@ -12,10 +12,12 @@
 //   PROJECT_DIR=/path/to/AgentVerse \
 //   cargo run -p example-code-review-agent
 
-use agentverse::{OpenAICompatible, PromptConfig, PromptRegistry, ShortTermMemory};
+use agentverse::{OpenAICompatible, PromptConfig, PromptRegistry};
+use agentverse_memory::SimpleMemory;
 use agentverse_plan::HierarchicalStrategy;
 use agentverse_tools::{Calculator, FileSearch};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() {
@@ -35,23 +37,17 @@ async fn main() {
     let model = Arc::new(OpenAICompatible::new(&base_url, &model_name, &api_key));
     let registry = Arc::new(
         PromptRegistry::from_config(&PromptConfig {
-            prompts_dir: Some(
-                concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string(),
-            ),
+            prompts_dir: Some(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string()),
             ..Default::default()
         })
         .expect("prompt config"),
     );
-    let memory = Arc::new(Mutex::new(ShortTermMemory::new(50)));
+    let memory = Arc::new(Mutex::new(SimpleMemory::new(50)));
     let tools: Vec<Box<dyn agentverse::SyncTool>> =
         vec![Box::new(FileSearch), Box::new(Calculator)];
 
     let mut agent = HierarchicalStrategy::new(
-        model,
-        registry,
-        tools,
-        memory,
-        10, // max_iterations per sub-goal plan
+        model, registry, tools, memory, 10, // max_iterations per sub-goal plan
         5,  // max_decompose_depth
     );
 

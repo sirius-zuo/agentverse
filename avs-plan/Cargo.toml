@@ -11,7 +11,9 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 async-trait = { workspace = true }
+tokio = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }
 async-trait = { workspace = true }
+agentverse-memory = { path = "../avs-memory" }

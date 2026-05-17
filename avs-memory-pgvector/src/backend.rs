@@ -1,5 +1,5 @@
-use agentverse::Message;
-use agentverse_memory::{LongTermMemory, LongTermMemoryError, MemoryEntry};
+use agentverse::memory::{MemoryError, Message, MessageRole};
+use agentverse_memory::LongTermBackend;
 use sqlx::PgPool;
 use sqlx::Row;
 
@@ -9,10 +9,10 @@ pub struct PgVectorBackend {
 }
 
 impl PgVectorBackend {
-    pub async fn new(database_url: &str) -> Result<Self, LongTermMemoryError> {
+    pub async fn new(database_url: &str) -> Result<Self, MemoryError> {
         let pool = PgPool::connect(database_url)
             .await
-            .map_err(|e| LongTermMemoryError::Connection(e.to_string()))?;
+            .map_err(|e| MemoryError::Storage(e.to_string()))?;
 
         Ok(Self { pool })
     }
@@ -23,22 +23,18 @@ impl PgVectorBackend {
 }
 
 #[async_trait::async_trait]
-impl LongTermMemory for PgVectorBackend {
-    async fn store(&mut self, entry: MemoryEntry) -> Result<(), LongTermMemoryError> {
-        let id = entry
-            .id
-            .parse::<uuid::Uuid>()
-            .map_err(|e| LongTermMemoryError::Query(e.to_string()))?;
-        let content = format!("{:?}: {}", entry.message.role, entry.message.content);
-        let role = format!("{:?}", entry.message.role);
-        let metadata = serde_json::to_value(&entry.metadata)
-            .map_err(|e| LongTermMemoryError::Query(e.to_string()))?;
-        let created_at = entry.created_at;
+impl LongTermBackend for PgVectorBackend {
+    async fn store(&self, message: Message, embedding: Vec<f32>) -> Result<(), MemoryError> {
+        let id = uuid::Uuid::new_v4();
+        let content = message.content;
+        let role = format!("{:?}", message.role);
+        let metadata = serde_json::Value::Null;
+        let created_at = chrono::Utc::now();
 
-        // Build embedding array string for pgvector
-        let embedding = format!(
+        // Build embedding vector string for pgvector
+        let embedding_str = format!(
             "[{}]",
-            vec![0.0f32; 1536]
+            embedding
                 .iter()
                 .map(|v| v.to_string())
                 .collect::<Vec<_>>()
@@ -55,24 +51,19 @@ impl LongTermMemory for PgVectorBackend {
         .bind(content)
         .bind(role)
         .bind(metadata)
-        .bind(embedding)
+        .bind(embedding_str)
         .bind(created_at)
         .execute(&self.pool)
         .await
-        .map_err(|e| LongTermMemoryError::Query(e.to_string()))?;
+        .map_err(|e| MemoryError::Storage(e.to_string()))?;
 
         Ok(())
     }
 
-    async fn search(
-        &self,
-        _query: &str,
-        top_k: usize,
-    ) -> Result<Vec<MemoryEntry>, LongTermMemoryError> {
-        // Build placeholder embedding for vector similarity search
-        let embedding = format!(
+    async fn search(&self, embedding: Vec<f32>, top_k: usize) -> Result<Vec<Message>, MemoryError> {
+        let embedding_str = format!(
             "[{}]",
-            vec![0.0f32; 1536]
+            embedding
                 .iter()
                 .map(|v| v.to_string())
                 .collect::<Vec<_>>()
@@ -81,75 +72,60 @@ impl LongTermMemory for PgVectorBackend {
 
         let rows = sqlx::query(
             r#"
-            SELECT id, content, role, metadata, created_at
+            SELECT content, role
             FROM agent_memory
             ORDER BY embedding <-> $1::vector
             LIMIT $2
             "#,
         )
-        .bind(embedding)
+        .bind(embedding_str)
         .bind(top_k as i32)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| LongTermMemoryError::Query(e.to_string()))?;
+        .map_err(|e| MemoryError::Retrieval(e.to_string()))?;
 
-        let mut entries = Vec::new();
+        let mut messages = Vec::new();
         for row in rows {
-            let id: uuid::Uuid = row
-                .try_get("id")
-                .map_err(|e| LongTermMemoryError::Query(e.to_string()))?;
             let content: String = row
                 .try_get("content")
-                .map_err(|e| LongTermMemoryError::Query(e.to_string()))?;
-            let role: String = row
+                .map_err(|e| MemoryError::Retrieval(e.to_string()))?;
+            let role_str: String = row
                 .try_get("role")
-                .map_err(|e| LongTermMemoryError::Query(e.to_string()))?;
-            let metadata: serde_json::Value =
-                row.try_get("metadata").unwrap_or(serde_json::Value::Null);
-            let created_at: chrono::DateTime<chrono::Utc> = row
-                .try_get("created_at")
-                .map_err(|e| LongTermMemoryError::Query(e.to_string()))?;
+                .map_err(|e| MemoryError::Retrieval(e.to_string()))?;
 
-            let message_role = match role.as_str() {
-                "System" => agentverse::MessageRole::System,
-                "User" => agentverse::MessageRole::User,
-                "Assistant" => agentverse::MessageRole::Assistant,
-                "Tool" => agentverse::MessageRole::Tool,
-                _ => agentverse::MessageRole::User,
+            let role = match role_str.as_str() {
+                "System" => MessageRole::System,
+                "Assistant" => MessageRole::Assistant,
+                "Tool" => MessageRole::Tool,
+                _ => MessageRole::User,
             };
 
-            entries.push(MemoryEntry {
-                id: id.to_string(),
-                message: Message {
-                    role: message_role,
-                    content,
-                },
-                metadata,
-                created_at,
-            });
+            messages.push(Message { role, content });
         }
 
-        Ok(entries)
+        Ok(messages)
     }
+}
 
-    async fn purge_old(
-        &mut self,
+impl PgVectorBackend {
+    pub async fn purge_old(
+        &self,
         before: chrono::DateTime<chrono::Utc>,
-    ) -> Result<usize, LongTermMemoryError> {
+    ) -> Result<usize, MemoryError> {
         let result = sqlx::query(r#"DELETE FROM agent_memory WHERE created_at < $1"#)
             .bind(before)
             .execute(&self.pool)
             .await
-            .map_err(|e| LongTermMemoryError::Query(e.to_string()))?;
+            .map_err(|e| MemoryError::Storage(e.to_string()))?;
 
         Ok(result.rows_affected() as usize)
     }
 
-    async fn health_check(&self) -> Result<(), LongTermMemoryError> {
+    pub async fn health_check(&self) -> Result<(), MemoryError> {
         sqlx::query("SELECT 1")
             .execute(&self.pool)
             .await
-            .map_err(|e| LongTermMemoryError::Connection(e.to_string()))?;
+            .map_err(|e| MemoryError::Storage(e.to_string()))?;
         Ok(())
     }
 }
