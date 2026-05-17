@@ -6,10 +6,12 @@
 //   MODEL_NAME=Qwen3.6-35B-A3B-GGUF \
 //   cargo run -p example-web-search-agent
 
-use agentverse::{OpenAICompatible, PromptConfig, PromptRegistry, ShortTermMemory};
+use agentverse::{OpenAICompatible, PromptConfig, PromptRegistry};
+use agentverse_memory::SimpleMemory;
 use agentverse_react::ReActStrategy;
 use agentverse_tools::FileSearch;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() {
@@ -34,7 +36,7 @@ async fn main() {
         })
         .expect("prompt config"),
     );
-    let memory = Arc::new(Mutex::new(ShortTermMemory::new(50)));
+    let memory = Arc::new(Mutex::new(SimpleMemory::new(50)));
     let tools: Vec<Box<dyn agentverse::SyncTool>> = vec![Box::new(FileSearch)];
     let mut agent = ReActStrategy::new(registry, model, tools, memory, 10);
 
