@@ -10,6 +10,8 @@ pub enum AgentError {
     Config(#[from] ConfigError),
     #[error("Guardrail error: {0}")]
     Guardrail(#[from] GuardrailError),
+    #[error("Memory error: {0}")]
+    Memory(String),
 }
 
 #[derive(Error, Debug, Clone)]
