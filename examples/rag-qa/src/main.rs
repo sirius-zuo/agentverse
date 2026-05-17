@@ -27,9 +27,7 @@ async fn main() {
     let model = Arc::new(OpenAICompatible::new(&base_url, &model_name, &api_key));
     let registry = Arc::new(
         PromptRegistry::from_config(&PromptConfig {
-            prompts_dir: Some(
-                concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string(),
-            ),
+            prompts_dir: Some(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string()),
             ..Default::default()
         })
         .expect("prompt config"),

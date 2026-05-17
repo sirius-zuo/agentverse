@@ -1,9 +1,9 @@
-pub mod traits;
+pub mod agent;
 pub mod noop;
 pub mod simple;
-pub mod agent;
+pub mod traits;
 
-pub use traits::{Embedder, LongTermBackend, Summarizer};
+pub use agent::AgentMemory;
 pub use noop::{NoopBackend, NoopSummarizer};
 pub use simple::SimpleMemory;
-pub use agent::AgentMemory;
+pub use traits::{Embedder, LongTermBackend, Summarizer};

@@ -4,8 +4,8 @@
 
 use agentverse::memory::{Message, MessageRole};
 use agentverse::{
-    GenerateRequest, GenerateResponse, ModelError, ModelProvider, PromptRegistry,
-    SyncTool, UsageStats,
+    GenerateRequest, GenerateResponse, ModelError, ModelProvider, PromptRegistry, SyncTool,
+    UsageStats,
 };
 use agentverse_memory::SimpleMemory;
 use agentverse_plan::{HierarchicalStrategy, Plan, PlanStep, PlanStrategy};
@@ -299,10 +299,9 @@ async fn test_generate_plan_invalid_json() {
         index: AtomicUsize::new(0),
     };
     let registry = PromptRegistry::default();
-    let err =
-        agentverse_plan::planner::generate_plan(&model, &registry, "do something", &[], "")
-            .await
-            .unwrap_err();
+    let err = agentverse_plan::planner::generate_plan(&model, &registry, "do something", &[], "")
+        .await
+        .unwrap_err();
     assert!(err.to_string().contains("Failed to parse plan JSON"));
 }
 
@@ -332,10 +331,9 @@ async fn test_decompose_request_success() {
         index: AtomicUsize::new(0),
     };
     let registry = PromptRegistry::default();
-    let sub_goals =
-        agentverse_plan::planner::decompose_request(&model, &registry, "big request")
-            .await
-            .unwrap();
+    let sub_goals = agentverse_plan::planner::decompose_request(&model, &registry, "big request")
+        .await
+        .unwrap();
     assert_eq!(sub_goals, vec!["Sub-goal 1", "Sub-goal 2"]);
 }
 
@@ -346,10 +344,9 @@ async fn test_decompose_request_invalid_json() {
         index: AtomicUsize::new(0),
     };
     let registry = PromptRegistry::default();
-    let err =
-        agentverse_plan::planner::decompose_request(&model, &registry, "big request")
-            .await
-            .unwrap_err();
+    let err = agentverse_plan::planner::decompose_request(&model, &registry, "big request")
+        .await
+        .unwrap_err();
     assert!(err.to_string().contains("Failed to parse decomposition"));
 }
 
@@ -434,8 +431,8 @@ async fn test_plan_strategy_max_iterations_skips_steps() {
 async fn test_hierarchical_strategy_run() {
     let model = MockModel {
         responses: vec![
-            r#"["Sub-goal 1"]"#.to_string(),  // decompose
-            simple_plan_json(),               // plan for sub-goal 1
+            r#"["Sub-goal 1"]"#.to_string(),    // decompose
+            simple_plan_json(),                 // plan for sub-goal 1
             "Hierarchical answer.".to_string(), // synthesis
         ],
         index: AtomicUsize::new(0),
@@ -480,8 +477,8 @@ async fn test_hierarchical_strategy_zero_subgoals() {
     // decompose returns empty list — goes straight to synthesis
     let model = MockModel {
         responses: vec![
-            r#"[]"#.to_string(),                      // decompose: no sub-goals
-            "Empty synthesis.".to_string(),            // synthesis
+            r#"[]"#.to_string(),            // decompose: no sub-goals
+            "Empty synthesis.".to_string(), // synthesis
         ],
         index: AtomicUsize::new(0),
     };

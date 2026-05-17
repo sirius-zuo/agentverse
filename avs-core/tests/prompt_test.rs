@@ -150,7 +150,11 @@ fn test_from_config_loads_toml_examples() {
 #[test]
 fn test_from_config_invalid_toml_returns_error() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("react_examples.toml"), "not valid toml = [[[").unwrap();
+    std::fs::write(
+        dir.path().join("react_examples.toml"),
+        "not valid toml = [[[",
+    )
+    .unwrap();
 
     let result = PromptRegistry::from_config(&PromptConfig {
         prompts_dir: Some(dir.path().to_str().unwrap().to_string()),
@@ -158,7 +162,11 @@ fn test_from_config_invalid_toml_returns_error() {
     });
 
     assert!(result.is_err());
-    assert!(result.err().unwrap().to_string().contains("Cannot parse examples"));
+    assert!(result
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("Cannot parse examples"));
 }
 
 #[test]
@@ -179,9 +187,7 @@ fn test_from_config_plan_and_execute_key_mapping() {
     let mut ctx = HashMap::new();
     ctx.insert("tools".to_string(), serde_json::json!("calculator"));
     // Must be registered under the canonical key, not the file stem
-    let rendered = registry
-        .render("strategies.plan_and_execute", ctx)
-        .unwrap();
+    let rendered = registry.render("strategies.plan_and_execute", ctx).unwrap();
     assert!(rendered.contains("Plan prompt: calculator"));
 }
 

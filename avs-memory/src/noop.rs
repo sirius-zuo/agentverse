@@ -1,6 +1,6 @@
+use super::traits::{LongTermBackend, Summarizer};
 use agentverse::memory::{MemoryError, Message, MessageRole};
 use async_trait::async_trait;
-use super::traits::{LongTermBackend, Summarizer};
 
 pub struct NoopSummarizer;
 pub struct NoopBackend;
@@ -17,11 +17,7 @@ impl Summarizer for NoopSummarizer {
 
 #[async_trait]
 impl LongTermBackend for NoopBackend {
-    async fn store(
-        &self,
-        _message: Message,
-        _embedding: Vec<f32>,
-    ) -> Result<(), MemoryError> {
+    async fn store(&self, _message: Message, _embedding: Vec<f32>) -> Result<(), MemoryError> {
         Ok(())
     }
 

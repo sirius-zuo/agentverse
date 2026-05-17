@@ -121,7 +121,11 @@ impl LongTermBackend for LanceDBBackend {
         Ok(())
     }
 
-    async fn search(&self, _embedding: Vec<f32>, top_k: usize) -> Result<Vec<Message>, MemoryError> {
+    async fn search(
+        &self,
+        _embedding: Vec<f32>,
+        top_k: usize,
+    ) -> Result<Vec<Message>, MemoryError> {
         let conn = self.connect().await?;
         let table = self.open_or_create_table(&conn).await?;
 
@@ -139,9 +143,10 @@ impl LongTermBackend for LanceDBBackend {
             .transpose()
             .map_err(|e| MemoryError::Retrieval(e.to_string()))?
         {
-            if let (Some(role_arr), Some(content_arr)) =
-                (batch.column_by_name("role"), batch.column_by_name("content"))
-            {
+            if let (Some(role_arr), Some(content_arr)) = (
+                batch.column_by_name("role"),
+                batch.column_by_name("content"),
+            ) {
                 let role_array = role_arr
                     .as_any()
                     .downcast_ref::<arrow_array::StringArray>()

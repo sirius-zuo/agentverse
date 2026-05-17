@@ -2,7 +2,10 @@ use agentverse::memory::{Memory, Message, MessageRole};
 use agentverse_memory::{AgentMemory, NoopBackend, NoopSummarizer};
 
 fn user_msg(content: &str) -> Message {
-    Message { role: MessageRole::User, content: content.to_string() }
+    Message {
+        role: MessageRole::User,
+        content: content.to_string(),
+    }
 }
 
 fn make_agent_memory(max: usize, threshold: usize) -> AgentMemory<NoopSummarizer, NoopBackend> {
@@ -39,7 +42,7 @@ async fn test_agent_memory_summarization_triggered() {
     m.append(user_msg("a"));
     m.append(user_msg("b"));
     m.append(user_msg("c")); // triggers flag
-    // last_n should summarize oldest half and replace with "[summary]"
+                             // last_n should summarize oldest half and replace with "[summary]"
     let result = m.last_n(10).await.unwrap();
     // After summarization: oldest half replaced by 1 summary message
     // window had [a,b,c], oldest half = [a] (len/2=1), so window becomes [[summary],b,c]
@@ -56,7 +59,9 @@ async fn test_agent_memory_summarization_failure_degrades_gracefully() {
     #[async_trait]
     impl Summarizer for FailingSummarizer {
         async fn summarize(&self, _msgs: &[Message]) -> Result<Message, MemoryError> {
-            Err(MemoryError::Summarization("intentional failure".to_string()))
+            Err(MemoryError::Summarization(
+                "intentional failure".to_string(),
+            ))
         }
     }
 
@@ -64,7 +69,7 @@ async fn test_agent_memory_summarization_failure_degrades_gracefully() {
     m.append(user_msg("a"));
     m.append(user_msg("b"));
     m.append(user_msg("c")); // triggers flag
-    // Even with failing summarizer, last_n must succeed
+                             // Even with failing summarizer, last_n must succeed
     let result = m.last_n(10).await.unwrap();
     // All original messages present (summarization was a no-op)
     assert_eq!(result.len(), 3);
@@ -95,7 +100,7 @@ async fn test_agent_memory_flush() {
     let mut m = make_agent_memory(10, 100);
     m.append(user_msg("msg"));
     m.flush().await.unwrap(); // NoopBackend — just verify no error
-    // Data still present after flush
+                              // Data still present after flush
     let result = m.last_n(10).await.unwrap();
     assert_eq!(result.len(), 1);
 }

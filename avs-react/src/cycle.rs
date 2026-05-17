@@ -274,7 +274,9 @@ where
     }
 
     /// Build the request with guardrail checking on the rendered system prompt.
-    pub async fn build_request_with_guardrails(&self) -> Result<agentverse::GenerateRequest, AgentError> {
+    pub async fn build_request_with_guardrails(
+        &self,
+    ) -> Result<agentverse::GenerateRequest, AgentError> {
         let request = self.build_request().await?;
         if let Some(ref system) = request.system {
             check_prompt(system).map_err(|e| match e {

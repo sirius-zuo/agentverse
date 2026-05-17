@@ -1,7 +1,7 @@
+use super::traits::{LongTermBackend, Summarizer};
 use agentverse::memory::{Memory, MemoryError, Message};
 use async_trait::async_trait;
 use std::collections::VecDeque;
-use super::traits::{LongTermBackend, Summarizer};
 
 pub struct AgentMemory<S: Summarizer, B: LongTermBackend> {
     pinned: Vec<Message>,
@@ -33,9 +33,7 @@ impl<S: Summarizer, B: LongTermBackend> AgentMemory<S, B> {
 }
 
 #[async_trait]
-impl<S: Summarizer + Send + Sync, B: LongTermBackend + Send + Sync> Memory
-    for AgentMemory<S, B>
-{
+impl<S: Summarizer + Send + Sync, B: LongTermBackend + Send + Sync> Memory for AgentMemory<S, B> {
     fn append(&mut self, message: Message) {
         self.window.push_back(message);
         if self.window.len() > self.max_messages {

@@ -364,10 +364,7 @@ async fn test_cycle_no_preamble_without_react_template() {
     );
     skeleton.prime_react_preamble().await;
     assert!(!skeleton.is_react_primed());
-    assert_eq!(
-        memory.lock().await.last_n(20).await.unwrap().len(),
-        0
-    );
+    assert_eq!(memory.lock().await.last_n(20).await.unwrap().len(), 0);
 }
 
 #[tokio::test]
@@ -456,7 +453,9 @@ fn test_cycle_accumulate_usage() {
 #[test]
 fn test_cycle_check_output_guardrail_clean() {
     let skeleton = mock_skeleton(vec![], vec![], 5);
-    assert!(skeleton.check_output_guardrail("This is a clean response.").is_ok());
+    assert!(skeleton
+        .check_output_guardrail("This is a clean response.")
+        .is_ok());
 }
 
 #[tokio::test]
@@ -469,8 +468,12 @@ async fn test_cycle_build_request_with_guardrails_clean() {
 async fn test_cycle_build_tools_str_with_parameters() {
     struct ParamTool;
     impl agentverse::SyncTool for ParamTool {
-        fn name(&self) -> &str { "param_tool" }
-        fn description(&self) -> &str { "Tool with params" }
+        fn name(&self) -> &str {
+            "param_tool"
+        }
+        fn description(&self) -> &str {
+            "Tool with params"
+        }
         fn parameters(&self) -> serde_json::Value {
             json!({
                 "type": "object",
@@ -481,7 +484,10 @@ async fn test_cycle_build_tools_str_with_parameters() {
                 "required": ["query"]
             })
         }
-        fn execute(&self, _args: serde_json::Value) -> Result<serde_json::Value, agentverse::ToolError> {
+        fn execute(
+            &self,
+            _args: serde_json::Value,
+        ) -> Result<serde_json::Value, agentverse::ToolError> {
             Ok(json!({}))
         }
     }
@@ -525,7 +531,9 @@ async fn test_cycle_run_with_tool_call() {
                     args: json!({}),
                 }
             } else {
-                CycleAction::Done { answer: "done".to_string() }
+                CycleAction::Done {
+                    answer: "done".to_string(),
+                }
             };
             async move { Ok(action) }
         })

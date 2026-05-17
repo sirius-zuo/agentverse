@@ -37,9 +37,7 @@ async fn main() {
     let model = Arc::new(OpenAICompatible::new(&base_url, &model_name, &api_key));
     let registry = Arc::new(
         PromptRegistry::from_config(&PromptConfig {
-            prompts_dir: Some(
-                concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string(),
-            ),
+            prompts_dir: Some(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string()),
             ..Default::default()
         })
         .expect("prompt config"),
@@ -49,11 +47,7 @@ async fn main() {
         vec![Box::new(FileSearch), Box::new(Calculator)];
 
     let mut agent = HierarchicalStrategy::new(
-        model,
-        registry,
-        tools,
-        memory,
-        10, // max_iterations per sub-goal plan
+        model, registry, tools, memory, 10, // max_iterations per sub-goal plan
         5,  // max_decompose_depth
     );
 

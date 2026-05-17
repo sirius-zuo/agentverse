@@ -34,7 +34,11 @@ impl LongTermBackend for PgVectorBackend {
         // Build embedding vector string for pgvector
         let embedding_str = format!(
             "[{}]",
-            embedding.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(",")
+            embedding
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
         );
 
         sqlx::query(
@@ -59,7 +63,11 @@ impl LongTermBackend for PgVectorBackend {
     async fn search(&self, embedding: Vec<f32>, top_k: usize) -> Result<Vec<Message>, MemoryError> {
         let embedding_str = format!(
             "[{}]",
-            embedding.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(",")
+            embedding
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
         );
 
         let rows = sqlx::query(

@@ -1,5 +1,5 @@
-use async_trait::async_trait;
 use super::{Memory, MemoryError, Message};
+use async_trait::async_trait;
 
 // Internal default used by Agent. Not re-exported from avs-core.
 // External code should use agentverse_memory::SimpleMemory instead.
@@ -22,7 +22,8 @@ impl Memory for ShortTermMemory {
     fn append(&mut self, message: Message) {
         self.messages.push(message);
         if self.messages.len() > self.max_messages {
-            self.messages.drain(0..self.messages.len() - self.max_messages);
+            self.messages
+                .drain(0..self.messages.len() - self.max_messages);
         }
     }
 

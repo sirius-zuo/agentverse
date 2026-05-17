@@ -2,7 +2,10 @@ use agentverse::memory::{Memory, Message, MessageRole};
 use agentverse_memory::SimpleMemory;
 
 fn user_msg(content: &str) -> Message {
-    Message { role: MessageRole::User, content: content.to_string() }
+    Message {
+        role: MessageRole::User,
+        content: content.to_string(),
+    }
 }
 
 #[tokio::test]
