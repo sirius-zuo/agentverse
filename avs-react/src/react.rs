@@ -6,7 +6,8 @@
 use super::cycle::{CycleAction, CycleSkeleton};
 use super::parse::parse_response;
 use agentverse::{AgentError, ModelProvider, PromptRegistry, SyncTool};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// The high-level ReAct strategy interface.
 ///
@@ -44,12 +45,12 @@ where
     pub async fn run(&mut self, input: String) -> Result<agentverse::CycleResult, AgentError> {
         // Insert the react preamble as the first message when a react.j2 file
         // was loaded.  Idempotent — does nothing on subsequent calls.
-        self.skeleton.prime_react_preamble();
+        self.skeleton.prime_react_preamble().await;
 
         self.skeleton
             .memory()
             .lock()
-            .unwrap()
+            .await
             .append(agentverse::Message {
                 role: agentverse::memory::MessageRole::User,
                 content: input,
@@ -65,7 +66,7 @@ where
 
             let _iter = self.skeleton.next_iteration();
 
-            let request = self.skeleton.build_request_with_guardrails()?;
+            let request = self.skeleton.build_request_with_guardrails().await?;
 
             let response = self.skeleton.model().generate(request).await?;
 
@@ -79,7 +80,7 @@ where
                     self.skeleton
                         .memory()
                         .lock()
-                        .unwrap()
+                        .await
                         .append(agentverse::Message {
                             role: agentverse::memory::MessageRole::Assistant,
                             content: format!("Thought: {}", thought),
@@ -90,7 +91,7 @@ where
                     self.skeleton
                         .memory()
                         .lock()
-                        .unwrap()
+                        .await
                         .append(agentverse::Message {
                             role: agentverse::memory::MessageRole::Tool,
                             content: format!("Tool: {}\nResult: {}", tool_name, result),
@@ -100,7 +101,7 @@ where
                     self.skeleton
                         .memory()
                         .lock()
-                        .unwrap()
+                        .await
                         .append(agentverse::Message {
                             role: agentverse::memory::MessageRole::Assistant,
                             content: answer.clone(),
