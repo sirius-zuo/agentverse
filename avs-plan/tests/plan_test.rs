@@ -4,13 +4,15 @@
 
 use agentverse::memory::{Message, MessageRole};
 use agentverse::{
-    GenerateRequest, GenerateResponse, ModelError, ModelProvider, PromptRegistry, ShortTermMemory,
+    GenerateRequest, GenerateResponse, ModelError, ModelProvider, PromptRegistry,
     SyncTool, UsageStats,
 };
+use agentverse_memory::SimpleMemory;
 use agentverse_plan::{HierarchicalStrategy, Plan, PlanStep, PlanStrategy};
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 // ─── Mock types ───────────────────────────────────────────────────────────────
 
@@ -363,7 +365,7 @@ async fn test_plan_strategy_reasoning_steps() {
         Arc::new(model),
         Arc::new(PromptRegistry::default()),
         vec![],
-        Arc::new(Mutex::new(ShortTermMemory::new(20))),
+        Arc::new(Mutex::new(SimpleMemory::new(20))),
         10,
     );
     let result = strategy.run("do something".to_string()).await.unwrap();
@@ -381,7 +383,7 @@ async fn test_plan_strategy_tool_steps() {
         Arc::new(model),
         Arc::new(PromptRegistry::default()),
         vec![Box::new(tool)],
-        Arc::new(Mutex::new(ShortTermMemory::new(20))),
+        Arc::new(Mutex::new(SimpleMemory::new(20))),
         10,
     );
     let result = strategy.run("use echo".to_string()).await.unwrap();
@@ -400,7 +402,7 @@ async fn test_plan_strategy_tool_not_found_graceful() {
         Arc::new(model),
         Arc::new(PromptRegistry::default()),
         vec![],
-        Arc::new(Mutex::new(ShortTermMemory::new(20))),
+        Arc::new(Mutex::new(SimpleMemory::new(20))),
         10,
     );
     let result = strategy.run("test".to_string()).await.unwrap();
@@ -419,7 +421,7 @@ async fn test_plan_strategy_max_iterations_skips_steps() {
         Arc::new(model),
         Arc::new(PromptRegistry::default()),
         vec![],
-        Arc::new(Mutex::new(ShortTermMemory::new(20))),
+        Arc::new(Mutex::new(SimpleMemory::new(20))),
         0,
     );
     let result = strategy.run("test".to_string()).await.unwrap();
@@ -442,7 +444,7 @@ async fn test_hierarchical_strategy_run() {
         Arc::new(model),
         Arc::new(PromptRegistry::default()),
         vec![],
-        Arc::new(Mutex::new(ShortTermMemory::new(30))),
+        Arc::new(Mutex::new(SimpleMemory::new(30))),
         10,
         5,
     );
@@ -465,7 +467,7 @@ async fn test_hierarchical_strategy_max_depth_limits_subgoals() {
         Arc::new(model),
         Arc::new(PromptRegistry::default()),
         vec![],
-        Arc::new(Mutex::new(ShortTermMemory::new(30))),
+        Arc::new(Mutex::new(SimpleMemory::new(30))),
         10,
         1, // max_decompose_depth = 1
     );
@@ -487,7 +489,7 @@ async fn test_hierarchical_strategy_zero_subgoals() {
         Arc::new(model),
         Arc::new(PromptRegistry::default()),
         vec![],
-        Arc::new(Mutex::new(ShortTermMemory::new(30))),
+        Arc::new(Mutex::new(SimpleMemory::new(30))),
         10,
         5,
     );

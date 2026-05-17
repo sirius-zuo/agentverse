@@ -16,3 +16,4 @@ tokio = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }
 async-trait = { workspace = true }
+agentverse-memory = { path = "../avs-memory" }
