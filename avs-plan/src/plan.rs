@@ -7,7 +7,8 @@ use super::planner::generate_plan;
 use agentverse::memory::{Message, MessageRole};
 use agentverse::{AgentError, GenerateRequest, ModelProvider, PromptRegistry, SyncTool};
 use agentverse_guardrails::check_output;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// Plan-and-Execute strategy: plan first, then execute.
 ///
@@ -50,7 +51,7 @@ where
 
     /// Execute the plan-and-execute cycle.
     pub async fn run(&mut self, input: String) -> Result<String, AgentError> {
-        self.memory.lock().unwrap().append(agentverse::Message {
+        self.memory.lock().await.append(agentverse::Message {
             role: agentverse::memory::MessageRole::User,
             content: input.clone(),
         });
@@ -60,8 +61,10 @@ where
         let conversation = self
             .memory
             .lock()
-            .unwrap()
+            .await
             .last_n(20)
+            .await
+            .map_err(|e| AgentError::Memory(e.to_string()))?
             .iter()
             .map(|m| {
                 let role_str = match m.role {
@@ -84,7 +87,7 @@ where
         )
         .await?;
 
-        self.memory.lock().unwrap().append(agentverse::Message {
+        self.memory.lock().await.append(agentverse::Message {
             role: agentverse::memory::MessageRole::System,
             content: format!("Plan generated: {}", plan.description),
         });
@@ -93,7 +96,7 @@ where
 
         for step in &plan.steps {
             if step.id > self.max_iterations {
-                self.memory.lock().unwrap().append(agentverse::Message {
+                self.memory.lock().await.append(agentverse::Message {
                     role: agentverse::memory::MessageRole::System,
                     content: format!(
                         "Stopping at step {}: max iterations ({}) reached",
@@ -115,7 +118,7 @@ where
 
             step_results.push((step.id, result.clone()));
 
-            self.memory.lock().unwrap().append(agentverse::Message {
+            self.memory.lock().await.append(agentverse::Message {
                 role: agentverse::memory::MessageRole::System,
                 content: format!("Step {} executed: {}", step.id, result),
             });
@@ -125,8 +128,10 @@ where
         let conversation_history = self
             .memory
             .lock()
-            .unwrap()
+            .await
             .last_n(20)
+            .await
+            .map_err(|e| AgentError::Memory(e.to_string()))?
             .iter()
             .map(|m| {
                 let role_str = match m.role {
