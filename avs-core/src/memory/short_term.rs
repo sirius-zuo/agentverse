@@ -1,5 +1,8 @@
-use super::{Memory, Message};
+use async_trait::async_trait;
+use super::{Memory, MemoryError, Message};
 
+// Internal default used by Agent. Not re-exported from avs-core.
+// External code should use agentverse_memory::SimpleMemory instead.
 pub struct ShortTermMemory {
     messages: Vec<Message>,
     max_messages: usize,
@@ -14,18 +17,35 @@ impl ShortTermMemory {
     }
 }
 
+#[async_trait]
 impl Memory for ShortTermMemory {
     fn append(&mut self, message: Message) {
         self.messages.push(message);
         if self.messages.len() > self.max_messages {
-            self.messages
-                .drain(0..self.messages.len() - self.max_messages);
+            self.messages.drain(0..self.messages.len() - self.max_messages);
         }
     }
 
-    fn last_n(&self, n: usize) -> Vec<Message> {
+    // may mutate internal cache on first access (async to allow lazy summarization in other impls)
+    async fn last_n(&mut self, n: usize) -> Result<Vec<Message>, MemoryError> {
         let start = self.messages.len().saturating_sub(n);
-        self.messages[start..].to_vec()
+        Ok(self.messages[start..].to_vec())
+    }
+
+    fn pin(&mut self, _messages: Vec<Message>) {
+        // ShortTermMemory has no pinned concept; used only by Agent placeholder.
+    }
+
+    async fn prime_from_long_term(
+        &mut self,
+        _query: &str,
+        _top_k: usize,
+    ) -> Result<(), MemoryError> {
+        Ok(())
+    }
+
+    async fn flush(&mut self) -> Result<(), MemoryError> {
+        Ok(())
     }
 
     fn clear(&mut self) {

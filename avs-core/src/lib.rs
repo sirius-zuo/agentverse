@@ -25,7 +25,7 @@ pub use builder::AgentBuilder;
 pub use config::{Config, ProviderConfig};
 pub use error::{AgentError, ConfigError, GuardrailError, ModelError, ToolError};
 pub use example::Example;
-pub use memory::{Memory, Message, MessageRole, ShortTermMemory};
+pub use memory::{Memory, MemoryError, Message, MessageRole};
 pub use model::{
     AnthropicProvider, CycleResult, GeminiProvider, GenerateRequest, GenerateResponse,
     ModelProvider, OpenAICompatible, ProviderWrapper, ToolDefinition, UsageStats,
