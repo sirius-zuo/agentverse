@@ -1,10 +1,14 @@
-use agentverse::{SyncTool, ToolResult};
+use agentverse::{AsyncTool, ToolError, ToolResult};
+use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::Arc;
 
-/// Registry of available tools.
-/// Supports static registration (built-in) and dynamic registration (MCP).
+/// Registry of available async tools, optionally tagged with a category.
+///
+/// Internal storage uses `Arc<dyn AsyncTool>` so `filter_category` can
+/// produce a new registry sharing the same tool instances without cloning.
 pub struct ToolRegistry {
-    tools: HashMap<String, Box<dyn SyncTool>>,
+    tools: HashMap<String, (Arc<dyn AsyncTool>, Option<String>)>,
 }
 
 impl ToolRegistry {
@@ -14,40 +18,77 @@ impl ToolRegistry {
         }
     }
 
-    /// Register a tool by name.
-    pub fn register(&mut self, tool: impl SyncTool + 'static) {
-        self.tools.insert(tool.name().to_string(), Box::new(tool));
+    /// Register a tool with no category.
+    pub fn register<T: AsyncTool + 'static>(&mut self, tool: T) {
+        self.tools
+            .insert(tool.name().to_string(), (Arc::new(tool), None));
     }
 
-    /// Internal: register a boxed trait object.
-    fn register_boxed(&mut self, tool: Box<dyn SyncTool>) {
-        self.tools.insert(tool.name().to_string(), tool);
+    /// Register a tool with a category tag (e.g. "shell", "network", "math").
+    pub fn register_with_category<T: AsyncTool + 'static>(&mut self, tool: T, category: &str) {
+        self.tools.insert(
+            tool.name().to_string(),
+            (Arc::new(tool), Some(category.to_string())),
+        );
     }
 
-    /// Register multiple tools from boxed trait objects.
-    pub fn register_many(&mut self, tools: Vec<Box<dyn SyncTool>>) {
-        for tool in tools {
-            self.register_boxed(tool);
-        }
+    /// Return a new registry containing only tools with the given category.
+    pub fn filter_category(&self, category: &str) -> ToolRegistry {
+        let tools = self
+            .tools
+            .iter()
+            .filter(|(_, (_, cat))| cat.as_deref() == Some(category))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        ToolRegistry { tools }
     }
 
     /// Execute a tool by name.
-    pub fn execute(&self, tool_name: &str, args: serde_json::Value) -> ToolResult {
-        let tool = self
+    pub async fn execute(&self, name: &str, args: Value) -> ToolResult {
+        let (tool, _) = self
             .tools
-            .get(tool_name)
-            .ok_or_else(|| agentverse::ToolError::NotFound(tool_name.to_string()))?;
-        tool.execute(args)
+            .get(name)
+            .ok_or_else(|| ToolError::NotFound(name.to_string()))?;
+        tool.execute(args).await
     }
 
-    /// Get all registered tool names.
+    /// Return JSON schema objects for all registered tools (for prompt injection).
+    pub fn schema(&self) -> Vec<Value> {
+        self.tools
+            .values()
+            .map(|(t, _)| {
+                serde_json::json!({
+                    "name": t.name(),
+                    "description": t.description(),
+                    "parameters": t.parameters(),
+                })
+            })
+            .collect()
+    }
+
+    /// Iterate over all registered tools.
+    pub fn iter(&self) -> impl Iterator<Item = &Arc<dyn AsyncTool>> {
+        self.tools.values().map(|(t, _)| t)
+    }
+
+    /// Return all registered tool names.
     pub fn tool_names(&self) -> Vec<String> {
         self.tools.keys().cloned().collect()
     }
 
-    /// Check if a tool exists.
+    /// Check if a tool is registered.
     pub fn has_tool(&self, name: &str) -> bool {
         self.tools.contains_key(name)
+    }
+
+    /// Return the number of registered tools.
+    pub fn len(&self) -> usize {
+        self.tools.len()
+    }
+
+    /// Return true if no tools are registered.
+    pub fn is_empty(&self) -> bool {
+        self.tools.is_empty()
     }
 }
 

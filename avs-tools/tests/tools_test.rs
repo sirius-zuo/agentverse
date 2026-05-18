@@ -1,39 +1,31 @@
 use agentverse::SyncTool;
-use agentverse_tools::{Calculator, DateTimeTool, FileSearch, HttpClient, ToolRegistry};
+use agentverse_tools::{Calculator, DateTimeTool, FileSearch, HttpClient, SyncToolAdapter, ToolRegistry};
 use serde_json::json;
 
-#[test]
-fn test_registry_register_and_execute() {
+#[tokio::test]
+async fn test_registry_register_and_execute() {
     let mut registry = ToolRegistry::new();
-    registry.register(Calculator);
-
+    registry.register(SyncToolAdapter(Calculator));
     assert!(registry.has_tool("calculator"));
-    let result = registry.execute(
-        "calculator",
-        json!({
-            "operation": "add",
-            "a": 2.0,
-            "b": 3.0
-        }),
-    );
+    let result = registry
+        .execute("calculator", json!({ "operation": "add", "a": 2.0, "b": 3.0 }))
+        .await;
     assert!(result.is_ok());
-    let val = result.unwrap();
-    assert_eq!(val["result"], 5.0);
+    assert_eq!(result.unwrap()["result"], 5.0);
 }
 
-#[test]
-fn test_registry_not_found() {
+#[tokio::test]
+async fn test_registry_not_found() {
     let registry = ToolRegistry::new();
-    let result = registry.execute("nonexistent", json!({}));
+    let result = registry.execute("nonexistent", json!({})).await;
     assert!(result.is_err());
 }
 
 #[test]
 fn test_registry_tool_names() {
     let mut registry = ToolRegistry::new();
-    registry.register(Calculator);
-    registry.register(DateTimeTool);
-
+    registry.register(SyncToolAdapter(Calculator));
+    registry.register(SyncToolAdapter(DateTimeTool));
     let names = registry.tool_names();
     assert!(names.contains(&"calculator".to_string()));
     assert!(names.contains(&"datetime".to_string()));
@@ -205,9 +197,46 @@ fn test_http_client_invalid_url() {
 
 #[test]
 fn test_registry_register_many() {
+    // register_many removed; use register() per tool
     let mut registry = ToolRegistry::new();
-    registry.register_many(vec![Box::new(Calculator), Box::new(DateTimeTool)]);
-    assert_eq!(registry.tool_names().len(), 2);
+    registry.register(SyncToolAdapter(Calculator));
+    registry.register(SyncToolAdapter(DateTimeTool));
+    assert_eq!(registry.len(), 2);
+}
+
+#[test]
+fn test_registry_filter_category() {
+    let mut registry = ToolRegistry::new();
+    registry.register_with_category(SyncToolAdapter(Calculator), "math");
+    registry.register_with_category(SyncToolAdapter(DateTimeTool), "utility");
+
+    let math = registry.filter_category("math");
+    assert!(math.has_tool("calculator"));
+    assert!(!math.has_tool("datetime"));
+
+    let util = registry.filter_category("utility");
+    assert!(!util.has_tool("calculator"));
+    assert!(util.has_tool("datetime"));
+}
+
+#[test]
+fn test_registry_schema() {
+    let mut registry = ToolRegistry::new();
+    registry.register(SyncToolAdapter(Calculator));
+    let schema = registry.schema();
+    assert_eq!(schema.len(), 1);
+    assert_eq!(schema[0]["name"], "calculator");
+    assert!(schema[0]["description"].is_string());
+    assert!(schema[0]["parameters"].is_object());
+}
+
+#[test]
+fn test_registry_len_and_empty() {
+    let mut registry = ToolRegistry::new();
+    assert!(registry.is_empty());
+    registry.register(SyncToolAdapter(Calculator));
+    assert_eq!(registry.len(), 1);
+    assert!(!registry.is_empty());
 }
 
 // ─── Additional FileSearch tests ─────────────────────────────────────────────
