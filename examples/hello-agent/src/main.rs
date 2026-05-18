@@ -1,6 +1,6 @@
 // examples/hello-agent/src/main.rs
 //
-// Simplest agent: no tools, one question, shows answer + token usage.
+// Interactive Q&A agent: type a question, get an answer. Type "exit" or Ctrl+C to quit.
 // Run:
 //   MODEL_BASE_URL=http://localhost:9090/v1 \
 //   MODEL_NAME=Qwen3.6-35B-A3B-GGUF \
@@ -9,7 +9,9 @@
 use agentverse::{OpenAICompatible, PromptConfig, PromptRegistry};
 use agentverse_memory::SimpleMemory;
 use agentverse_react::ReActStrategy;
+use std::io::Write;
 use std::sync::Arc;
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::Mutex;
 
 #[tokio::main]
@@ -21,6 +23,7 @@ async fn main() {
         std::env::var("MODEL_NAME").unwrap_or_else(|_| "Qwen3.6-35B-A3B-GGUF".to_string());
 
     println!("Hello Agent — model: {} @ {}", model_name, base_url);
+    println!("Type your question and press Enter. Type \"exit\" or press Ctrl+C to quit.\n");
 
     let model = Arc::new(OpenAICompatible::new(&base_url, &model_name, &api_key));
     let registry = Arc::new(
@@ -33,20 +36,41 @@ async fn main() {
     let memory = Arc::new(Mutex::new(SimpleMemory::new(50)));
     let mut agent = ReActStrategy::new(registry, model, vec![], memory, 10);
 
-    let question = "Hello! Introduce yourself briefly and name two things you can help with.";
-    println!("> {}", question);
+    let mut lines = BufReader::new(tokio::io::stdin()).lines();
 
-    match agent.run(question.to_string()).await {
-        Ok(result) => {
-            println!("\nAgent: {}", result.answer);
-            println!(
-                "\n[tokens] input={} output={} cache_read={} cache_write={}",
-                result.total_usage.input_tokens,
-                result.total_usage.output_tokens,
-                result.total_usage.cache_read_tokens,
-                result.total_usage.cache_write_tokens,
-            );
+    loop {
+        print!("You: ");
+        std::io::stdout().flush().ok();
+
+        let input = match lines.next_line().await {
+            Ok(Some(line)) => line,
+            _ => {
+                println!("\nGoodbye!");
+                break;
+            }
+        };
+
+        let input = input.trim().to_string();
+        if input.is_empty() {
+            continue;
         }
-        Err(e) => eprintln!("Error: {}", e),
+        if input.eq_ignore_ascii_case("exit") {
+            println!("Goodbye!");
+            break;
+        }
+
+        match agent.run(input).await {
+            Ok(result) => {
+                println!("\nAgent: {}", result.answer);
+                println!(
+                    "[tokens] input={} output={} cache_read={} cache_write={}\n",
+                    result.total_usage.input_tokens,
+                    result.total_usage.output_tokens,
+                    result.total_usage.cache_read_tokens,
+                    result.total_usage.cache_write_tokens,
+                );
+            }
+            Err(e) => eprintln!("Error: {}\n", e),
+        }
     }
 }
