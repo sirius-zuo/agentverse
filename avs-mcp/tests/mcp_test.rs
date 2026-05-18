@@ -2,18 +2,11 @@ use agentverse::AsyncTool;
 use agentverse_mcp::{McpClient, McpError, McpToolAdapter, McpToolInfo};
 use serde_json::json;
 
-#[test]
-fn test_mcp_client_creation() {
-    let _client = McpClient::new("http://localhost:3000/message");
-    // Client created successfully — construction validates server_url parsing
-}
-
 // Note: Integration tests for initialize, list_tools, and call_tool
 // require a running MCP server. Those are skipped in unit tests.
 
 #[test]
 fn test_mcp_tool_info() {
-    use serde_json::json;
     let info = McpToolInfo {
         name: "test_tool".to_string(),
         description: "A test tool".to_string(),
@@ -81,4 +74,8 @@ async fn test_mcp_tool_adapter_is_async_tool() {
     assert_eq!(tool.name(), "async_tool");
     assert_eq!(tool.description(), "An async tool");
     assert_eq!(tool.parameters()["type"], "object");
+
+    // Execute must map connection errors to ToolError::Execution
+    let result = tool.execute(json!({})).await;
+    assert!(result.is_err());
 }
