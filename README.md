@@ -59,6 +59,28 @@ curl -X POST http://localhost:8080/invoke \
 > - **Groq**: `https://api.groq.com/openai/v1`
 > - **Together AI**: `https://api.together.xyz/v1`
 
+### Run as an Aether Node (Stdio Adapter)
+
+The `agentverse` binary can be driven by [Aether](https://github.com/sirius-zuo/aether) — an independent multi-agent orchestration framework — over a newline-delimited JSON Envelope protocol on stdin/stdout.
+
+```bash
+# Build the binary
+cargo build -p agentverse-server
+
+# Run in stdio adapter mode (Aether manages process lifecycle)
+AGENTVERSE_BIN=/path/to/agentverse
+MODEL_API_KEY=sk-xxx MODEL_BASE_URL=http://localhost:9090/v1 MODEL_NAME=my-model \
+  $AGENTVERSE_BIN --stdio
+```
+
+In `--stdio` mode the binary:
+- Reads `Invoke` / `Ping` Envelopes from stdin (one JSON object per line)
+- Responds with `Result` / `Pong` / `Error` Envelopes on stdout
+- Exits cleanly on EOF (Aether drops stdin when done)
+- Writes all logs to **stderr** so stdout stays clean for the protocol
+
+You never invoke `--stdio` manually — Aether spawns the process automatically via `StdioFactory`. See the [Aether project](https://github.com/sirius-zuo/aether) and its `examples/agentverse-pipeline` for a working end-to-end example.
+
 ## Multi-LLM Provider Support
 
 AgentVerse supports multiple LLM providers through a unified interface. The `ProviderConfig` enum allows you to switch providers without changing agent code.
@@ -128,6 +150,8 @@ provider:
 | `API_KEY` | *(empty)* | Server auth token (Bearer token for `/invoke` on port 8080) |
 | `CONFIG_PATH` | *(none)* | Path to YAML config file |
 | `RUST_LOG` | `info` | Logging level |
+
+When running as an Aether node, pass these same variables in `StdioFactory::envs` — the binary reads them at startup regardless of transport mode.
 
 Run with: `CONFIG_PATH=config.yaml cargo run -p agentverse-server`
 

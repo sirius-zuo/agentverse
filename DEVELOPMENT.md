@@ -15,6 +15,7 @@ Complete guide for developing, testing, and deploying agents with AgentVerse.
 - [Adding Long-Term Memory](#adding-long-term-memory)
 - [Integrating External Systems](#integrating-external-systems)
 - [Using the HTTP Server](#using-the-http-server)
+- [Aether Adapter — Stdio Mode](#aether-adapter--stdio-mode)
 - [Debugging & Observability](#debugging--observability)
 
 ---
@@ -830,6 +831,116 @@ Response:
 
 // Internal error
 {"error": "Model error: API error"}
+```
+
+---
+
+## Aether Adapter — Stdio Mode
+
+AgentVerse agents can be driven by [Aether](https://github.com/sirius-zuo/aether), an independent multi-agent orchestration framework. No Aether code is imported into AgentVerse — the integration is a thin transport layer in `avs-server` that speaks the Envelope wire protocol on stdin/stdout.
+
+### How it works
+
+When `agentverse --stdio` is passed, the binary skips the HTTP server and enters a protocol loop:
+
+```
+stdin  →  [read Envelope JSON line]  →  dispatch  →  [write Envelope JSON line]  →  stdout
+                                           │
+                                     agent.invoke()
+```
+
+All `tracing` logs go to **stderr** — stdout is reserved for the protocol.
+
+### Envelope protocol
+
+The wire format is newline-delimited JSON. One JSON object per line, no pretty-printing.
+
+```
+{"id":"<uuid>","kind":"invoke","payload":{"message":"..."},"metadata":{"trace_id":"..."}}\n
+{"id":"<uuid>","kind":"result","payload":{"message":"..."},"metadata":{"model":"...","provider":"openai","tokens_input":"0","tokens_output":"0"}}\n
+```
+
+**Kind values and their meaning:**
+
+| Kind | Direction | Description |
+|------|-----------|-------------|
+| `invoke` | Aether → AgentVerse | Run the agent with `payload.message` |
+| `result` | AgentVerse → Aether | Successful response in `payload.message` |
+| `error` | AgentVerse → Aether | Failure — `payload.error` contains the message |
+| `ping` | Aether → AgentVerse | Health check |
+| `pong` | AgentVerse → Aether | Health check response (same `id`, null payload) |
+
+**Response metadata fields** (always present in `result` / `error` responses):
+
+| Key | Description |
+|-----|-------------|
+| `model` | Model name from `MODEL_NAME` env var |
+| `provider` | Inferred from base URL: `openai` / `anthropic` / `gemini` |
+| `tokens_input` | Input token count (currently `"0"` — wired when `invoke()` returns usage) |
+| `tokens_output` | Output token count (currently `"0"`) |
+
+Aether sets `trace_id`, `workflow_id`, and `node` in outgoing `invoke` envelopes. AgentVerse copies these through to the `result` response so Aether's correlation table can match them.
+
+### Running manually (for debugging)
+
+You can exercise the adapter by hand without Aether:
+
+```bash
+cargo build -p agentverse-server
+
+# Start the adapter
+MODEL_API_KEY=sk-xxx MODEL_BASE_URL=http://localhost:9090/v1 MODEL_NAME=my-model \
+  ./target/debug/agentverse --stdio
+
+# In another terminal — paste JSON lines and press Enter:
+echo '{"id":"00000000-0000-0000-0000-000000000001","kind":"ping","payload":null,"metadata":{}}' | \
+  MODEL_API_KEY=sk-xxx ./target/debug/agentverse --stdio
+# → {"id":"00000000-...","kind":"pong","payload":null,"metadata":{}}
+```
+
+### Passing configuration to Aether
+
+When Aether spawns an AgentVerse node via `StdioFactory`, it passes environment variables through the `envs` map:
+
+```rust
+StdioFactory {
+    node_name: "my-agent".to_string(),
+    command: "/path/to/agentverse".to_string(),
+    args: vec!["--stdio".to_string()],
+    envs: HashMap::from([
+        ("MODEL_API_KEY".to_string(), "sk-xxx".to_string()),
+        ("MODEL_BASE_URL".to_string(), "http://localhost:9090/v1".to_string()),
+        ("MODEL_NAME".to_string(), "my-model".to_string()),
+    ]),
+}
+```
+
+To use a YAML config file instead of environment variables, pass `CONFIG_PATH`:
+
+```rust
+envs: HashMap::from([
+    ("CONFIG_PATH".to_string(), "/path/to/agent-config.yaml".to_string()),
+]),
+```
+
+### Relevant files
+
+| File | Description |
+|------|-------------|
+| `avs-server/src/envelope.rs` | `Envelope`, `EnvelopeKind`, `read_envelope`, `write_envelope` |
+| `avs-server/src/stdio_adapter.rs` | `run_stdio` loop, `dispatch` (Ping/Invoke), `response_metadata` |
+| `avs-server/src/main.rs` | `--stdio` CLI flag (clap), pre-HTTP branch |
+| `avs-server/tests/stdio_test.rs` | Integration tests: Ping→Pong, Invoke→result, EOF→clean exit |
+
+### Testing the adapter
+
+```bash
+# Unit tests (codec + config)
+cargo test -p agentverse-server envelope
+
+# Integration tests (spawns real binary)
+cargo build -p agentverse-server
+cargo test -p agentverse-server --test stdio_test
 ```
 
 ---
