@@ -1,10 +1,10 @@
 use super::client::McpClient;
-use agentverse::{SyncTool, ToolResult};
+use agentverse::{AsyncTool, ToolError, ToolResult};
+use async_trait::async_trait;
 use serde_json::Value;
 use std::sync::Arc;
 
-/// Adapter that wraps an MCP tool as a SyncTool.
-/// Executes MCP tools via the client.
+/// Adapter that wraps an MCP tool as an AsyncTool.
 pub struct McpToolAdapter {
     name: String,
     description: String,
@@ -28,7 +28,8 @@ impl McpToolAdapter {
     }
 }
 
-impl SyncTool for McpToolAdapter {
+#[async_trait]
+impl AsyncTool for McpToolAdapter {
     fn name(&self) -> &str {
         &self.name
     }
@@ -41,30 +42,10 @@ impl SyncTool for McpToolAdapter {
         self.parameters.clone()
     }
 
-    fn execute(&self, args: Value) -> ToolResult {
-        // MCP execution is async, so we spawn a blocking task
-        // In production, use a runtime handle
-        let client = Arc::clone(&self.client);
-        let name = self.name.clone();
-        let args = args.clone();
-
-        // Use tokio::runtime::Handle to run async in sync context
-        match tokio::runtime::Handle::try_current() {
-            Ok(handle) => {
-                let rt = handle;
-                // Block on the async call — this is a limitation of the
-                // SyncTool trait. In production, consider using AsyncTool
-                // for MCP tools.
-                rt.block_on(async {
-                    client
-                        .call_tool(&name, args)
-                        .await
-                        .map_err(|e| agentverse::ToolError::Execution(e.to_string()))
-                })
-            }
-            Err(_) => Err(agentverse::ToolError::Execution(
-                "No tokio runtime available for MCP tool execution".to_string(),
-            )),
-        }
+    async fn execute(&self, args: Value) -> ToolResult {
+        self.client
+            .call_tool(&self.name, args)
+            .await
+            .map_err(|e| ToolError::Execution(e.to_string()))
     }
 }

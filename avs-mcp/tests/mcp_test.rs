@@ -1,4 +1,4 @@
-use agentverse::SyncTool;
+use agentverse::AsyncTool;
 use agentverse_mcp::{McpClient, McpError, McpToolAdapter, McpToolInfo};
 use serde_json::json;
 
@@ -65,19 +65,20 @@ fn test_mcp_tool_adapter_trait_methods() {
     );
 }
 
-#[test]
-fn test_mcp_tool_adapter_no_runtime_error() {
-    // Execute outside a tokio runtime to verify the error path
+#[tokio::test]
+async fn test_mcp_tool_adapter_is_async_tool() {
+    // Verifies McpToolAdapter implements AsyncTool (trait methods accessible without a runtime hack)
     let client = McpClient::new("http://localhost:3000/message");
     let adapter = McpToolAdapter::new(
-        "test_tool".to_string(),
-        "A test tool".to_string(),
-        json!({"type": "object"}),
+        "async_tool".to_string(),
+        "An async tool".to_string(),
+        json!({"type": "object", "properties": {}}),
         std::sync::Arc::new(client),
     );
 
-    let result = adapter.execute(json!({}));
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(err.to_string().contains("No tokio runtime available"));
+    // Trait methods must be reachable via AsyncTool
+    let tool: &dyn AsyncTool = &adapter;
+    assert_eq!(tool.name(), "async_tool");
+    assert_eq!(tool.description(), "An async tool");
+    assert_eq!(tool.parameters()["type"], "object");
 }
