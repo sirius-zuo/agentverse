@@ -143,6 +143,7 @@ fn test_file_search_missing_params() {
 
 #[test]
 fn test_http_client_parameters() {
+    use agentverse::AsyncTool;
     let tool = HttpClient;
     let params = tool.parameters();
     assert!(params["required"]
@@ -155,43 +156,42 @@ fn test_http_client_parameters() {
         .contains(&json!("url")));
 }
 
-#[test]
-fn test_http_client_missing_method() {
+#[tokio::test]
+async fn test_http_client_missing_method() {
+    use agentverse::AsyncTool;
     let tool = HttpClient;
-    let result = tool.execute(json!({
-        "url": "http://example.com"
-    }));
+    let result = tool.execute(json!({ "url": "http://example.com" })).await;
     assert!(result.is_err());
 }
 
-#[test]
-fn test_http_client_unsupported_method() {
+#[tokio::test]
+async fn test_http_client_unsupported_method() {
+    use agentverse::AsyncTool;
     let tool = HttpClient;
-    let result = tool.execute(json!({
-        "method": "PATCH",
-        "url": "http://example.com"
-    }));
+    let result = tool
+        .execute(json!({ "method": "PATCH", "url": "http://example.com" }))
+        .await;
     assert!(result.is_err());
 }
 
-#[test]
-fn test_http_client_file_scheme_blocked() {
+#[tokio::test]
+async fn test_http_client_file_scheme_blocked() {
+    use agentverse::AsyncTool;
     let tool = HttpClient;
-    let result = tool.execute(json!({
-        "method": "GET",
-        "url": "file:///etc/passwd"
-    }));
+    let result = tool
+        .execute(json!({ "method": "GET", "url": "file:///etc/passwd" }))
+        .await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("http and https"));
 }
 
-#[test]
-fn test_http_client_invalid_url() {
+#[tokio::test]
+async fn test_http_client_invalid_url() {
+    use agentverse::AsyncTool;
     let tool = HttpClient;
-    let result = tool.execute(json!({
-        "method": "GET",
-        "url": "not a valid url"
-    }));
+    let result = tool
+        .execute(json!({ "method": "GET", "url": "not a valid url" }))
+        .await;
     assert!(result.is_err());
 }
 
