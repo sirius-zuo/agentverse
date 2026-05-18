@@ -5,9 +5,12 @@ edition.workspace = true
 
 [dependencies]
 agentverse = { path = "../avs-core" }
+async-trait = { workspace = true }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 glob = "0.3"
 chrono.workspace = true
 url = "2"
+shell-words = "1"
+tokio = { workspace = true, features = ["process", "time"] }
