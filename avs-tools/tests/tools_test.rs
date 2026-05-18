@@ -364,10 +364,29 @@ async fn test_shell_stderr_captured() {
 #[tokio::test]
 async fn test_shell_blocked_command() {
     use agentverse::AsyncTool;
-    let tool = ShellTool::new(".", Duration::from_secs(5), vec!["sudo".to_string()]);
-    let result = tool.execute(json!({ "command": "sudo ls" })).await;
+    // Block "echo" — a command that would otherwise succeed — so the test only
+    // passes if the actual block logic fires, not because the binary is absent.
+    let tool = ShellTool::new(".", Duration::from_secs(5), vec!["echo".to_string()]);
+    let result = tool.execute(json!({ "command": "echo hi" })).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("blocked"));
+}
+
+#[tokio::test]
+async fn test_shell_timeout() {
+    use agentverse::AsyncTool;
+    let tool = ShellTool::new(
+        ".",
+        Duration::from_millis(100),
+        Vec::<String>::new(),
+    );
+    let result = tool.execute(json!({ "command": "sleep 10" })).await;
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("timed out") || msg.contains("timeout"),
+        "expected timeout message, got: {msg}"
+    );
 }
 
 #[tokio::test]

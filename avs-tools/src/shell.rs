@@ -6,11 +6,15 @@ use std::time::Duration;
 use tokio::process::Command;
 use tokio::time::timeout;
 
-/// Sandboxed shell tool that runs commands inside a fixed working directory.
+/// Shell tool that runs commands with a fixed starting working directory.
 ///
-/// The sandbox enforces: (1) workdir jail via OS `current_dir`, (2) per-call
-/// timeout, (3) a caller-supplied blocked-command list. It is not a kernel
-/// sandbox — full trust in the model is still required.
+/// Enforces: (1) commands start in `workdir`, (2) per-call timeout, (3) a
+/// caller-supplied blocked-command list.
+///
+/// **Security note:** `workdir` is NOT a filesystem sandbox — absolute paths,
+/// symlinks, and `cd` commands inside the shell can still access the full
+/// filesystem. Pair with a blocked list and/or OS-level isolation (e.g.
+/// containers, seccomp) for stronger security.
 pub struct ShellTool {
     workdir: PathBuf,
     timeout_duration: Duration,
@@ -20,10 +24,11 @@ pub struct ShellTool {
 impl ShellTool {
     /// Create a new ShellTool.
     ///
-    /// - `workdir`: all commands run here; the OS prevents escaping via relative paths.
+    /// - `workdir`: commands start here; this is NOT a filesystem sandbox —
+    ///   absolute paths, symlinks, and `cd` can still reach the full filesystem.
     /// - `timeout_duration`: process is killed after this duration.
     /// - `blocked`: binary names the agent may not invoke (e.g. `["sudo", "rm"]`).
-    ///   Pass an empty vec for no blocking beyond the workdir jail.
+    ///   Pass an empty vec for no blocking.
     pub fn new(
         workdir: impl AsRef<Path>,
         timeout_duration: Duration,
@@ -84,6 +89,7 @@ impl AsyncTool for ShellTool {
             .current_dir(&self.workdir)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
             .spawn()
             .map_err(|e| ToolError::Execution(format!("Failed to spawn '{binary}': {e}")))?;
 
