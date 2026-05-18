@@ -3,6 +3,7 @@ mod auth;
 mod config;
 mod envelope;
 mod routes;
+mod stdio_adapter;
 
 use agentverse::{Agent, Config};
 use agentverse_guardrails::RateLimiter;
@@ -12,6 +13,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use clap::Parser;
 use config::ServerConfig;
 use routes::{health, invoke, ready, AppState};
 use std::sync::Arc;
@@ -22,8 +24,18 @@ use tracing_subscriber::{
     fmt::Layer, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, EnvFilter,
 };
 
+#[derive(Parser)]
+#[command(name = "agentverse", about = "AgentVerse agent server")]
+struct Cli {
+    /// Run in Aether stdio adapter mode (reads/writes Envelope JSON on stdin/stdout)
+    #[arg(long)]
+    stdio: bool,
+}
+
 #[tokio::main]
 async fn main() {
+    let cli = Cli::parse();
+
     // Initialize logging
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
@@ -77,11 +89,18 @@ async fn main() {
     ));
 
     // Build app state
-    let model_name = match &server_config.agent.provider {
-        agentverse::ProviderConfig::OpenAI { model_name, .. } => model_name.clone(),
-        agentverse::ProviderConfig::Anthropic { model_name, .. } => model_name.clone(),
-        agentverse::ProviderConfig::Gemini { model_name, .. } => model_name.clone(),
+    let (model_name, provider_name) = match &server_config.agent.provider {
+        agentverse::ProviderConfig::OpenAI { model_name, .. } => (model_name.clone(), "openai".to_string()),
+        agentverse::ProviderConfig::Anthropic { model_name, .. } => (model_name.clone(), "anthropic".to_string()),
+        agentverse::ProviderConfig::Gemini { model_name, .. } => (model_name.clone(), "gemini".to_string()),
     };
+
+    if cli.stdio {
+        info!(model = %model_name, provider = %provider_name, "Starting in stdio adapter mode");
+        stdio_adapter::run_stdio(agent, model_name, provider_name).await;
+        return;
+    }
+
     let state = AppState {
         agent: Arc::new(Mutex::new(agent)),
         rate_limiter,
