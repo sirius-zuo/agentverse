@@ -98,7 +98,10 @@ async fn invoke_returns_result_or_error_envelope() {
 
     let response: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
     let kind = response["kind"].as_str().unwrap();
-    assert!(kind == "result" || kind == "error", "unexpected kind: {kind}");
+    assert!(
+        kind == "result" || kind == "error",
+        "unexpected kind: {kind}"
+    );
     assert!(response["metadata"]["model"].is_string());
     assert!(response["metadata"]["provider"].is_string());
 

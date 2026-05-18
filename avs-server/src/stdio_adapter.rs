@@ -1,8 +1,8 @@
+use crate::envelope::{read_envelope, write_envelope, Envelope, EnvelopeKind};
+use agentverse::Agent;
 use std::collections::HashMap;
 use tokio::io::BufReader;
 use tracing::info;
-use agentverse::Agent;
-use crate::envelope::{read_envelope, write_envelope, Envelope, EnvelopeKind};
 
 pub async fn run_stdio(agent: Agent, model_name: String, provider_name: String) {
     let stdin = tokio::io::stdin();
@@ -42,7 +42,9 @@ async fn dispatch(
             metadata: HashMap::new(),
         },
         EnvelopeKind::Invoke => {
-            let message = env.payload.get("message")
+            let message = env
+                .payload
+                .get("message")
                 .and_then(|v| v.as_str())
                 .map(str::to_string)
                 .unwrap_or_else(|| env.payload.to_string());

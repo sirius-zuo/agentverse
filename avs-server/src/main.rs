@@ -90,9 +90,15 @@ async fn main() {
 
     // Build app state
     let (model_name, provider_name) = match &server_config.agent.provider {
-        agentverse::ProviderConfig::OpenAI { model_name, .. } => (model_name.clone(), "openai".to_string()),
-        agentverse::ProviderConfig::Anthropic { model_name, .. } => (model_name.clone(), "anthropic".to_string()),
-        agentverse::ProviderConfig::Gemini { model_name, .. } => (model_name.clone(), "gemini".to_string()),
+        agentverse::ProviderConfig::OpenAI { model_name, .. } => {
+            (model_name.clone(), "openai".to_string())
+        }
+        agentverse::ProviderConfig::Anthropic { model_name, .. } => {
+            (model_name.clone(), "anthropic".to_string())
+        }
+        agentverse::ProviderConfig::Gemini { model_name, .. } => {
+            (model_name.clone(), "gemini".to_string())
+        }
     };
 
     if cli.stdio {
