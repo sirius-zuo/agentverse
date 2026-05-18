@@ -321,3 +321,79 @@ async fn test_sync_tool_adapter_propagates_error() {
         .await;
     assert!(result.is_err());
 }
+
+// ─── ShellTool tests ─────────────────────────────────────────────────────────
+
+use agentverse_tools::ShellTool;
+use std::time::Duration;
+
+#[tokio::test]
+async fn test_shell_basic_stdout() {
+    use agentverse::AsyncTool;
+    let tool = ShellTool::new(".", Duration::from_secs(5), Vec::<String>::new());
+    let result = tool.execute(json!({ "command": "echo hello" })).await;
+    assert!(result.is_ok());
+    let val = result.unwrap();
+    assert_eq!(val["stdout"].as_str().unwrap().trim(), "hello");
+    assert_eq!(val["exit_code"], 0);
+}
+
+#[tokio::test]
+async fn test_shell_nonzero_exit_is_not_an_error() {
+    use agentverse::AsyncTool;
+    let tool = ShellTool::new(".", Duration::from_secs(5), Vec::<String>::new());
+    // "false" is a POSIX command that always exits with code 1
+    let result = tool.execute(json!({ "command": "false" })).await;
+    assert!(result.is_ok());
+    let val = result.unwrap();
+    assert_ne!(val["exit_code"], 0);
+}
+
+#[tokio::test]
+async fn test_shell_stderr_captured() {
+    use agentverse::AsyncTool;
+    let tool = ShellTool::new(".", Duration::from_secs(5), Vec::<String>::new());
+    let result = tool
+        .execute(json!({ "command": "ls /this_path_does_not_exist_xyz" }))
+        .await;
+    assert!(result.is_ok());
+    let val = result.unwrap();
+    assert!(!val["stderr"].as_str().unwrap_or("").is_empty());
+}
+
+#[tokio::test]
+async fn test_shell_blocked_command() {
+    use agentverse::AsyncTool;
+    let tool = ShellTool::new(".", Duration::from_secs(5), vec!["sudo".to_string()]);
+    let result = tool.execute(json!({ "command": "sudo ls" })).await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("blocked"));
+}
+
+#[tokio::test]
+async fn test_shell_missing_command_param() {
+    use agentverse::AsyncTool;
+    let tool = ShellTool::new(".", Duration::from_secs(5), Vec::<String>::new());
+    let result = tool.execute(json!({})).await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_shell_empty_command() {
+    use agentverse::AsyncTool;
+    let tool = ShellTool::new(".", Duration::from_secs(5), Vec::<String>::new());
+    let result = tool.execute(json!({ "command": "" })).await;
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_shell_metadata() {
+    use agentverse::AsyncTool;
+    let tool = ShellTool::new(".", Duration::from_secs(5), Vec::<String>::new());
+    assert_eq!(tool.name(), "shell");
+    let params = tool.parameters();
+    assert!(params["required"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("command")));
+}
