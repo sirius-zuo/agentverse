@@ -1,6 +1,7 @@
 // avs-server/src/main.rs
 mod auth;
 mod config;
+mod envelope;
 mod routes;
 
 use agentverse::{Agent, Config};
