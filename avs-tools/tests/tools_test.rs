@@ -256,3 +256,39 @@ fn test_file_search_tool_metadata() {
     assert!(required.contains(&json!("path")));
     assert!(required.contains(&json!("pattern")));
 }
+
+// ─── SyncToolAdapter tests ────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_sync_tool_adapter_metadata() {
+    use agentverse::AsyncTool;
+    use agentverse_tools::SyncToolAdapter;
+    let adapter = SyncToolAdapter(Calculator);
+    assert_eq!(adapter.name(), "calculator");
+    assert!(!adapter.description().is_empty());
+    let params = adapter.parameters();
+    assert!(params["required"].is_array());
+}
+
+#[tokio::test]
+async fn test_sync_tool_adapter_execute_delegates() {
+    use agentverse::AsyncTool;
+    use agentverse_tools::SyncToolAdapter;
+    let adapter = SyncToolAdapter(Calculator);
+    let result = adapter
+        .execute(json!({ "operation": "add", "a": 2.0, "b": 3.0 }))
+        .await;
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap()["result"], 5.0);
+}
+
+#[tokio::test]
+async fn test_sync_tool_adapter_propagates_error() {
+    use agentverse::AsyncTool;
+    use agentverse_tools::SyncToolAdapter;
+    let adapter = SyncToolAdapter(Calculator);
+    let result = adapter
+        .execute(json!({ "operation": "divide", "a": 1.0, "b": 0.0 }))
+        .await;
+    assert!(result.is_err());
+}
