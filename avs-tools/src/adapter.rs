@@ -2,7 +2,12 @@ use agentverse::{AsyncTool, SyncTool, ToolResult};
 use async_trait::async_trait;
 use serde_json::Value;
 
-/// Wraps any `SyncTool` as an `AsyncTool` without modifying the inner tool.
+/// Wraps any CPU-bound [`SyncTool`] as an [`AsyncTool`].
+///
+/// The inner tool's `execute` is called directly on the async thread, which is
+/// safe for tools that only do CPU work (e.g. `Calculator`, `DateTimeTool`,
+/// `FileSearch`). Do **not** use this for tools that perform blocking I/O —
+/// those should implement `AsyncTool` natively (see `HttpClient`, `ShellTool`).
 pub struct SyncToolAdapter<T: SyncTool>(pub T);
 
 #[async_trait]
