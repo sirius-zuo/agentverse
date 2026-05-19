@@ -99,7 +99,8 @@ pub async fn generate_plan(
     let raw = raw.strip_prefix("```json").unwrap_or(raw);
     let raw = raw.strip_prefix("```").unwrap_or(raw);
     let raw = raw.strip_suffix("```").unwrap_or(raw);
-    let json_str = raw.trim();
+    let raw = raw.trim();
+    let json_str = raw.find('{').map(|i| &raw[i..]).unwrap_or(raw);
 
     let plan: Plan = serde_json::from_str(json_str).map_err(|e| {
         AgentError::Model(agentverse::ModelError::InvalidResponse(format!(
@@ -162,7 +163,8 @@ pub async fn decompose_request(
     let raw = raw.strip_prefix("```json").unwrap_or(raw);
     let raw = raw.strip_prefix("```").unwrap_or(raw);
     let raw = raw.strip_suffix("```").unwrap_or(raw);
-    let json_str = raw.trim();
+    let raw = raw.trim();
+    let json_str = raw.find('[').map(|i| &raw[i..]).unwrap_or(raw);
 
     let sub_goals: Vec<String> = serde_json::from_str(json_str).map_err(|e| {
         AgentError::Model(agentverse::ModelError::InvalidResponse(format!(
