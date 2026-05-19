@@ -17,6 +17,7 @@ pub mod memory;
 pub mod model;
 pub mod prompt;
 pub mod tool;
+pub mod strategy;
 pub mod tracing;
 
 // Public re-exports
@@ -33,4 +34,5 @@ pub use model::{
 pub use prompt::PromptConfig;
 pub use prompt::PromptRegistry;
 pub use tool::{AsyncTool, ToolResult};
+pub use strategy::RunStrategy;
 pub use tracing::{NoopTracer, Tracer};
