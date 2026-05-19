@@ -1,6 +1,6 @@
 use agentverse::{Agent, Config, ProviderConfig};
 use agentverse_integration::{
-    IntegrationAdapter, SlackAdapter, WebhookAdapter, WebhookRequest, WebhookResponse,
+    IntegrationAdapter, WebhookAdapter, WebhookRequest, WebhookResponse,
 };
 use serde_json::json;
 use std::sync::Arc;
@@ -29,21 +29,9 @@ fn test_webhook_adapter_name() {
     assert_eq!(adapter.name(), "webhook");
 }
 
-#[test]
-fn test_slack_adapter_name() {
-    let adapter = SlackAdapter::new(test_agent(), "xoxb-test", "secret", 3000);
-    assert_eq!(adapter.name(), "slack");
-}
-
 #[tokio::test]
 async fn test_webhook_adapter_health_check() {
     let adapter = WebhookAdapter::new(test_agent(), 8080, None);
-    assert!(adapter.health_check().await.is_ok());
-}
-
-#[tokio::test]
-async fn test_slack_adapter_health_check() {
-    let adapter = SlackAdapter::new(test_agent(), "xoxb-test", "secret", 3000);
     assert!(adapter.health_check().await.is_ok());
 }
 

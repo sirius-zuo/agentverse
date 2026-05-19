@@ -1,42 +1,57 @@
 // examples/slack-hr-assistant/src/main.rs
 //
-// Conversational Slack bot — no tools needed.
-// Uses Agent::from_config() + SlackAdapter (plan-and-execute via AgentBuilder).
-// Tool-using agents should use ReActStrategy::new() with a ToolRegistry instead.
-use agentverse::{Agent, Config, ProviderConfig};
-use agentverse_integration::{IntegrationAdapter, SlackAdapter};
-use std::path::PathBuf;
+// Slack HR assistant using the Integration architecture.
+// Receives Slack messages via Events API, processes with PlanStrategy, replies to Slack.
+//
+// Run:
+//   SLACK_BOT_TOKEN=xoxb-... \
+//   SLACK_SIGNING_SECRET=... \
+//   MODEL_BASE_URL=http://localhost:9090/v1 \
+//   MODEL_NAME=your-model \
+//   cargo run -p example-slack-hr-assistant
+use agentverse::{OpenAICompatible, PromptConfig, PromptRegistry};
+use agentverse_integration::{Integration, SlackConnector, StrategyInvoker};
+use agentverse_memory::SimpleMemory;
+use agentverse_plan::PlanStrategy;
+use agentverse_tools::ToolRegistry;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() {
-    let prompts_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("prompts");
+    let bot_token =
+        std::env::var("SLACK_BOT_TOKEN").expect("SLACK_BOT_TOKEN not set");
+    let signing_secret =
+        std::env::var("SLACK_SIGNING_SECRET").expect("SLACK_SIGNING_SECRET not set");
+    let base_url =
+        std::env::var("MODEL_BASE_URL").unwrap_or_else(|_| "http://localhost:9090/v1".into());
+    let model_name =
+        std::env::var("MODEL_NAME").unwrap_or_else(|_| "gpt-4".into());
+    let api_key = std::env::var("MODEL_API_KEY").unwrap_or_default();
 
-    let config = Config {
-        provider: ProviderConfig::OpenAI {
-            model_name: "gpt-4".to_string(),
-            api_key: std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY not set"),
-            base_url: None,
-        },
-        max_messages: 50,
-        tools: vec![], // no tools — pure conversational agent
-        prompts_dir: Some(prompts_dir.to_string_lossy().to_string()),
-        system_prompt: None,
-    };
+    let model = Arc::new(OpenAICompatible::new(&base_url, &model_name, &api_key));
+    let registry = Arc::new(
+        PromptRegistry::from_config(&PromptConfig {
+            prompts_dir: Some(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string()),
+            ..Default::default()
+        })
+        .expect("prompt config"),
+    );
+    let memory = Arc::new(Mutex::new(SimpleMemory::new(50)));
+    let tools = ToolRegistry::new();
 
-    let agent = Agent::from_config(config).unwrap();
-    let agent = Arc::new(Mutex::new(agent));
+    let strategy = PlanStrategy::new(model, registry, tools, memory, 10);
+    let invoker = StrategyInvoker::new(strategy);
 
-    let adapter = SlackAdapter::new(
-        agent,
-        &std::env::var("SLACK_BOT_TOKEN").expect("SLACK_BOT_TOKEN not set"),
-        &std::env::var("SLACK_SIGNING_SECRET").expect("SLACK_SIGNING_SECRET not set"),
-        3000,
+    // Wrap in Arc so the same connector can serve as both input and output.
+    let slack = Arc::new(SlackConnector::new(&bot_token, &signing_secret, 3000));
+
+    let integration = Integration::new(
+        Box::new(Arc::clone(&slack)), // input: receive Slack messages
+        Box::new(invoker),
+        vec![Box::new(Arc::clone(&slack))], // output: reply to Slack
     );
 
-    adapter
-        .start()
-        .await
-        .expect("Failed to start Slack adapter");
+    println!("HR assistant listening on port 3000…");
+    integration.run().await.expect("integration failed");
 }
