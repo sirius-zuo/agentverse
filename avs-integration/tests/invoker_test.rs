@@ -14,7 +14,7 @@ impl RunStrategy for EchoStrategy {
 
 #[tokio::test]
 async fn strategy_invoker_echoes_text() {
-    let mut invoker = StrategyInvoker::new(EchoStrategy);
+    let invoker = StrategyInvoker::new(EchoStrategy);
     let event = Event {
         id: uuid::Uuid::new_v4(),
         conversation_id: "ch1".to_string(),
