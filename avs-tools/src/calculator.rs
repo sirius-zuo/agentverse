@@ -1,10 +1,12 @@
-use agentverse::{SyncTool, ToolResult};
+use agentverse::{AsyncTool, ToolResult};
+use async_trait::async_trait;
 use serde_json::{json, Value};
 
 /// Simple calculator tool for arithmetic operations.
 pub struct Calculator;
 
-impl SyncTool for Calculator {
+#[async_trait]
+impl AsyncTool for Calculator {
     fn name(&self) -> &str {
         "calculator"
     }
@@ -35,7 +37,7 @@ impl SyncTool for Calculator {
         })
     }
 
-    fn execute(&self, args: Value) -> ToolResult {
+    async fn execute(&self, args: Value) -> ToolResult {
         let op = args["operation"]
             .as_str()
             .ok_or_else(|| agentverse::ToolError::Execution("Missing 'operation'".to_string()))?;

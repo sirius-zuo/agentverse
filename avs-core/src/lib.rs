@@ -32,5 +32,5 @@ pub use model::{
 };
 pub use prompt::PromptConfig;
 pub use prompt::PromptRegistry;
-pub use tool::{AsyncTool, SyncTool, ToolResult};
+pub use tool::{AsyncTool, ToolResult};
 pub use tracing::{NoopTracer, Tracer};

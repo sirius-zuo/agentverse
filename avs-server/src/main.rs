@@ -7,7 +7,7 @@ mod stdio_adapter;
 
 use agentverse::{Agent, Config};
 use agentverse_guardrails::RateLimiter;
-use agentverse_tools::{Calculator, DateTimeTool, FileSearch, HttpClient, SyncToolAdapter, ToolRegistry};
+use agentverse_tools::{Calculator, DateTimeTool, FileSearch, HttpClient, ToolRegistry};
 use axum::{
     middleware,
     routing::{get, post},
@@ -77,10 +77,10 @@ async fn main() {
 
     // Build tool registry — wired for future tool use
     let mut tool_registry = ToolRegistry::new();
-    tool_registry.register(SyncToolAdapter(FileSearch));
+    tool_registry.register(FileSearch);
     tool_registry.register(HttpClient);
-    tool_registry.register(SyncToolAdapter(Calculator));
-    tool_registry.register(SyncToolAdapter(DateTimeTool));
+    tool_registry.register(Calculator);
+    tool_registry.register(DateTimeTool);
 
     // Build rate limiter
     let rate_limiter = Arc::new(RateLimiter::new(

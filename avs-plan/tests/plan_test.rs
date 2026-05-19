@@ -4,12 +4,13 @@
 
 use agentverse::memory::{Message, MessageRole};
 use agentverse::{
-    GenerateRequest, GenerateResponse, ModelError, ModelProvider, PromptRegistry, SyncTool,
+    AsyncTool, GenerateRequest, GenerateResponse, ModelError, ModelProvider, PromptRegistry,
     UsageStats,
 };
 use agentverse_memory::SimpleMemory;
 use agentverse_plan::{HierarchicalStrategy, Plan, PlanStep, PlanStrategy};
-use agentverse_tools::{SyncToolAdapter, ToolRegistry};
+use agentverse_tools::{Calculator, ToolRegistry};
+use async_trait::async_trait;
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -38,7 +39,7 @@ impl ModelProvider for MockModel {
     }
 }
 
-/// A mock sync tool.
+/// A mock async tool.
 struct MockTool {
     name: String,
     description: String,
@@ -53,7 +54,8 @@ impl MockTool {
     }
 }
 
-impl SyncTool for MockTool {
+#[async_trait]
+impl AsyncTool for MockTool {
     fn name(&self) -> &str {
         &self.name
     }
@@ -66,7 +68,10 @@ impl SyncTool for MockTool {
         json!({"type": "object", "properties": {}})
     }
 
-    fn execute(&self, args: serde_json::Value) -> Result<serde_json::Value, agentverse::ToolError> {
+    async fn execute(
+        &self,
+        args: serde_json::Value,
+    ) -> Result<serde_json::Value, agentverse::ToolError> {
         Ok(json!({"result": format!("Executed {} with args {:?}", self.name, args)}))
     }
 }
@@ -167,8 +172,12 @@ fn test_mock_tool() {
     let tool = MockTool::new("test_tool", "A test tool");
     assert_eq!(tool.name(), "test_tool");
     assert_eq!(tool.description(), "A test tool");
+}
 
-    let result = tool.execute(json!({"key": "value"})).unwrap();
+#[tokio::test]
+async fn test_mock_tool_execute() {
+    let tool = MockTool::new("test_tool", "A test tool");
+    let result = tool.execute(json!({"key": "value"})).await.unwrap();
     assert!(result.is_object());
 }
 
@@ -378,7 +387,7 @@ async fn test_plan_strategy_tool_steps() {
     };
     let tool = MockTool::new("echo", "Echo tool");
     let mut registry = ToolRegistry::new();
-    registry.register(SyncToolAdapter(tool));
+    registry.register(tool);
     let mut strategy = PlanStrategy::new(
         Arc::new(model),
         Arc::new(PromptRegistry::default()),
@@ -499,9 +508,8 @@ async fn test_hierarchical_strategy_zero_subgoals() {
 
 #[tokio::test]
 async fn test_plan_strategy_accepts_tool_registry() {
-    use agentverse_tools::{Calculator, SyncToolAdapter, ToolRegistry};
     // Just verify construction compiles and registry is accessible
     let mut tools = ToolRegistry::new();
-    tools.register(SyncToolAdapter(Calculator));
+    tools.register(Calculator);
     assert!(tools.has_tool("calculator"));
 }

@@ -1,11 +1,13 @@
-use agentverse::{SyncTool, ToolResult};
+use agentverse::{AsyncTool, ToolResult};
+use async_trait::async_trait;
 use glob::glob;
 use serde_json::{json, Value};
 
 /// Search files by pattern.
 pub struct FileSearch;
 
-impl SyncTool for FileSearch {
+#[async_trait]
+impl AsyncTool for FileSearch {
     fn name(&self) -> &str {
         "file_search"
     }
@@ -31,7 +33,7 @@ impl SyncTool for FileSearch {
         })
     }
 
-    fn execute(&self, args: Value) -> ToolResult {
+    async fn execute(&self, args: Value) -> ToolResult {
         let path = args["path"].as_str().ok_or_else(|| {
             agentverse::ToolError::Execution("Missing or invalid 'path' parameter".to_string())
         })?;

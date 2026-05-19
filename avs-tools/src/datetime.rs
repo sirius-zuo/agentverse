@@ -1,11 +1,13 @@
-use agentverse::{SyncTool, ToolResult};
+use agentverse::{AsyncTool, ToolResult};
+use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::{json, Value};
 
 /// Current date and time tool.
 pub struct DateTimeTool;
 
-impl SyncTool for DateTimeTool {
+#[async_trait]
+impl AsyncTool for DateTimeTool {
     fn name(&self) -> &str {
         "datetime"
     }
@@ -18,7 +20,7 @@ impl SyncTool for DateTimeTool {
         json!({ "type": "object", "properties": {} })
     }
 
-    fn execute(&self, _args: Value) -> ToolResult {
+    async fn execute(&self, _args: Value) -> ToolResult {
         let now = Utc::now();
         Ok(json!({
             "utc": now.to_rfc3339(),
