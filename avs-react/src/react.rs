@@ -88,6 +88,15 @@ where
                         });
                 }
                 CycleAction::ToolCall { tool_name, args } => {
+                    // Save the model's own reasoning so the next iteration has full context.
+                    self.skeleton
+                        .memory()
+                        .lock()
+                        .await
+                        .append(agentverse::Message {
+                            role: agentverse::memory::MessageRole::Assistant,
+                            content: response.content.clone(),
+                        });
                     let result = self.skeleton.execute_tool(&tool_name, args).await?;
                     self.skeleton
                         .memory()
