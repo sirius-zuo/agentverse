@@ -54,7 +54,7 @@ AgentVerse/
 | **Agent** | `agentverse` | Main entry point — holds config, memory, prompt registry |
 | **Config** | `agentverse` | Model settings, prompts directory, system prompt |
 | **PromptRegistry** | `agentverse` | Template engine (Minijinja) + example storage |
-| **Tool** | `agentverse` | `AsyncTool` trait (primary); `SyncTool` for CPU-bound tools wrapped via `SyncToolAdapter` |
+| **Tool** | `agentverse` | `AsyncTool` trait — the single interface for all agent tools |
 | **Strategy** | `agentverse-react`, `agentverse-plan` | Orchestration loops (ReAct, Plan-and-Execute, Hierarchical) |
 | **Router** | `agentverse-router` | Dynamic strategy selection via LLM |
 | **Guardrails** | `agentverse-guardrails` | Prompt injection detection, output filtering, rate limiting |
@@ -142,7 +142,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 use agentverse::{OpenAICompatible, PromptConfig, PromptRegistry};
 use agentverse_memory::SimpleMemory;
 use agentverse_react::ReActStrategy;
-use agentverse_tools::{Calculator, DateTimeTool, SyncToolAdapter, ToolRegistry};
+use agentverse_tools::{Calculator, DateTimeTool, ToolRegistry};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -163,8 +163,8 @@ async fn main() {
     );
 
     let mut tools = ToolRegistry::new();
-    tools.register_with_category(SyncToolAdapter(Calculator), "math");
-    tools.register_with_category(SyncToolAdapter(DateTimeTool), "utility");
+    tools.register_with_category(Calculator, "math");
+    tools.register_with_category(DateTimeTool, "utility");
 
     let memory = Arc::new(Mutex::new(SimpleMemory::new(50)));
     let mut agent = ReActStrategy::new(registry, model, tools, memory, 10);
@@ -210,7 +210,7 @@ Same pattern as Option 1, swap the model provider. Anthropic caches the system p
 
 ```rust
 use agentverse::AnthropicProvider;
-use agentverse_tools::{Calculator, SyncToolAdapter, ToolRegistry};
+use agentverse_tools::{Calculator, ToolRegistry};
 
 let model = Arc::new(AnthropicProvider::new(
     "https://api.anthropic.com",
@@ -219,7 +219,7 @@ let model = Arc::new(AnthropicProvider::new(
 ));
 
 let mut tools = ToolRegistry::new();
-tools.register_with_category(SyncToolAdapter(Calculator), "math");
+tools.register_with_category(Calculator, "math");
 
 let mut agent = ReActStrategy::new(registry, model, tools, memory, 15);
 ```
@@ -360,9 +360,9 @@ let config = Config {
 
 ## Writing Tools
 
-Tools extend agent capabilities. The primary interface is `AsyncTool` — implement it directly for any tool that does I/O, and use `SyncToolAdapter` to wrap simple CPU-bound tools.
+All tools implement `AsyncTool` — a single, consistent interface regardless of whether the tool does I/O or pure computation.
 
-### Async Tool (primary interface)
+### Implementing AsyncTool
 
 ```rust
 use agentverse::{AsyncTool, ToolError, ToolResult};
@@ -396,17 +396,11 @@ impl AsyncTool for WeatherTool {
 }
 ```
 
-### Sync Tool (CPU-bound only)
-
-Use `SyncTool` only for pure computation — never for I/O. Wrap with `SyncToolAdapter` before registering.
+CPU-bound tools work the same way — `async fn execute` can contain synchronous code:
 
 ```rust
-use agentverse::{SyncTool, ToolResult};
-use serde_json::{json, Value};
-
-pub struct MyCalculator;
-
-impl SyncTool for MyCalculator {
+#[async_trait]
+impl AsyncTool for MyCalculator {
     fn name(&self) -> &str { "my_calculator" }
     fn description(&self) -> &str { "Adds two numbers" }
     fn parameters(&self) -> Value {
@@ -419,7 +413,7 @@ impl SyncTool for MyCalculator {
             "required": ["a", "b"]
         })
     }
-    fn execute(&self, args: Value) -> ToolResult {
+    async fn execute(&self, args: Value) -> ToolResult {
         let a = args["a"].as_f64().unwrap_or(0.0);
         let b = args["b"].as_f64().unwrap_or(0.0);
         Ok(json!({ "result": a + b }))
@@ -429,19 +423,19 @@ impl SyncTool for MyCalculator {
 
 ### ToolRegistry
 
-`ToolRegistry` is the unified async tool store. All tools register as `AsyncTool`; sync tools are wrapped via `SyncToolAdapter`.
+`ToolRegistry` is the unified async tool store. All tools implement `AsyncTool` and register directly.
 
 ```rust
-use agentverse_tools::{ToolRegistry, SyncToolAdapter, Calculator, DateTimeTool, ShellTool};
+use agentverse_tools::{ToolRegistry, Calculator, DateTimeTool, ShellTool};
 use std::time::Duration;
 
 let mut registry = ToolRegistry::new();
 
-// Sync tools — wrap with SyncToolAdapter
-registry.register_with_category(SyncToolAdapter(Calculator), "math");
-registry.register_with_category(SyncToolAdapter(DateTimeTool), "utility");
+// Built-in tools register directly
+registry.register_with_category(Calculator, "math");
+registry.register_with_category(DateTimeTool, "utility");
 
-// Native async tools — register directly
+// Custom tools register the same way
 registry.register_with_category(WeatherTool, "network");
 
 // Shell tool — sandboxed subprocess execution
@@ -492,12 +486,12 @@ The response always includes `stdout`, `stderr`, and `exit_code`. Non-zero exit 
 
 ```rust
 use agentverse_react::ReActStrategy;
-use agentverse_tools::{ToolRegistry, SyncToolAdapter, Calculator};
+use agentverse_tools::{ToolRegistry, Calculator};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 let mut tools = ToolRegistry::new();
-tools.register_with_category(SyncToolAdapter(Calculator), "math");
+tools.register_with_category(Calculator, "math");
 
 let strategy = ReActStrategy::new(
     prompt_registry,
@@ -1129,12 +1123,12 @@ RUST_LOG=agentverse=info,agentverse_guardrails=debug cargo run -p agentverse-ser
 
 | Crate | Key Types |
 |-------|-----------|
-| `agentverse` | `Agent`, `Config`, `ProviderConfig`, `AgentBuilder`, `PromptRegistry`, `Example`, `SyncTool`, `AsyncTool`, `ModelError` |
+| `agentverse` | `Agent`, `Config`, `ProviderConfig`, `AgentBuilder`, `PromptRegistry`, `Example`, `AsyncTool`, `ModelError` |
 | `agentverse-react` | `ReActStrategy` |
 | `agentverse-plan` | `PlanStrategy`, `HierarchicalStrategy` |
 | `agentverse-router` | `StrategyRouter`, `StrategyName` |
 | `agentverse-guardrails` | `check_prompt`, `check_output`, `RateLimiter` |
-| `agentverse-tools` | `ToolRegistry`, `SyncToolAdapter`, `Calculator`, `DateTimeTool`, `FileSearch`, `HttpClient`, `ShellTool` |
+| `agentverse-tools` | `ToolRegistry`, `Calculator`, `DateTimeTool`, `FileSearch`, `HttpClient`, `ShellTool` |
 | `agentverse-integration` | `SlackAdapter`, `WebhookAdapter` |
 
 ### ProviderConfig Enum

@@ -1,0 +1,70 @@
+<h2>Dimension 1 — Lifecycle as a Spawn Policy</h2>
+<p class="subtitle">Rather than picking one model, Aether can treat lifecycle as a per-node configuration. Each agent node in the topology declares how it is instantiated and managed.</p>
+
+<div class="mockup" style="margin:1.5rem 0">
+  <div class="mockup-header">SpawnPolicy — three modes under one abstraction</div>
+  <div class="mockup-body" style="font-family:monospace; font-size:0.88em; line-height:1.8">
+    <span style="opacity:0.5">// How Aether manages a given agent node</span><br>
+    <span style="color:#7ec8e3">enum</span> SpawnPolicy {<br>
+    &nbsp;&nbsp;<span style="color:#f9c74f">Singleton</span>,&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="opacity:0.5">// one long-running instance</span><br>
+    &nbsp;&nbsp;<span style="color:#f9c74f">Pool</span> { size: usize },&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="opacity:0.5">// N long-running instances, load-balanced</span><br>
+    &nbsp;&nbsp;<span style="color:#f9c74f">PerRequest</span>,&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="opacity:0.5">// fresh instance per task, dropped after</span><br>
+    }
+  </div>
+</div>
+
+<div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:1rem; margin-bottom:1.5rem">
+
+  <div style="background:rgba(255,255,255,0.04); border-radius:8px; padding:1rem; border:1px solid rgba(255,255,255,0.1)">
+    <h3 style="margin:0 0 0.5rem; color:#f9c74f">Singleton</h3>
+    <p style="font-size:0.85em; margin:0 0 0.75rem; opacity:0.8">One instance, always alive. All requests serialize through it.</p>
+    <div style="font-size:0.8em; opacity:0.65">
+      <strong>Good for:</strong> Supervisors, coordinators, agents that accumulate conversational state across many calls.
+    </div>
+    <div style="font-size:0.8em; margin-top:0.5rem; opacity:0.65">
+      <strong>Risk:</strong> Bottleneck under load (one at a time).
+    </div>
+  </div>
+
+  <div style="background:rgba(255,255,255,0.04); border-radius:8px; padding:1rem; border:1px solid rgba(255,255,255,0.1)">
+    <h3 style="margin:0 0 0.5rem; color:#90be6d">Pool { size }</h3>
+    <p style="font-size:0.85em; margin:0 0 0.75rem; opacity:0.8">N identical long-running instances behind a round-robin or least-busy load balancer.</p>
+    <div style="font-size:0.8em; opacity:0.65">
+      <strong>Good for:</strong> High-throughput stateful agents (e.g., a Researcher agent handling 10 parallel queries). Phase 1 in-process; Phase 2 distributes across nodes.
+    </div>
+    <div style="font-size:0.8em; margin-top:0.5rem; opacity:0.65">
+      <strong>Phase 2 hook:</strong> Pool members can be on different machines — same abstraction.
+    </div>
+  </div>
+
+  <div style="background:rgba(255,255,255,0.04); border-radius:8px; padding:1rem; border:1px solid rgba(255,255,255,0.1)">
+    <h3 style="margin:0 0 0.5rem; color:#f4a261">PerRequest</h3>
+    <p style="font-size:0.85em; margin:0 0 0.75rem; opacity:0.8">A factory creates a fresh agent per task. Instance is dropped when the task resolves.</p>
+    <div style="font-size:0.8em; opacity:0.65">
+      <strong>Good for:</strong> Stateless specialists — formatters, translators, validators. Zero cross-task memory bleed by design.
+    </div>
+    <div style="font-size:0.8em; margin-top:0.5rem; opacity:0.65">
+      <strong>Risk:</strong> Initialization cost per call (model client setup, prompt loading).
+    </div>
+  </div>
+
+</div>
+
+<div class="mockup">
+  <div class="mockup-header">How Aether sees a workflow node</div>
+  <div class="mockup-body" style="font-family:monospace; font-size:0.85em; line-height:1.8">
+    <span style="opacity:0.5">// Every node in the topology = agent factory + policy + transport</span><br>
+    <span style="color:#7ec8e3">struct</span> AgentNode {<br>
+    &nbsp;&nbsp;name: String,<br>
+    &nbsp;&nbsp;capabilities: Vec&lt;String&gt;,<br>
+    &nbsp;&nbsp;factory: Arc&lt;<span style="color:#7ec8e3">dyn</span> AgentFactory&gt;,&nbsp;&nbsp;&nbsp;<span style="opacity:0.5">// builds AgentVerse agents</span><br>
+    &nbsp;&nbsp;policy: SpawnPolicy,<br>
+    &nbsp;&nbsp;transport: Arc&lt;<span style="color:#7ec8e3">dyn</span> Transport&gt;,&nbsp;&nbsp;&nbsp;&nbsp;<span style="opacity:0.5">// LocalTransport in Phase 1</span><br>
+    }
+  </div>
+</div>
+
+<p style="margin-top:1.25rem; font-size:0.9em; opacity:0.7">
+  <strong>Clustering note:</strong> In Phase 1, Pool members are Tokio tasks in the same process.
+  In Phase 2, the pool abstraction stays identical — each member just lives on a different node, and the transport swaps from channels to gRPC. No orchestration logic changes.
+</p>

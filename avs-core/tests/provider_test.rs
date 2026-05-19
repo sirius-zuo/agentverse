@@ -1,7 +1,7 @@
 use agentverse::memory::{Message, MessageRole};
 use agentverse::{
     AnthropicProvider, GeminiProvider, GenerateRequest, ModelProvider, OpenAICompatible,
-    ProviderConfig, ProviderWrapper, ToolDefinition,
+    ProviderConfig, ProviderWrapper,
 };
 use httpmock::prelude::*;
 use serde_json::json;

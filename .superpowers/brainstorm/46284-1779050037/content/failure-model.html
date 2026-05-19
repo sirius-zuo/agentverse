@@ -1,0 +1,45 @@
+<h2>Dimension 3 — Failure isolation</h2>
+<p class="subtitle">When an agent fails, what does Aether do?</p>
+
+<div class="options">
+  <div class="option" data-choice="propagate" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Failure propagates — orchestrator decides</h3>
+      <p>An agent error surfaces as <code>Err(AgentError)</code> to the Aether orchestrator. The orchestrator's workflow definition decides: retry the same agent, reroute to a fallback agent, or fail the whole task. No automatic recovery — behaviour is explicit and deterministic.</p>
+      <div class="pros-cons" style="margin-top:0.75rem">
+        <div class="pros"><h4>Pros</h4><ul><li>Simple — no hidden state machines</li><li>Workflow author controls recovery logic</li><li>Easy to test and reason about</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>No automatic recovery without explicit retry config</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="supervisor-restart" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Supervisor auto-restarts agents (Erlang model)</h3>
+      <p>Aether's supervisor detects agent failure and restarts the agent (using its <code>AgentFactory</code>) before retrying. The workflow layer never sees the failure. Agents are treated as disposable — "let it crash" philosophy.</p>
+      <div class="pros-cons" style="margin-top:0.75rem">
+        <div class="pros"><h4>Pros</h4><ul><li>Self-healing at runtime</li><li>Good for long-running Singleton agents</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>Hides failures — harder to debug</li><li>Restart loop risk if root cause is logic, not transient</li><li>More complex to implement correctly</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="hybrid" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Configurable per node</h3>
+      <p>Each <code>AgentNode</code> declares a <code>FailurePolicy</code>: how many times to retry, whether to restart the instance, and what fallback agent (if any) to route to. The orchestrator executes the policy; the workflow author configures it.</p>
+      <div style="margin-top:0.75rem; font-family:monospace; font-size:0.82em; opacity:0.75; background:rgba(0,0,0,0.2); padding:0.5rem; border-radius:4px">
+        FailurePolicy { retries: 2, restart_on_failure: true, fallback: Some("backup-agent") }
+      </div>
+      <div class="pros-cons" style="margin-top:0.75rem">
+        <div class="pros"><h4>Pros</h4><ul><li>Best of both — explicit and configurable</li><li>Fits naturally onto <code>AgentNode</code> (already has SpawnPolicy)</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>Slightly more upfront design surface</li></ul></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<p style="margin-top:1.25rem; font-size:0.85em; opacity:0.65">My recommendation: <strong>C</strong>. The <code>FailurePolicy</code> sits on <code>AgentNode</code> alongside <code>SpawnPolicy</code> — they're two facets of the same node config. You get auto-restart for long-running Singletons and simple propagation for PerRequest specialists, all in one model.</p>

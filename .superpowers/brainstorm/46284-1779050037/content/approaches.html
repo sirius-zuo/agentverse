@@ -1,0 +1,62 @@
+<h2>Three approaches for Aether's orchestration model</h2>
+<p class="subtitle">All three honour the decisions made — SpawnPolicy, FailurePolicy, registry-backed graph, A+C memory. The difference is how the runtime executes.</p>
+
+<div class="options">
+  <div class="option" data-choice="dataflow" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Dataflow / DAG-first <span style="font-size:0.75em; opacity:0.6; margin-left:0.5rem">(recommended)</span></h3>
+      <p>The user declares a workflow as a named DAG of <code>AgentNode</code>s. Aether's runtime does a topological sort, executes independent branches in parallel, and routes messages along edges. Routing nodes (conditional branching) are first-class — they inspect the incoming result and pick which outgoing edge fires.</p>
+      <div style="margin-top:0.75rem; font-family:monospace; font-size:0.8em; opacity:0.75; background:rgba(0,0,0,0.2); padding:0.5rem; border-radius:4px; line-height:1.7">
+        Workflow::builder()<br>
+        &nbsp;&nbsp;.node("intake", intake_node)<br>
+        &nbsp;&nbsp;.node("researcher", researcher_node)<br>
+        &nbsp;&nbsp;.node("writer", writer_node)<br>
+        &nbsp;&nbsp;.edge("intake", "researcher")<br>
+        &nbsp;&nbsp;.edge("researcher", "writer")<br>
+        &nbsp;&nbsp;.build()?
+      </div>
+      <div class="pros-cons" style="margin-top:0.75rem">
+        <div class="pros"><h4>Pros</h4><ul><li>Maps directly to all 4 topologies</li><li>Explicit, inspectable, serializable to JSON/YAML</li><li>Parallel branches automatic from DAG structure</li><li>Phase 2: distribute nodes across cluster trivially</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>Dynamic emergent topologies harder to express</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="actor" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Actor model</h3>
+      <p>Each agent is wrapped in an <code>Actor</code> with a Tokio channel mailbox. Actors send messages to each other by name — the registry resolves names to mailboxes. Topology emerges at runtime from who sends to whom. Aether's supervisor manages actor lifecycle (spawn, restart).</p>
+      <div style="margin-top:0.75rem; font-family:monospace; font-size:0.8em; opacity:0.75; background:rgba(0,0,0,0.2); padding:0.5rem; border-radius:4px; line-height:1.7">
+        <span style="opacity:0.6">// inside an agent's handler:</span><br>
+        ctx.send("writer", result).await?;
+      </div>
+      <div class="pros-cons" style="margin-top:0.75rem">
+        <div class="pros"><h4>Pros</h4><ul><li>Very dynamic — topology not fixed upfront</li><li>Natural for supervisor/worker patterns</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>Topology implicit — hard to inspect or visualize</li><li>Agents need to know each other's names (coupling)</li><li>Cycles and deadlocks easier to create accidentally</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="eventbus" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Event-driven / pub-sub</h3>
+      <p>Aether has a central event bus. Agents subscribe to event types (<code>"task.research"</code>) and publish results as new events (<code>"task.write"</code>). Topology is defined by subscriptions — no explicit edges.</p>
+      <div style="margin-top:0.75rem; font-family:monospace; font-size:0.8em; opacity:0.75; background:rgba(0,0,0,0.2); padding:0.5rem; border-radius:4px; line-height:1.7">
+        researcher.subscribes_to("task.research")<br>
+        researcher.publishes("task.write")<br>
+        writer.subscribes_to("task.write")
+      </div>
+      <div class="pros-cons" style="margin-top:0.75rem">
+        <div class="pros"><h4>Pros</h4><ul><li>Extremely loosely coupled</li><li>Easy to add new agents without changing existing ones</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>Workflow hard to trace end-to-end</li><li>Supervision and failure handling complex</li><li>Overkill for Phase 1 scope</li></ul></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<p style="margin-top:1.25rem; font-size:0.85em; opacity:0.65">
+  <strong>Why A:</strong> The DAG approach subsumes all four topologies — a pipeline is a linear DAG, supervisor/worker is a star DAG, a router is a conditional node, arbitrary graph is just a DAG. It's explicit (inspectable, serializable), and aligns naturally with the registry-backed naming model. The actor model is powerful but trades explicitness for dynamism — a tradeoff that hurts more than it helps at Phase 1 scope.
+</p>
