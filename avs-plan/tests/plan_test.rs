@@ -514,8 +514,9 @@ async fn test_plan_strategy_accepts_tool_registry() {
     assert!(tools.has_tool("calculator"));
 }
 
-#[tokio::test]
-async fn plan_strategy_implements_run_strategy() {
-    fn assert_run_strategy<T: agentverse::RunStrategy>() {}
-    // This test passes if it compiles.
+#[test]
+fn plan_strategy_implements_run_strategy() {
+    // Compile-time check: if RunStrategy is not implemented, this won't compile.
+    fn assert_run_strategy<T: agentverse::RunStrategy + ?Sized>() {}
+    assert_run_strategy::<dyn agentverse::RunStrategy>();
 }
