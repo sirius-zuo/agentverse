@@ -16,7 +16,7 @@
 use agentverse::{AnthropicProvider, PromptConfig, PromptRegistry};
 use agentverse_memory::SimpleMemory;
 use agentverse_react::ReActStrategy;
-use agentverse_tools::Calculator;
+use agentverse_tools::{Calculator, SyncToolAdapter, ToolRegistry};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -51,7 +51,8 @@ async fn main() {
     );
 
     let memory = Arc::new(Mutex::new(SimpleMemory::new(50)));
-    let tools: Vec<Box<dyn agentverse::SyncTool>> = vec![Box::new(Calculator)];
+    let mut tools = ToolRegistry::new();
+    tools.register(SyncToolAdapter(Calculator));
     let mut agent = ReActStrategy::new(registry, model, tools, memory, 15);
 
     // Multi-step arithmetic that requires four sequential tool calls:

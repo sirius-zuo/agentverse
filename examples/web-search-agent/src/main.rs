@@ -9,7 +9,7 @@
 use agentverse::{OpenAICompatible, PromptConfig, PromptRegistry};
 use agentverse_memory::SimpleMemory;
 use agentverse_react::ReActStrategy;
-use agentverse_tools::FileSearch;
+use agentverse_tools::{FileSearch, SyncToolAdapter, ToolRegistry};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -35,7 +35,8 @@ async fn main() {
         .expect("prompt config"),
     );
     let memory = Arc::new(Mutex::new(SimpleMemory::new(50)));
-    let tools: Vec<Box<dyn agentverse::SyncTool>> = vec![Box::new(FileSearch)];
+    let mut tools = ToolRegistry::new();
+    tools.register(SyncToolAdapter(FileSearch));
     let mut agent = ReActStrategy::new(registry, model, tools, memory, 10);
 
     let question = format!(

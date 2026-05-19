@@ -49,7 +49,7 @@ impl AsyncTool for ShellTool {
     }
 
     fn description(&self) -> &str {
-        "Execute a shell command in a sandboxed working directory"
+        "Execute a shell command in the configured working directory."
     }
 
     fn parameters(&self) -> Value {

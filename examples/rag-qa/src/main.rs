@@ -9,7 +9,7 @@
 use agentverse::{OpenAICompatible, PromptConfig, PromptRegistry};
 use agentverse_memory::SimpleMemory;
 use agentverse_react::ReActStrategy;
-use agentverse_tools::Calculator;
+use agentverse_tools::{Calculator, SyncToolAdapter, ToolRegistry};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -33,7 +33,8 @@ async fn main() {
         .expect("prompt config"),
     );
     let memory = Arc::new(Mutex::new(SimpleMemory::new(50)));
-    let tools: Vec<Box<dyn agentverse::SyncTool>> = vec![Box::new(Calculator)];
+    let mut tools = ToolRegistry::new();
+    tools.register(SyncToolAdapter(Calculator));
     let mut agent = ReActStrategy::new(registry, model, tools, memory, 10);
 
     let question = "What is 42 multiplied by 37, then add 15 to the result?";
