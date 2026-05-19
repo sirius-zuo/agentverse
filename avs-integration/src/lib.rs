@@ -12,3 +12,6 @@ pub use webhook::{handle_webhook, WebhookAdapter, WebhookRequest, WebhookRespons
 
 pub mod event;
 pub use event::Event;
+
+pub mod connector;
+pub use connector::{Connector, InputConnector, OutputConnector};
