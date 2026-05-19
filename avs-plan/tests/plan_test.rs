@@ -513,3 +513,9 @@ async fn test_plan_strategy_accepts_tool_registry() {
     tools.register(Calculator);
     assert!(tools.has_tool("calculator"));
 }
+
+#[tokio::test]
+async fn plan_strategy_implements_run_strategy() {
+    fn assert_run_strategy<T: agentverse::RunStrategy>() {}
+    // This test passes if it compiles.
+}

@@ -141,3 +141,14 @@ where
         &self.skeleton
     }
 }
+
+#[async_trait::async_trait]
+impl<P, M> agentverse::RunStrategy for ReActStrategy<P, M>
+where
+    P: agentverse::ModelProvider + Send + Sync + 'static,
+    M: agentverse::Memory + Send + 'static,
+{
+    async fn process(&mut self, input: String) -> Result<String, agentverse::AgentError> {
+        self.run(input).await.map(|r| r.answer)
+    }
+}
