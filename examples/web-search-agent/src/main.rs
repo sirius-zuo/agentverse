@@ -1,6 +1,6 @@
 // examples/web-search-agent/src/main.rs
 //
-// Agent with FileSearch tool — exercises multi-step tool use.
+// Plan-and-Execute agent with HttpClient — demonstrates multi-step web research.
 // Run:
 //   MODEL_BASE_URL=http://localhost:9090/v1 \
 //   MODEL_NAME=Qwen3.6-35B-A3B-GGUF \
@@ -8,8 +8,8 @@
 
 use agentverse::{OpenAICompatible, PromptConfig, PromptRegistry};
 use agentverse_memory::SimpleMemory;
-use agentverse_react::ReActStrategy;
-use agentverse_tools::{FileSearch, ToolRegistry};
+use agentverse_plan::PlanStrategy;
+use agentverse_tools::{HttpClient, ToolRegistry};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -20,11 +20,8 @@ async fn main() {
     let api_key = std::env::var("MODEL_API_KEY").unwrap_or_default();
     let model_name =
         std::env::var("MODEL_NAME").unwrap_or_else(|_| "Qwen3.6-35B-A3B-GGUF".to_string());
-    let project_dir = std::env::var("PROJECT_DIR")
-        .unwrap_or_else(|_| "/Users/jinzuo/projects/AgentVerse".to_string());
 
     println!("Web Search Agent — model: {} @ {}", model_name, base_url);
-    println!("Tool: FileSearch (project: {})", project_dir);
 
     let model = Arc::new(OpenAICompatible::new(&base_url, &model_name, &api_key));
     let registry = Arc::new(
@@ -36,26 +33,16 @@ async fn main() {
     );
     let memory = Arc::new(Mutex::new(SimpleMemory::new(50)));
     let mut tools = ToolRegistry::new();
-    tools.register(FileSearch);
-    let mut agent = ReActStrategy::new(registry, model, tools, memory, 10);
+    tools.register(HttpClient);
+    let mut agent = PlanStrategy::new(model, registry, tools, memory, 10);
 
-    let question = format!(
-        "Use the file_search tool to find all .rs files in {}/avs-core/src and list their names.",
-        project_dir
-    );
+    let question = "Fetch https://httpbin.org/get and https://httpbin.org/uuid, \
+                    then summarize what each endpoint returned."
+        .to_string();
     println!("> {}", question);
 
     match agent.run(question).await {
-        Ok(result) => {
-            println!("\nAgent: {}", result.answer);
-            println!(
-                "\n[tokens] input={} output={} cache_read={} cache_write={}",
-                result.total_usage.input_tokens,
-                result.total_usage.output_tokens,
-                result.total_usage.cache_read_tokens,
-                result.total_usage.cache_write_tokens,
-            );
-        }
+        Ok(answer) => println!("\nAgent: {}", answer),
         Err(e) => eprintln!("Error: {}", e),
     }
 }

@@ -1,7 +1,0 @@
-[[example]]
-input = "Search for the latest AI news"
-output = "Thought: I need to search the web.\nAction: http_client\nAction Input: {\"url\": \"https://news.ycombinator.com\", \"method\": \"GET\"}"
-
-[[example]]
-input = "What is the weather in Tokyo?"
-output = "Thought: I need to check the weather.\nAction: http_client\nAction Input: {\"url\": \"https://api.weather.com/tokyo\", \"method\": \"GET\"}"

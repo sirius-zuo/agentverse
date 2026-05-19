@@ -1,0 +1,3 @@
+[[example]]
+input = "Fetch https://httpbin.org/ip and https://httpbin.org/headers, then summarize both."
+output = '{"description": "Fetch two httpbin endpoints and summarize", "steps": [{"id": 1, "description": "Fetch IP info", "tool": "http_client", "args": {"method": "GET", "url": "https://httpbin.org/ip"}, "depends_on": []}, {"id": 2, "description": "Fetch request headers", "tool": "http_client", "args": {"method": "GET", "url": "https://httpbin.org/headers"}, "depends_on": []}, {"id": 3, "description": "Synthesize findings from both endpoints", "tool": null, "args": null, "depends_on": [1, 2]}]}'

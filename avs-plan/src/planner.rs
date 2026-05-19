@@ -26,6 +26,7 @@ pub struct PlanStep {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Plan {
     /// Description of the overall plan.
+    #[serde(default)]
     pub description: String,
     /// Ordered list of steps to execute.
     pub steps: Vec<PlanStep>,
