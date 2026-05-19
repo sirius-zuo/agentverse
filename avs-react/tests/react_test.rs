@@ -1,11 +1,11 @@
 //! Tests for the agentverse-react crate.
 
-use agentverse::SyncTool;
 use agentverse::{
     GenerateRequest, GenerateResponse, Memory, MemoryError, Message, ModelProvider, PromptConfig,
-    PromptRegistry, UsageStats,
+    PromptRegistry, SyncTool, UsageStats,
 };
 use agentverse_react::{parse::parse_response, CycleAction, CycleSkeleton, ReActStrategy};
+use agentverse_tools::{Calculator, SyncToolAdapter, ToolRegistry};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -129,7 +129,7 @@ impl SyncTool for MockTool {
 
 fn mock_skeleton(
     responses: Vec<String>,
-    tools: Vec<Box<dyn agentverse::SyncTool>>,
+    tools: ToolRegistry,
     max_iter: usize,
 ) -> CycleSkeleton<MockModel, TestMemory> {
     CycleSkeleton::new(
@@ -146,7 +146,7 @@ fn mock_skeleton(
 
 fn mock_strategy(
     responses: Vec<String>,
-    tools: Vec<Box<dyn agentverse::SyncTool>>,
+    tools: ToolRegistry,
     max_iter: usize,
 ) -> ReActStrategy<MockModel, TestMemory> {
     ReActStrategy::new(
@@ -159,6 +159,10 @@ fn mock_strategy(
         Arc::new(Mutex::new(TestMemory::new(10))),
         max_iter,
     )
+}
+
+fn empty_registry() -> ToolRegistry {
+    ToolRegistry::new()
 }
 
 // ─── Parse tests ──────────────────────────────────────────────────────────────
@@ -200,30 +204,34 @@ fn test_parse_response_thought_only() {
 
 #[test]
 fn test_cycle_skeleton_tool_count() {
-    let tool = MockTool::new("test_tool", "A test tool");
-    let skeleton = mock_skeleton(vec!["Answer: done".to_string()], vec![Box::new(tool)], 10);
+    let mut registry = ToolRegistry::new();
+    registry.register(SyncToolAdapter(MockTool::new("test_tool", "A test tool")));
+    let skeleton = mock_skeleton(vec!["Answer: done".to_string()], registry, 10);
     assert_eq!(skeleton.tool_count(), 1);
     assert_eq!(skeleton.max_iterations(), 10);
     assert_eq!(skeleton.current_iteration(), 0);
 }
 
-#[test]
-fn test_cycle_skeleton_execute_tool() {
-    let tool = MockTool::new("echo", "Echo back input");
-    let skeleton = mock_skeleton(vec!["Answer: done".to_string()], vec![Box::new(tool)], 10);
+#[tokio::test]
+async fn test_cycle_skeleton_execute_tool() {
+    let mut registry = ToolRegistry::new();
+    registry.register(SyncToolAdapter(MockTool::new("echo", "Echo back input")));
+    let skeleton = mock_skeleton(vec!["Answer: done".to_string()], registry, 10);
 
     let result = skeleton
         .execute_tool("echo", json!({"text": "hello"}))
+        .await
         .unwrap();
     assert!(result.contains("Executed echo"));
 }
 
-#[test]
-fn test_cycle_skeleton_execute_tool_not_found() {
-    let tool = MockTool::new("echo", "Echo back input");
-    let skeleton = mock_skeleton(vec!["Answer: done".to_string()], vec![Box::new(tool)], 10);
+#[tokio::test]
+async fn test_cycle_skeleton_execute_tool_not_found() {
+    let mut registry = ToolRegistry::new();
+    registry.register(SyncToolAdapter(MockTool::new("echo", "Echo back input")));
+    let skeleton = mock_skeleton(vec!["Answer: done".to_string()], registry, 10);
 
-    let result = skeleton.execute_tool("missing_tool", json!({}));
+    let result = skeleton.execute_tool("missing_tool", json!({})).await;
     assert!(result.is_err());
 }
 
@@ -241,7 +249,7 @@ async fn test_cycle_skeleton_build_request() {
             responses: vec!["Answer: done".to_string()],
             index: AtomicUsize::new(0),
         }),
-        vec![],
+        empty_registry(),
         Arc::clone(&memory),
         10,
     );
@@ -252,7 +260,7 @@ async fn test_cycle_skeleton_build_request() {
 
 #[tokio::test]
 async fn test_cycle_run_with_answer() {
-    let mut skeleton = mock_skeleton(vec!["Answer: done".to_string()], vec![], 10);
+    let mut skeleton = mock_skeleton(vec!["Answer: done".to_string()], empty_registry(), 10);
 
     let result = skeleton
         .run("test input".to_string(), |_s| async {
@@ -267,7 +275,7 @@ async fn test_cycle_run_with_answer() {
 
 #[tokio::test]
 async fn test_cycle_run_max_iterations() {
-    let mut skeleton = mock_skeleton(vec!["Thought: looping".to_string()], vec![], 2);
+    let mut skeleton = mock_skeleton(vec!["Thought: looping".to_string()], empty_registry(), 2);
 
     let result = skeleton
         .run("test".to_string(), |_s| async {
@@ -290,7 +298,7 @@ async fn test_cycle_run_max_iterations() {
 
 #[tokio::test]
 async fn test_react_strategy_direct_answer() {
-    let mut strategy = mock_strategy(vec!["Answer: 42".to_string()], vec![], 10);
+    let mut strategy = mock_strategy(vec!["Answer: 42".to_string()], empty_registry(), 10);
     let result = strategy.run("What is 6*7?".to_string()).await.unwrap();
     assert_eq!(result.answer, "42");
 }
@@ -302,7 +310,7 @@ async fn test_react_strategy_thought_then_answer() {
             "Thought: let me think.".to_string(),
             "Answer: 42".to_string(),
         ],
-        vec![],
+        empty_registry(),
         10,
     );
     let result = strategy.run("What is 6*7?".to_string()).await.unwrap();
@@ -311,13 +319,14 @@ async fn test_react_strategy_thought_then_answer() {
 
 #[tokio::test]
 async fn test_react_strategy_tool_call_then_answer() {
-    let tool = MockTool::new("echo", "Echo back input");
+    let mut registry = ToolRegistry::new();
+    registry.register(SyncToolAdapter(MockTool::new("echo", "Echo back input")));
     let mut strategy = mock_strategy(
         vec![
             "Thought: use tool.\nAction: echo\nAction Input: {}".to_string(),
             "Answer: done".to_string(),
         ],
-        vec![Box::new(tool)],
+        registry,
         10,
     );
     let result = strategy.run("use echo tool".to_string()).await.unwrap();
@@ -326,21 +335,21 @@ async fn test_react_strategy_tool_call_then_answer() {
 
 #[tokio::test]
 async fn test_react_strategy_max_iterations() {
-    let mut strategy = mock_strategy(vec!["Thought: still thinking.".to_string()], vec![], 2);
+    let mut strategy = mock_strategy(vec!["Thought: still thinking.".to_string()], empty_registry(), 2);
     let err = strategy.run("infinite loop".to_string()).await.unwrap_err();
     assert!(err.to_string().contains("Max iterations"));
 }
 
 #[tokio::test]
 async fn test_react_strategy_empty_response_is_error() {
-    let mut strategy = mock_strategy(vec!["".to_string()], vec![], 5);
+    let mut strategy = mock_strategy(vec!["".to_string()], empty_registry(), 5);
     let err = strategy.run("test".to_string()).await.unwrap_err();
     assert!(err.to_string().contains("Empty response"));
 }
 
 #[tokio::test]
 async fn test_react_strategy_usage_accumulates() {
-    let mut strategy = mock_strategy(vec!["Answer: done".to_string()], vec![], 5);
+    let mut strategy = mock_strategy(vec!["Answer: done".to_string()], empty_registry(), 5);
     let result = strategy.run("test".to_string()).await.unwrap();
     // MockModel returns UsageStats::default() — total should remain zero
     assert_eq!(result.total_usage.input_tokens, 0);
@@ -358,7 +367,7 @@ async fn test_cycle_no_preamble_without_react_template() {
             responses: vec!["Answer: done".to_string()],
             index: AtomicUsize::new(0),
         }),
-        vec![],
+        empty_registry(),
         Arc::clone(&memory),
         10,
     );
@@ -381,6 +390,9 @@ async fn test_cycle_preamble_inserted_when_react_template_loaded() {
 
     assert!(registry.has_react_template());
 
+    let mut tool_registry = ToolRegistry::new();
+    tool_registry.register(SyncToolAdapter(MockTool::new("test", "A test tool")));
+
     let memory = Arc::new(Mutex::new(TestMemory::new(10)));
     let mut skeleton = CycleSkeleton::new(
         Arc::new(registry),
@@ -388,10 +400,7 @@ async fn test_cycle_preamble_inserted_when_react_template_loaded() {
             responses: vec!["Answer: done".to_string()],
             index: AtomicUsize::new(0),
         }),
-        vec![MockTool::new("test", "A test tool")]
-            .into_iter()
-            .map(|t| Box::new(t) as Box<dyn agentverse::SyncTool>)
-            .collect(),
+        tool_registry,
         Arc::clone(&memory),
         10,
     );
@@ -422,7 +431,7 @@ async fn test_cycle_preamble_idempotent() {
             responses: vec!["Answer: done".to_string()],
             index: AtomicUsize::new(0),
         }),
-        vec![],
+        empty_registry(),
         Arc::clone(&memory),
         10,
     );
@@ -435,7 +444,7 @@ async fn test_cycle_preamble_idempotent() {
 #[test]
 fn test_cycle_accumulate_usage() {
     use agentverse::UsageStats;
-    let mut skeleton = mock_skeleton(vec![], vec![], 5);
+    let mut skeleton = mock_skeleton(vec![], empty_registry(), 5);
     skeleton.accumulate_usage(UsageStats {
         input_tokens: 10,
         output_tokens: 5,
@@ -452,7 +461,7 @@ fn test_cycle_accumulate_usage() {
 
 #[test]
 fn test_cycle_check_output_guardrail_clean() {
-    let skeleton = mock_skeleton(vec![], vec![], 5);
+    let skeleton = mock_skeleton(vec![], empty_registry(), 5);
     assert!(skeleton
         .check_output_guardrail("This is a clean response.")
         .is_ok());
@@ -460,7 +469,7 @@ fn test_cycle_check_output_guardrail_clean() {
 
 #[tokio::test]
 async fn test_cycle_build_request_with_guardrails_clean() {
-    let skeleton = mock_skeleton(vec![], vec![], 5);
+    let skeleton = mock_skeleton(vec![], empty_registry(), 5);
     assert!(skeleton.build_request_with_guardrails().await.is_ok());
 }
 
@@ -492,13 +501,16 @@ async fn test_cycle_build_tools_str_with_parameters() {
         }
     }
 
+    let mut tool_registry = ToolRegistry::new();
+    tool_registry.register(SyncToolAdapter(ParamTool));
+
     let skeleton = CycleSkeleton::new(
         Arc::new(PromptRegistry::new()),
         Arc::new(MockModel {
             responses: vec![],
             index: AtomicUsize::new(0),
         }),
-        vec![Box::new(ParamTool)],
+        tool_registry,
         Arc::new(Mutex::new(TestMemory::new(10))),
         5,
     );
@@ -511,13 +523,16 @@ async fn test_cycle_build_tools_str_with_parameters() {
 
 #[tokio::test]
 async fn test_cycle_run_with_tool_call() {
+    let mut tool_registry = ToolRegistry::new();
+    tool_registry.register(SyncToolAdapter(MockTool::new("echo", "echo")));
+
     let mut skeleton = CycleSkeleton::new(
         Arc::new(PromptRegistry::new()),
         Arc::new(MockModel {
             responses: vec!["Answer: done".to_string()],
             index: AtomicUsize::new(0),
         }),
-        vec![Box::new(MockTool::new("echo", "echo"))],
+        tool_registry,
         Arc::new(Mutex::new(TestMemory::new(10))),
         5,
     );
@@ -543,7 +558,7 @@ async fn test_cycle_run_with_tool_call() {
 
 #[tokio::test]
 async fn test_cycle_run_with_error_action() {
-    let mut skeleton = mock_skeleton(vec![], vec![], 5);
+    let mut skeleton = mock_skeleton(vec![], empty_registry(), 5);
     let result = skeleton
         .run("test".to_string(), |_s| async {
             Ok(CycleAction::Error {
@@ -553,4 +568,25 @@ async fn test_cycle_run_with_error_action() {
         .await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("strategy error"));
+}
+
+// ─── New test: ToolRegistry with Calculator via SyncToolAdapter ───────────────
+
+#[tokio::test]
+async fn test_cycle_skeleton_execute_calculator_via_registry() {
+    let mut registry = ToolRegistry::new();
+    registry.register(SyncToolAdapter(Calculator));
+
+    let skeleton = mock_skeleton(vec!["Answer: done".to_string()], registry, 10);
+
+    let result = skeleton
+        .execute_tool(
+            "calculator",
+            json!({"operation": "add", "a": 3.0, "b": 4.0}),
+        )
+        .await;
+
+    assert!(result.is_ok(), "expected Ok, got {:?}", result);
+    let output = result.unwrap();
+    assert!(output.contains("7"), "expected result 7 in output: {}", output);
 }

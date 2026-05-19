@@ -5,7 +5,7 @@
 
 use super::cycle::{CycleAction, CycleSkeleton};
 use super::parse::parse_response;
-use agentverse::{AgentError, ModelProvider, PromptRegistry, SyncTool};
+use agentverse::{AgentError, ModelProvider, PromptRegistry};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -29,7 +29,7 @@ where
     pub fn new(
         prompt_registry: Arc<PromptRegistry>,
         model: Arc<P>,
-        tools: Vec<Box<dyn SyncTool>>,
+        tools: agentverse_tools::ToolRegistry,
         memory: Arc<Mutex<M>>,
         max_iterations: usize,
     ) -> Self {
@@ -87,7 +87,7 @@ where
                         });
                 }
                 CycleAction::ToolCall { tool_name, args } => {
-                    let result = self.skeleton.execute_tool(&tool_name, args)?;
+                    let result = self.skeleton.execute_tool(&tool_name, args).await?;
                     self.skeleton
                         .memory()
                         .lock()

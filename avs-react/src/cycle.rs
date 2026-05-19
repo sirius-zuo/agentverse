@@ -3,8 +3,9 @@
 //! Provides the fixed loop structure; each strategy only implements
 //! its own `step()` logic via a closure.
 
-use agentverse::{AgentError, Message, ModelProvider, PromptRegistry, SyncTool};
+use agentverse::{AgentError, Message, ModelProvider, PromptRegistry};
 use agentverse_guardrails::{check_output, check_prompt};
+use agentverse_tools::ToolRegistry;
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -21,7 +22,7 @@ where
 {
     prompt_registry: Arc<PromptRegistry>,
     model: Arc<P>,
-    tools: Vec<Box<dyn SyncTool>>,
+    tools: ToolRegistry,
     memory: Arc<Mutex<M>>,
     max_iterations: usize,
     current_iteration: usize,
@@ -54,7 +55,7 @@ where
     pub fn new(
         prompt_registry: Arc<PromptRegistry>,
         model: Arc<P>,
-        tools: Vec<Box<dyn SyncTool>>,
+        tools: ToolRegistry,
         memory: Arc<Mutex<M>>,
         max_iterations: usize,
     ) -> Self {
@@ -105,7 +106,7 @@ where
                     );
                 }
                 CycleAction::ToolCall { tool_name, args } => {
-                    let result = self.execute_tool(&tool_name, args)?;
+                    let result = self.execute_tool(&tool_name, args).await?;
                     self.memory.lock().await.append(Message {
                         role: agentverse::memory::MessageRole::Tool,
                         content: format!("Tool: {}\nResult: {}", tool_name, result),
@@ -143,25 +144,24 @@ where
     }
 
     /// Execute a tool by name with the given arguments.
-    pub fn execute_tool(&self, tool_name: &str, args: Value) -> Result<String, AgentError> {
-        let tool = self
+    pub async fn execute_tool(&self, tool_name: &str, args: Value) -> Result<String, AgentError> {
+        let result = self
             .tools
-            .iter()
-            .find(|t| t.name() == tool_name)
-            .ok_or_else(|| {
-                AgentError::Tool(agentverse::ToolError::NotFound(tool_name.to_string()))
-            })?;
-
-        let result = tool.execute(args).map_err(AgentError::Tool)?;
+            .execute(tool_name, args)
+            .await
+            .map_err(AgentError::Tool)?;
         Ok(result.to_string())
     }
 
     /// Render tool descriptions as a human-readable string for prompt injection.
     fn build_tools_str(&self) -> String {
         self.tools
-            .iter()
-            .map(|t| {
-                let params = t.parameters();
+            .schema()
+            .into_iter()
+            .map(|schema| {
+                let name = schema["name"].as_str().unwrap_or("");
+                let description = schema["description"].as_str().unwrap_or("");
+                let params = &schema["parameters"];
                 let props = params["properties"].as_object();
                 let required: Vec<&str> = params["required"]
                     .as_array()
@@ -183,12 +183,10 @@ where
                         .join("\n");
                     format!(
                         "- {}: {}\n  Parameters:\n{}",
-                        t.name(),
-                        t.description(),
-                        param_lines
+                        name, description, param_lines
                     )
                 } else {
-                    format!("- {}: {}", t.name(), t.description())
+                    format!("- {}: {}", name, description)
                 }
             })
             .collect::<Vec<_>>()
@@ -317,7 +315,7 @@ where
         })
     }
 
-    /// Return the number of tools available.
+    /// Return the number of registered tools.
     pub fn tool_count(&self) -> usize {
         self.tools.len()
     }
@@ -337,8 +335,8 @@ where
         &self.model
     }
 
-    /// Return a reference to the tools.
-    pub fn tools(&self) -> &[Box<dyn SyncTool>] {
+    /// Return a reference to the tool registry.
+    pub fn tools(&self) -> &ToolRegistry {
         &self.tools
     }
 
