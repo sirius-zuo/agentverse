@@ -18,3 +18,6 @@ pub use connector::{Connector, InputConnector, OutputConnector};
 
 pub mod invoker;
 pub use invoker::{AgentInvoker, StrategyInvoker};
+
+pub mod integration;
+pub use integration::Integration;
