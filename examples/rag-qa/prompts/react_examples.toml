@@ -1,7 +1,7 @@
 [[example]]
-input = "What is the project architecture?"
-output = "Thought: I need to search the documents.\nAction: file_search\nAction Input: {\"query\": \"project architecture\"}"
+input = "What is 6 plus 7?"
+output = "Thought: I need to add 6 and 7.\nAction: calculator\nAction Input: {\"operation\": \"add\", \"a\": 6, \"b\": 7}\nObservation: {\"result\": 13}\nThought: I have the result.\nAnswer: 6 plus 7 is 13."
 
 [[example]]
-input = "How do I use the HTTP client?"
-output = "Thought: I need to find HTTP client docs.\nAction: file_search\nAction Input: {\"query\": \"HTTP client usage\"}"
+input = "What is 12 times 5?"
+output = "Thought: I need to multiply 12 by 5.\nAction: calculator\nAction Input: {\"operation\": \"multiply\", \"a\": 12, \"b\": 5}\nObservation: {\"result\": 60}\nThought: I have the result.\nAnswer: 12 times 5 is 60."
