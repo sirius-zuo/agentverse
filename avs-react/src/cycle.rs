@@ -107,8 +107,11 @@ where
                 }
                 CycleAction::ToolCall { tool_name, args } => {
                     let result = self.execute_tool(&tool_name, args).await?;
+                    // User role for tool observations — text-based ReAct does not use
+                    // native tool calling, so "tool" role (which requires tool_call_id)
+                    // breaks chat templates on local models.
                     self.memory.lock().await.append(Message {
-                        role: agentverse::memory::MessageRole::Tool,
+                        role: agentverse::memory::MessageRole::User,
                         content: format!("Tool: {}\nResult: {}", tool_name, result),
                     });
                     info!(
@@ -354,5 +357,11 @@ where
     pub fn next_iteration(&mut self) -> usize {
         self.current_iteration += 1;
         self.current_iteration
+    }
+
+    /// Reset the iteration counter to zero. Call at the start of each run()
+    /// so the limit applies per question, not across the agent's lifetime.
+    pub fn reset_iteration(&mut self) {
+        self.current_iteration = 0;
     }
 }

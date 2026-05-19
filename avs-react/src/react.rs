@@ -45,6 +45,9 @@ where
     /// or max iterations is reached.
     pub async fn run(&mut self, input: String) -> Result<agentverse::CycleResult, AgentError> {
         // Insert the react preamble as the first message when a react.j2 file
+        // Reset per-run so the iteration limit applies to this question, not the session total.
+        self.skeleton.reset_iteration();
+
         // was loaded.  Idempotent — does nothing on subsequent calls.
         self.skeleton.prime_react_preamble().await;
 
@@ -98,12 +101,15 @@ where
                             content: response.content.clone(),
                         });
                     let result = self.skeleton.execute_tool(&tool_name, args).await?;
+                    // Use User role for tool observations — text-based ReAct does not use
+                    // native tool calling, so "tool" role (which requires tool_call_id) breaks
+                    // chat templates on local models.
                     self.skeleton
                         .memory()
                         .lock()
                         .await
                         .append(agentverse::Message {
-                            role: agentverse::memory::MessageRole::Tool,
+                            role: agentverse::memory::MessageRole::User,
                             content: format!("Tool: {}\nResult: {}", tool_name, result),
                         });
                 }

@@ -1,8 +1,8 @@
 // examples/react-calculator/src/main.rs
 //
-// Demonstrates the ReAct loop with the Calculator tool.
-// The model breaks a multi-step arithmetic problem into sequential tool calls,
-// reasoning before each call and producing a final Answer: when done.
+// Demonstrates the multi-step ReAct loop with the Calculator tool.
+// Type an arithmetic question; the agent breaks it into sequential tool calls,
+// reasoning before each one, and produces a final answer when done.
 //
 // Run:
 //   MODEL_BASE_URL=http://localhost:9090/v1 \
@@ -13,7 +13,9 @@ use agentverse::{OpenAICompatible, PromptConfig, PromptRegistry};
 use agentverse_memory::SimpleMemory;
 use agentverse_react::ReActStrategy;
 use agentverse_tools::{Calculator, ToolRegistry};
+use std::io::Write;
 use std::sync::Arc;
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::Mutex;
 
 #[tokio::main]
@@ -24,8 +26,9 @@ async fn main() {
     let model_name =
         std::env::var("MODEL_NAME").unwrap_or_else(|_| "Qwen3.6-35B-A3B-GGUF".to_string());
 
-    println!("RAG QA Agent — model: {} @ {}", model_name, base_url);
-    println!("Tool: Calculator");
+    println!("ReAct Calculator — model: {} @ {}", model_name, base_url);
+    println!("Tool: Calculator (add, subtract, multiply, divide)");
+    println!("Type an arithmetic question and press Enter. Type \"exit\" or press Ctrl+C to quit.\n");
 
     let model = Arc::new(OpenAICompatible::new(&base_url, &model_name, &api_key));
     let registry = Arc::new(
@@ -37,23 +40,44 @@ async fn main() {
     );
     let memory = Arc::new(Mutex::new(SimpleMemory::new(50)));
     let mut tools = ToolRegistry::new();
-    tools.register(Calculator);
-    let mut agent = ReActStrategy::new(registry, model, tools, memory, 10);
+    tools.register_with_category(Calculator, "math");
+    let mut agent = ReActStrategy::new(registry, model, tools, memory, 15);
 
-    let question = "What is 42 multiplied by 37, then add 15 to the result?";
-    println!("> {}", question);
+    let mut lines = BufReader::new(tokio::io::stdin()).lines();
 
-    match agent.run(question.to_string()).await {
-        Ok(result) => {
-            println!("\nAgent: {}", result.answer);
-            println!(
-                "\n[tokens] input={} output={} cache_read={} cache_write={}",
-                result.total_usage.input_tokens,
-                result.total_usage.output_tokens,
-                result.total_usage.cache_read_tokens,
-                result.total_usage.cache_write_tokens,
-            );
+    loop {
+        print!("You: ");
+        std::io::stdout().flush().ok();
+
+        let input = match lines.next_line().await {
+            Ok(Some(line)) => line,
+            _ => {
+                println!("\nGoodbye!");
+                break;
+            }
+        };
+
+        let input = input.trim().to_string();
+        if input.is_empty() {
+            continue;
         }
-        Err(e) => eprintln!("Error: {}", e),
+        if input.eq_ignore_ascii_case("exit") {
+            println!("Goodbye!");
+            break;
+        }
+
+        match agent.run(input).await {
+            Ok(result) => {
+                println!("\nAgent: {}", result.answer);
+                println!(
+                    "[tokens] input={} output={} cache_read={} cache_write={}\n",
+                    result.total_usage.input_tokens,
+                    result.total_usage.output_tokens,
+                    result.total_usage.cache_read_tokens,
+                    result.total_usage.cache_write_tokens,
+                );
+            }
+            Err(e) => eprintln!("Error: {}\n", e),
+        }
     }
 }
