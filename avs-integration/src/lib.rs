@@ -1,29 +1,17 @@
-// avs-integration/src/lib.rs
-pub mod adapter;
-pub mod slack;
-pub mod webhook;
-
-pub use adapter::IntegrationAdapter;
-
-pub mod error;
-pub use error::{ConnectorError, IntegrationError, InvokerError};
-pub use slack::SlackConnector;
-pub use webhook::{handle_webhook, WebhookAdapter, WebhookRequest, WebhookResponse, WebhookState};
-
-pub mod event;
-pub use event::Event;
-
 pub mod connector;
-pub use connector::{Connector, InputConnector, OutputConnector};
-
-pub mod invoker;
-pub use invoker::{AgentInvoker, StrategyInvoker};
-
-pub mod integration;
-pub use integration::Integration;
-
+pub mod error;
+pub mod event;
 pub mod github;
-pub use github::GithubConnector;
-
+pub mod integration;
+pub mod invoker;
+pub mod slack;
 pub mod whatsapp;
+
+pub use connector::{Connector, InputConnector, OutputConnector};
+pub use error::{ConnectorError, IntegrationError, InvokerError};
+pub use event::Event;
+pub use github::GithubConnector;
+pub use integration::Integration;
+pub use invoker::{AgentInvoker, StrategyInvoker};
+pub use slack::SlackConnector;
 pub use whatsapp::WhatsAppConnector;
