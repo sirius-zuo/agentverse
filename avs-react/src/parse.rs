@@ -10,37 +10,11 @@
 use super::cycle::CycleAction;
 use serde_json::Value;
 
-/// Strip `<think>...</think>` blocks emitted by reasoning models (e.g. Qwen3).
-/// Returns a view of the response with those blocks removed so the parser
-/// only sees the actual reply text.
-fn strip_think_blocks(response: &str) -> std::borrow::Cow<'_, str> {
-    if !response.contains("<think>") {
-        return std::borrow::Cow::Borrowed(response);
-    }
-    let mut out = String::with_capacity(response.len());
-    let mut rest = response;
-    while let Some(start) = rest.find("<think>") {
-        out.push_str(&rest[..start]);
-        rest = &rest[start..];
-        if let Some(end) = rest.find("</think>") {
-            rest = &rest[end + "</think>".len()..];
-        } else {
-            break; // unclosed tag — leave remainder as-is
-        }
-    }
-    out.push_str(rest);
-    std::borrow::Cow::Owned(out)
-}
-
 /// Parse the LLM response to extract thought, action, or answer.
 ///
 /// Checks for "Answer:" first (highest priority), then "Action:",
 /// and defaults to treating the whole response as a thought.
-/// Strips `<think>` blocks before parsing so reasoning-model output is handled
-/// correctly.
 pub fn parse_response(response: &str) -> CycleAction {
-    let response = strip_think_blocks(response);
-    let response = response.trim();
     let lower = response.to_lowercase();
 
     // Check for Answer: first (highest priority)
@@ -196,28 +170,6 @@ mod tests {
             parse_response("I need to think about what the action should be.\nAnswer: it depends");
         match result {
             CycleAction::Done { answer } => assert_eq!(answer, "it depends"),
-            other => panic!("Expected Done, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_parse_think_block_stripped() {
-        // Qwen3-style: <think> block contains a spurious "Answer:" that should be ignored
-        let response = "<think>\nThe answer is 99.\nAnswer: 99\n</think>\nThought: Let me verify.\nAnswer: 42";
-        let result = parse_response(response);
-        match result {
-            CycleAction::Done { answer } => assert_eq!(answer, "42"),
-            other => panic!("Expected Done with 42, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_parse_think_block_action_stripped() {
-        // <think> block contains a spurious Action: — should not trigger tool call
-        let response = "<think>\nAction: fake_tool\nAction Input: {}\n</think>\nAnswer: done";
-        let result = parse_response(response);
-        match result {
-            CycleAction::Done { answer } => assert_eq!(answer, "done"),
             other => panic!("Expected Done, got {:?}", other),
         }
     }
