@@ -19,14 +19,12 @@ use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() {
-    let bot_token =
-        std::env::var("SLACK_BOT_TOKEN").expect("SLACK_BOT_TOKEN not set");
+    let bot_token = std::env::var("SLACK_BOT_TOKEN").expect("SLACK_BOT_TOKEN not set");
     let signing_secret =
         std::env::var("SLACK_SIGNING_SECRET").expect("SLACK_SIGNING_SECRET not set");
     let base_url =
         std::env::var("MODEL_BASE_URL").unwrap_or_else(|_| "http://localhost:9090/v1".into());
-    let model_name =
-        std::env::var("MODEL_NAME").unwrap_or_else(|_| "gpt-4".into());
+    let model_name = std::env::var("MODEL_NAME").unwrap_or_else(|_| "gpt-4".into());
     let api_key = std::env::var("MODEL_API_KEY").unwrap_or_default();
 
     let model = Arc::new(OpenAICompatible::new(&base_url, &model_name, &api_key));

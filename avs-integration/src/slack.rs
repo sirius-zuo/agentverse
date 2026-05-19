@@ -69,7 +69,9 @@ impl Connector for SlackConnector {
             let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port))
                 .await
                 .expect("slack: bind failed");
-            axum::serve(listener, app).await.expect("slack: serve failed");
+            axum::serve(listener, app)
+                .await
+                .expect("slack: serve failed");
         });
         Ok(())
     }
@@ -115,7 +117,9 @@ async fn slack_event_handler(
 
     // Respond to Slack's URL verification challenge.
     if payload["type"] == "url_verification" {
-        return Ok(axum::Json(serde_json::json!({ "challenge": payload["challenge"] })));
+        return Ok(axum::Json(
+            serde_json::json!({ "challenge": payload["challenge"] }),
+        ));
     }
 
     if let Some(event) = payload.get("event") {
@@ -153,8 +157,8 @@ fn verify_slack_signature(
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
     let basestring = format!("v0:{}:{}", timestamp, String::from_utf8_lossy(body));
-    let mut mac =
-        Hmac::<Sha256>::new_from_slice(secret.as_bytes()).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes())
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     mac.update(basestring.as_bytes());
     let computed = format!("v0={}", hex::encode(mac.finalize().into_bytes()));
 

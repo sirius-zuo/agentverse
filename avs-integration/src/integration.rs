@@ -15,13 +15,21 @@ impl Integration {
         invoker: Box<dyn AgentInvoker>,
         outputs: Vec<Box<dyn OutputConnector>>,
     ) -> Self {
-        Self { input, invoker, outputs }
+        Self {
+            input,
+            invoker,
+            outputs,
+        }
     }
 
     pub async fn run(&self) -> Result<(), IntegrationError> {
         self.input.start().await.map_err(IntegrationError::Input)?;
         loop {
-            let event = self.input.receive().await.map_err(IntegrationError::Input)?;
+            let event = self
+                .input
+                .receive()
+                .await
+                .map_err(IntegrationError::Input)?;
             let response = self
                 .invoker
                 .invoke(event)

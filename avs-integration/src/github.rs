@@ -69,7 +69,9 @@ impl Connector for GithubConnector {
             let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port))
                 .await
                 .expect("github: bind failed");
-            axum::serve(listener, app).await.expect("github: serve failed");
+            axum::serve(listener, app)
+                .await
+                .expect("github: serve failed");
         });
         Ok(())
     }
@@ -186,8 +188,8 @@ fn verify_github_signature(
         .and_then(|v| v.to_str().ok())
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
-    let mut mac =
-        Hmac::<Sha256>::new_from_slice(secret.as_bytes()).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes())
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     mac.update(body);
     let computed = format!("sha256={}", hex::encode(mac.finalize().into_bytes()));
 

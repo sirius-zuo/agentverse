@@ -28,7 +28,9 @@ async fn main() {
 
     println!("ReAct Calculator — model: {} @ {}", model_name, base_url);
     println!("Tool: Calculator (add, subtract, multiply, divide)");
-    println!("Type an arithmetic question and press Enter. Type \"exit\" or press Ctrl+C to quit.\n");
+    println!(
+        "Type an arithmetic question and press Enter. Type \"exit\" or press Ctrl+C to quit.\n"
+    );
 
     let model = Arc::new(OpenAICompatible::new(&base_url, &model_name, &api_key));
     let registry = Arc::new(

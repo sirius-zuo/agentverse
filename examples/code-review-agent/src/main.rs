@@ -15,8 +15,9 @@
 use agentverse::{OpenAICompatible, PromptConfig, PromptRegistry};
 use agentverse_memory::SimpleMemory;
 use agentverse_plan::HierarchicalStrategy;
-use agentverse_tools::{Calculator, FileSearch, ToolRegistry};
+use agentverse_tools::{Calculator, FileSearch, ShellTool, ToolRegistry};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
 
 #[tokio::main]
@@ -31,7 +32,7 @@ async fn main() {
 
     println!("Code Review Agent — model: {} @ {}", model_name, base_url);
     println!("Strategy: Hierarchical Planning");
-    println!("Tools: FileSearch + Calculator");
+    println!("Tools: FileSearch + Calculator + ShellTool");
     println!();
 
     let model = Arc::new(OpenAICompatible::new(&base_url, &model_name, &api_key));
@@ -46,6 +47,29 @@ async fn main() {
     let mut tools = ToolRegistry::new();
     tools.register_with_category(FileSearch, "filesystem");
     tools.register_with_category(Calculator, "math");
+    // ShellTool lets the agent read file contents with `cat` or search with
+    // `grep`. It runs commands in `project_dir` with a 30-second timeout.
+    //
+    // SECURITY: `workdir` is NOT a filesystem sandbox — absolute paths,
+    // symlinks, and `cd` can still reach the full filesystem. The blocked
+    // list below prevents the most destructive commands, but for production
+    // use consider running the agent inside a container or seccomp sandbox.
+    tools.register_with_category(
+        ShellTool::new(
+            &project_dir,
+            Duration::from_secs(30),
+            vec![
+                "rm".into(),
+                "rmdir".into(),
+                "mv".into(),
+                "dd".into(),
+                "sudo".into(),
+                "chmod".into(),
+                "chown".into(),
+            ],
+        ),
+        "filesystem",
+    );
 
     let mut agent = HierarchicalStrategy::new(
         model, registry, tools, memory, 10, // max_iterations per sub-goal plan

@@ -1,6 +1,6 @@
 use agentverse_integration::{
-    AgentInvoker, Connector, ConnectorError, Event, InputConnector, Integration,
-    IntegrationError, InvokerError, OutputConnector,
+    AgentInvoker, Connector, ConnectorError, Event, InputConnector, Integration, IntegrationError,
+    InvokerError, OutputConnector,
 };
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -14,7 +14,9 @@ struct OneShotInput {
 }
 
 impl Connector for OneShotInput {
-    fn name(&self) -> &str { "one-shot" }
+    fn name(&self) -> &str {
+        "one-shot"
+    }
 }
 
 #[async_trait]
@@ -36,7 +38,10 @@ struct UpperInvoker;
 #[async_trait]
 impl AgentInvoker for UpperInvoker {
     async fn invoke(&self, event: Event) -> Result<Event, InvokerError> {
-        Ok(Event { text: event.text.to_uppercase(), ..event })
+        Ok(Event {
+            text: event.text.to_uppercase(),
+            ..event
+        })
     }
 }
 
@@ -46,7 +51,9 @@ struct RecordingOutput {
 }
 
 impl Connector for RecordingOutput {
-    fn name(&self) -> &str { "recorder" }
+    fn name(&self) -> &str {
+        "recorder"
+    }
 }
 
 #[async_trait]
@@ -75,8 +82,12 @@ async fn integration_routes_one_event_to_two_outputs() {
         }),
         Box::new(UpperInvoker),
         vec![
-            Box::new(RecordingOutput { received: Arc::clone(&received_a) }),
-            Box::new(RecordingOutput { received: Arc::clone(&received_b) }),
+            Box::new(RecordingOutput {
+                received: Arc::clone(&received_a),
+            }),
+            Box::new(RecordingOutput {
+                received: Arc::clone(&received_b),
+            }),
         ],
     );
 
