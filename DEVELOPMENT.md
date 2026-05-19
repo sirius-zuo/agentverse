@@ -54,7 +54,7 @@ AgentVerse/
 | **Agent** | `agentverse` | Main entry point — holds config, memory, prompt registry |
 | **Config** | `agentverse` | Model settings, prompts directory, system prompt |
 | **PromptRegistry** | `agentverse` | Template engine (Minijinja) + example storage |
-| **Tool** | `agentverse` | `SyncTool` / `AsyncTool` traits for agent capabilities |
+| **Tool** | `agentverse` | `AsyncTool` trait (primary); `SyncTool` for CPU-bound tools wrapped via `SyncToolAdapter` |
 | **Strategy** | `agentverse-react`, `agentverse-plan` | Orchestration loops (ReAct, Plan-and-Execute, Hierarchical) |
 | **Router** | `agentverse-router` | Dynamic strategy selection via LLM |
 | **Guardrails** | `agentverse-guardrails` | Prompt injection detection, output filtering, rate limiting |
@@ -319,72 +319,152 @@ let config = Config {
 
 ## Writing Tools
 
-Tools extend agent capabilities. Implement either `SyncTool` or `AsyncTool`.
+Tools extend agent capabilities. The primary interface is `AsyncTool` — implement it directly for any tool that does I/O, and use `SyncToolAdapter` to wrap simple CPU-bound tools.
 
-### Sync Tool (simple, blocking)
-
-```rust
-use agentverse::{SyncTool, ToolResult};
-use serde_json::Value;
-
-pub struct MyTool;
-
-impl SyncTool for MyTool {
-    fn name(&self) -> &str {
-        "my_tool"
-    }
-
-    fn description(&self) -> &str {
-        "Does something useful"
-    }
-
-    fn execute(&self, args: Value) -> Result<ToolResult, String> {
-        let query = args["query"].as_str().unwrap_or("");
-        let result = format!("Result for: {}", query);
-        Ok(ToolResult::success(result))
-    }
-}
-```
-
-### Async Tool (with I/O)
+### Async Tool (primary interface)
 
 ```rust
-use agentverse::{AsyncTool, ToolResult};
-use serde_json::Value;
+use agentverse::{AsyncTool, ToolError, ToolResult};
+use async_trait::async_trait;
+use serde_json::{json, Value};
 
 pub struct WeatherTool;
 
-#[async_trait::async_trait]
+#[async_trait]
 impl AsyncTool for WeatherTool {
-    fn name(&self) -> &str {
-        "weather"
+    fn name(&self) -> &str { "weather" }
+
+    fn description(&self) -> &str { "Get current weather for a city" }
+
+    fn parameters(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "city": { "type": "string", "description": "City name" }
+            },
+            "required": ["city"]
+        })
     }
 
-    fn description(&self) -> &str {
-        "Get weather for a city"
-    }
-
-    async fn execute(&self, args: Value) -> Result<ToolResult, String> {
-        let city = args["city"].as_str().unwrap_or("unknown");
+    async fn execute(&self, args: Value) -> ToolResult {
+        let city = args["city"].as_str()
+            .ok_or_else(|| ToolError::Execution("missing city".into()))?;
         // Call external API, etc.
-        let result = format!("Weather in {}: sunny", city);
-        Ok(ToolResult::success(result))
+        Ok(json!({ "weather": format!("Sunny in {city}") }))
     }
 }
 ```
 
-### Registering Tools
+### Sync Tool (CPU-bound only)
+
+Use `SyncTool` only for pure computation — never for I/O. Wrap with `SyncToolAdapter` before registering.
 
 ```rust
-use agentverse_tools::ToolRegistry;
-use my_tool::{MyTool, WeatherTool};
+use agentverse::{SyncTool, ToolResult};
+use serde_json::{json, Value};
+
+pub struct MyCalculator;
+
+impl SyncTool for MyCalculator {
+    fn name(&self) -> &str { "my_calculator" }
+    fn description(&self) -> &str { "Adds two numbers" }
+    fn parameters(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "a": { "type": "number" },
+                "b": { "type": "number" }
+            },
+            "required": ["a", "b"]
+        })
+    }
+    fn execute(&self, args: Value) -> ToolResult {
+        let a = args["a"].as_f64().unwrap_or(0.0);
+        let b = args["b"].as_f64().unwrap_or(0.0);
+        Ok(json!({ "result": a + b }))
+    }
+}
+```
+
+### ToolRegistry
+
+`ToolRegistry` is the unified async tool store. All tools register as `AsyncTool`; sync tools are wrapped via `SyncToolAdapter`.
+
+```rust
+use agentverse_tools::{ToolRegistry, SyncToolAdapter, Calculator, DateTimeTool, ShellTool};
+use std::time::Duration;
 
 let mut registry = ToolRegistry::new();
-registry.register(Box::new(MyTool));
-registry.register(Box::new(WeatherTool));
 
-// Later, execute by name:
-let result = registry.execute("my_tool", json!({"query": "hello"})).await;
+// Sync tools — wrap with SyncToolAdapter
+registry.register_with_category(SyncToolAdapter(Calculator), "math");
+registry.register_with_category(SyncToolAdapter(DateTimeTool), "utility");
+
+// Native async tools — register directly
+registry.register_with_category(WeatherTool, "network");
+
+// Shell tool — sandboxed subprocess execution
+registry.register_with_category(
+    ShellTool::new(
+        "./workspace",                    // working directory
+        Duration::from_secs(30),         // per-command timeout
+        vec!["sudo".into(), "rm".into()], // blocked commands
+    ),
+    "shell",
+);
+
+// Filter to a subset for a specific agent
+let math_tools = registry.filter_category("math");
+
+// Execute a tool by name
+let result = registry.execute("calculator", json!({"operation": "add", "a": 1, "b": 2})).await;
+
+// Get tool schemas for prompt injection
+let schemas: Vec<serde_json::Value> = registry.schema();
+```
+
+### ShellTool
+
+`ShellTool` runs arbitrary shell commands via `tokio::process::Command`. It is designed for dev-tool and local-automation agents where the model is trusted.
+
+```rust
+use agentverse_tools::ShellTool;
+use std::time::Duration;
+
+let tool = ShellTool::new(
+    "./project",                          // commands start here (not a filesystem sandbox)
+    Duration::from_secs(30),             // process killed after 30s
+    vec!["sudo".into(), "curl".into()],  // reject these binaries
+);
+```
+
+The agent calls it with a `command` string:
+```json
+{ "command": "cargo test -p my-crate" }
+```
+
+The response always includes `stdout`, `stderr`, and `exit_code`. Non-zero exit codes are returned as `Ok` — the agent decides how to handle them.
+
+**Security note:** `workdir` sets the initial current directory but does not restrict filesystem access. Pair with a blocked-command list and OS-level isolation for stronger sandboxing.
+
+### Wiring tools into ReActStrategy
+
+```rust
+use agentverse_react::ReActStrategy;
+use agentverse_tools::{ToolRegistry, SyncToolAdapter, Calculator};
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+let mut tools = ToolRegistry::new();
+tools.register_with_category(SyncToolAdapter(Calculator), "math");
+
+let strategy = ReActStrategy::new(
+    prompt_registry,
+    model,
+    tools,
+    Arc::new(Mutex::new(memory)),
+    10, // max iterations
+);
 ```
 
 ---
@@ -1013,7 +1093,7 @@ RUST_LOG=agentverse=info,agentverse_guardrails=debug cargo run -p agentverse-ser
 | `agentverse-plan` | `PlanStrategy`, `HierarchicalStrategy` |
 | `agentverse-router` | `StrategyRouter`, `StrategyName` |
 | `agentverse-guardrails` | `check_prompt`, `check_output`, `RateLimiter` |
-| `agentverse-tools` | `Calculator`, `DateTimeTool`, `FileSearch`, `HttpClient`, `ToolRegistry` |
+| `agentverse-tools` | `ToolRegistry`, `SyncToolAdapter`, `Calculator`, `DateTimeTool`, `FileSearch`, `HttpClient`, `ShellTool` |
 | `agentverse-integration` | `SlackAdapter`, `WebhookAdapter` |
 
 ### ProviderConfig Enum

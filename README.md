@@ -201,7 +201,7 @@ Response:
 | `agentverse-memory` | Layered memory system (short/long term) |
 | `agentverse-memory-lancedb` | LanceDB-backed long-term memory |
 | `agentverse-memory-pgvector` | pgvector-backed long-term memory |
-| `agentverse-tools` | Built-in tools (Calculator, DateTime, FileSearch, HttpClient) |
+| `agentverse-tools` | Built-in tools (Calculator, DateTime, FileSearch, HttpClient, ShellTool) + async ToolRegistry |
 | `agentverse-mcp` | MCP client for external tool servers |
 | `agentverse-guardrails` | Security layer (prompt/output/rate limiting) |
 | `agentverse-integration` | Slack, Webhook adapters |
@@ -211,7 +211,7 @@ Response:
 
 | Example | Strategy | Tools | Description |
 |---|---|---|---|
-| `hello-agent` | ReAct | — | Minimal agent, no tools — best starting point |
+| `hello-agent` | ReAct | Calculator, DateTime | Interactive REPL — best starting point |
 | `rag-qa` | ReAct | Calculator | Tool-use loop with step-by-step arithmetic |
 | `web-search-agent` | ReAct | FileSearch | File search + multi-step reasoning |
 | `code-review-agent` | Hierarchical | FileSearch, Calculator | Decompose → plan per sub-goal → execute → synthesize |
