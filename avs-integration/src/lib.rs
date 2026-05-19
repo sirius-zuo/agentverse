@@ -21,3 +21,6 @@ pub use invoker::{AgentInvoker, StrategyInvoker};
 
 pub mod integration;
 pub use integration::Integration;
+
+pub mod github;
+pub use github::GithubConnector;
