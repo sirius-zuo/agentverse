@@ -6,6 +6,7 @@
 use super::cycle::{CycleAction, CycleSkeleton};
 use super::parse::parse_response;
 use agentverse::{AgentError, ModelProvider, PromptRegistry};
+use agentverse_tools::ToolRegistry;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -29,7 +30,7 @@ where
     pub fn new(
         prompt_registry: Arc<PromptRegistry>,
         model: Arc<P>,
-        tools: agentverse_tools::ToolRegistry,
+        tools: ToolRegistry,
         memory: Arc<Mutex<M>>,
         max_iterations: usize,
     ) -> Self {
