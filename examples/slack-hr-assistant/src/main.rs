@@ -1,4 +1,8 @@
 // examples/slack-hr-assistant/src/main.rs
+//
+// Conversational Slack bot — no tools needed.
+// Uses Agent::from_config() + SlackAdapter (plan-and-execute via AgentBuilder).
+// Tool-using agents should use ReActStrategy::new() with a ToolRegistry instead.
 use agentverse::{Agent, Config, ProviderConfig};
 use agentverse_integration::{IntegrationAdapter, SlackAdapter};
 use std::path::PathBuf;
@@ -16,7 +20,7 @@ async fn main() {
             base_url: None,
         },
         max_messages: 50,
-        tools: vec![],
+        tools: vec![], // no tools — pure conversational agent
         prompts_dir: Some(prompts_dir.to_string_lossy().to_string()),
         system_prompt: None,
     };
