@@ -125,25 +125,67 @@ export MODEL_NAME="phi3-mini"
 
 ## Creating a Custom Agent
 
-### Option 1: Quick Start with `Config`
+### Option 1: ReAct Agent with Tools (recommended)
 
-The simplest way to create an agent:
+This is the primary pattern for agents that call tools. It mirrors what `hello-agent`, `rag-qa`, `web-search-agent`, and `anthropic-react` do.
 
 ```rust
 // Cargo.toml
 [dependencies]
 agentverse = { path = "path/to/avs-core" }
+agentverse-react = { path = "path/to/avs-react" }
+agentverse-tools = { path = "path/to/avs-tools" }
+agentverse-memory = { path = "path/to/avs-memory" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 // src/main.rs
+use agentverse::{OpenAICompatible, PromptConfig, PromptRegistry};
+use agentverse_memory::SimpleMemory;
+use agentverse_react::ReActStrategy;
+use agentverse_tools::{Calculator, DateTimeTool, SyncToolAdapter, ToolRegistry};
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+#[tokio::main]
+async fn main() {
+    let model = Arc::new(OpenAICompatible::new(
+        &std::env::var("MODEL_BASE_URL").unwrap_or_else(|_| "http://localhost:9090/v1".to_string()),
+        &std::env::var("MODEL_NAME").unwrap_or_else(|_| "my-model".to_string()),
+        &std::env::var("MODEL_API_KEY").unwrap_or_default(),
+    ));
+
+    let registry = Arc::new(
+        PromptRegistry::from_config(&PromptConfig {
+            prompts_dir: Some(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string()),
+            ..Default::default()
+        })
+        .expect("prompt config"),
+    );
+
+    let mut tools = ToolRegistry::new();
+    tools.register_with_category(SyncToolAdapter(Calculator), "math");
+    tools.register_with_category(SyncToolAdapter(DateTimeTool), "utility");
+
+    let memory = Arc::new(Mutex::new(SimpleMemory::new(50)));
+    let mut agent = ReActStrategy::new(registry, model, tools, memory, 10);
+
+    match agent.run("What is 6 * 7?".to_string()).await {
+        Ok(result) => println!("Agent: {}", result.answer),
+        Err(e) => eprintln!("Error: {}", e),
+    }
+}
+```
+
+### Option 2: Simple Agent without Tools
+
+For a conversational agent that doesn't use tools, `Agent::from_config` provides a simpler entry point:
+
+```rust
 use agentverse::{Agent, Config, ProviderConfig};
 use std::path::PathBuf;
 
 #[tokio::main]
 async fn main() {
-    // Optional: load prompts from a directory
-    let prompts_dir = PathBuf::from("prompts");
-
     let config = Config {
         provider: ProviderConfig::OpenAI {
             model_name: "gpt-4".to_string(),
@@ -152,21 +194,37 @@ async fn main() {
         },
         max_messages: 50,
         tools: vec![],
-        prompts_dir: Some(prompts_dir.to_string_lossy().to_string()),
+        prompts_dir: Some(PathBuf::from("prompts").to_string_lossy().to_string()),
         system_prompt: None,
     };
 
     let agent = Agent::from_config(config).unwrap();
-
-    // Invoke the agent
     let result = agent.invoke("user1", "Hello, what can you do?").await.unwrap();
     println!("Agent: {}", result);
 }
 ```
 
-### Option 2: Programmatic Builder
+### Option 3: ReAct Agent with Anthropic Claude
 
-For more control over configuration:
+Same pattern as Option 1, swap the model provider. Anthropic caches the system prompt automatically.
+
+```rust
+use agentverse::AnthropicProvider;
+use agentverse_tools::{Calculator, SyncToolAdapter, ToolRegistry};
+
+let model = Arc::new(AnthropicProvider::new(
+    "https://api.anthropic.com",
+    "claude-haiku-4-5-20251001",
+    &std::env::var("ANTHROPIC_API_KEY").unwrap(),
+));
+
+let mut tools = ToolRegistry::new();
+tools.register_with_category(SyncToolAdapter(Calculator), "math");
+
+let mut agent = ReActStrategy::new(registry, model, tools, memory, 15);
+```
+
+### Option 4: Programmatic Builder
 
 ```rust
 use agentverse::{Agent, AgentBuilder};
@@ -178,28 +236,11 @@ let agent = Agent::builder()
     .build()?;
 ```
 
-### Option 3: Prompt-Enabled Agent
-
-To explicitly configure prompts:
-
-```rust
-use agentverse::{Agent, Config, PromptConfig};
-
-let config = Config { /* ... */ };
-let prompt_config = PromptConfig {
-    system_prompt: Some("You are a code reviewer.".to_string()),
-    prompts_dir: Some("prompts/".to_string()),
-    templates: std::collections::HashMap::new(),
-    examples: std::collections::HashMap::new(),
-};
-
-let agent = Agent::from_config_with_prompts(config, &prompt_config)?;
-```
-
 ### Running Your Agent
 
 ```bash
-MODEL_API_KEY=sk-xxx cargo run --bin my-agent
+MODEL_API_KEY=sk-xxx MODEL_BASE_URL=http://localhost:9090/v1 MODEL_NAME=my-model \
+  cargo run --bin my-agent
 ```
 
 ---

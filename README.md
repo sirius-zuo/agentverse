@@ -211,12 +211,12 @@ Response:
 
 | Example | Strategy | Tools | Description |
 |---|---|---|---|
-| `hello-agent` | ReAct | Calculator, DateTime | Interactive REPL — best starting point |
-| `rag-qa` | ReAct | Calculator | Tool-use loop with step-by-step arithmetic |
-| `web-search-agent` | ReAct | FileSearch | File search + multi-step reasoning |
-| `code-review-agent` | Hierarchical | FileSearch, Calculator | Decompose → plan per sub-goal → execute → synthesize |
-| `anthropic-react` | ReAct | Calculator | Anthropic Claude with prompt caching (system + preamble) |
-| `slack-hr-assistant` | Plan-and-Execute | — | Slack bot using plan-and-execute via `AgentBuilder` |
+| `hello-agent` | ReAct | Calculator, DateTime | Interactive REPL — best starting point for the new `ToolRegistry` API |
+| `rag-qa` | ReAct | Calculator | Single-question agent exercising the tool-call loop with arithmetic |
+| `web-search-agent` | ReAct | FileSearch | Multi-step file-search reasoning — `PROJECT_DIR` env var sets the search root |
+| `anthropic-react` | ReAct | Calculator | Anthropic Claude with prompt caching; shows cache_write/cache_read token split |
+| `code-review-agent` | Hierarchical | FileSearch, Calculator | Decompose → plan per sub-goal → execute → synthesize (uses `avs-plan` legacy tool API) |
+| `slack-hr-assistant` | Plan-and-Execute | — | Slack bot via `AgentBuilder` and `SlackAdapter` |
 
 ```bash
 # Local LLM (llama.cpp / Ollama)

@@ -43,6 +43,8 @@ async fn main() {
         .expect("prompt config"),
     );
     let memory = Arc::new(Mutex::new(SimpleMemory::new(50)));
+    // avs-plan's HierarchicalStrategy pre-dates the ToolRegistry migration
+    // and still accepts Vec<Box<dyn SyncTool>> directly.
     let tools: Vec<Box<dyn agentverse::SyncTool>> =
         vec![Box::new(FileSearch), Box::new(Calculator)];
 
