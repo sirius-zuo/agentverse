@@ -9,6 +9,7 @@ use agentverse::{
 };
 use agentverse_memory::SimpleMemory;
 use agentverse_plan::{HierarchicalStrategy, Plan, PlanStep, PlanStrategy};
+use agentverse_tools::{SyncToolAdapter, ToolRegistry};
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -361,7 +362,7 @@ async fn test_plan_strategy_reasoning_steps() {
     let mut strategy = PlanStrategy::new(
         Arc::new(model),
         Arc::new(PromptRegistry::default()),
-        vec![],
+        ToolRegistry::new(),
         Arc::new(Mutex::new(SimpleMemory::new(20))),
         10,
     );
@@ -376,10 +377,12 @@ async fn test_plan_strategy_tool_steps() {
         index: AtomicUsize::new(0),
     };
     let tool = MockTool::new("echo", "Echo tool");
+    let mut registry = ToolRegistry::new();
+    registry.register(SyncToolAdapter(tool));
     let mut strategy = PlanStrategy::new(
         Arc::new(model),
         Arc::new(PromptRegistry::default()),
-        vec![Box::new(tool)],
+        registry,
         Arc::new(Mutex::new(SimpleMemory::new(20))),
         10,
     );
@@ -398,7 +401,7 @@ async fn test_plan_strategy_tool_not_found_graceful() {
     let mut strategy = PlanStrategy::new(
         Arc::new(model),
         Arc::new(PromptRegistry::default()),
-        vec![],
+        ToolRegistry::new(),
         Arc::new(Mutex::new(SimpleMemory::new(20))),
         10,
     );
@@ -417,7 +420,7 @@ async fn test_plan_strategy_max_iterations_skips_steps() {
     let mut strategy = PlanStrategy::new(
         Arc::new(model),
         Arc::new(PromptRegistry::default()),
-        vec![],
+        ToolRegistry::new(),
         Arc::new(Mutex::new(SimpleMemory::new(20))),
         0,
     );
@@ -440,7 +443,7 @@ async fn test_hierarchical_strategy_run() {
     let mut strategy = HierarchicalStrategy::new(
         Arc::new(model),
         Arc::new(PromptRegistry::default()),
-        vec![],
+        ToolRegistry::new(),
         Arc::new(Mutex::new(SimpleMemory::new(30))),
         10,
         5,
@@ -463,7 +466,7 @@ async fn test_hierarchical_strategy_max_depth_limits_subgoals() {
     let mut strategy = HierarchicalStrategy::new(
         Arc::new(model),
         Arc::new(PromptRegistry::default()),
-        vec![],
+        ToolRegistry::new(),
         Arc::new(Mutex::new(SimpleMemory::new(30))),
         10,
         1, // max_decompose_depth = 1
@@ -485,11 +488,20 @@ async fn test_hierarchical_strategy_zero_subgoals() {
     let mut strategy = HierarchicalStrategy::new(
         Arc::new(model),
         Arc::new(PromptRegistry::default()),
-        vec![],
+        ToolRegistry::new(),
         Arc::new(Mutex::new(SimpleMemory::new(30))),
         10,
         5,
     );
     let result = strategy.run("simple task".to_string()).await.unwrap();
     assert_eq!(result, "Empty synthesis.");
+}
+
+#[tokio::test]
+async fn test_plan_strategy_accepts_tool_registry() {
+    use agentverse_tools::{Calculator, SyncToolAdapter, ToolRegistry};
+    // Just verify construction compiles and registry is accessible
+    let mut tools = ToolRegistry::new();
+    tools.register(SyncToolAdapter(Calculator));
+    assert!(tools.has_tool("calculator"));
 }

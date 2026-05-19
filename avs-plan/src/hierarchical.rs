@@ -5,7 +5,8 @@
 
 use super::planner::{decompose_request, generate_plan};
 use agentverse::memory::{Message, MessageRole};
-use agentverse::{AgentError, GenerateRequest, ModelProvider, PromptRegistry, SyncTool};
+use agentverse::{AgentError, GenerateRequest, ModelProvider, PromptRegistry};
+use agentverse_tools::ToolRegistry;
 use agentverse_guardrails::check_output;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -18,7 +19,7 @@ where
 {
     model: Arc<P>,
     registry: Arc<PromptRegistry>,
-    tools: Vec<Box<dyn SyncTool>>,
+    tools: ToolRegistry,
     memory: Arc<Mutex<M>>,
     max_iterations: usize,
     max_decompose_depth: usize,
@@ -33,7 +34,7 @@ where
     pub fn new(
         model: Arc<P>,
         registry: Arc<PromptRegistry>,
-        tools: Vec<Box<dyn SyncTool>>,
+        tools: ToolRegistry,
         memory: Arc<Mutex<M>>,
         max_iterations: usize,
         max_decompose_depth: usize,
@@ -77,7 +78,7 @@ where
                 break;
             }
 
-            let tool_names: Vec<String> = self.tools.iter().map(|t| t.name().to_string()).collect();
+            let tool_names: Vec<String> = self.tools.tool_names();
 
             let conversation = self
                 .memory
@@ -120,7 +121,7 @@ where
 
                 let result = if let Some(ref tool_name) = step.tool {
                     let args = step.args.clone().unwrap_or_default();
-                    match self.execute_tool(tool_name, args) {
+                    match self.execute_tool(tool_name, args).await {
                         Ok(result) => result,
                         Err(e) => format!("Tool error: {}", e),
                     }
@@ -216,16 +217,8 @@ where
     }
 
     /// Execute a single tool by name.
-    fn execute_tool(&self, tool_name: &str, args: serde_json::Value) -> Result<String, AgentError> {
-        let tool = self
-            .tools
-            .iter()
-            .find(|t| t.name() == tool_name)
-            .ok_or_else(|| {
-                AgentError::Tool(agentverse::ToolError::NotFound(tool_name.to_string()))
-            })?;
-
-        let result = tool.execute(args).map_err(AgentError::Tool)?;
+    async fn execute_tool(&self, tool_name: &str, args: serde_json::Value) -> Result<String, AgentError> {
+        let result = self.tools.execute(tool_name, args).await.map_err(AgentError::Tool)?;
         Ok(result.to_string())
     }
 }
