@@ -7,7 +7,7 @@ pub use adapter::IntegrationAdapter;
 
 pub mod error;
 pub use error::{ConnectorError, IntegrationError, InvokerError};
-pub use slack::SlackAdapter;
+pub use slack::SlackConnector;
 pub use webhook::{handle_webhook, WebhookAdapter, WebhookRequest, WebhookResponse, WebhookState};
 
 pub mod event;

@@ -13,10 +13,14 @@ tokio.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
+reqwest = { workspace = true, features = ["json"] }
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+bytes = "1"
 
 [dev-dependencies]
 agentverse = { path = "../avs-core" }
 axum.workspace = true
 tokio.workspace = true
-reqwest = { workspace = true, features = ["json"] }
 uuid.workspace = true
