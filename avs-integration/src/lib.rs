@@ -24,3 +24,6 @@ pub use integration::Integration;
 
 pub mod github;
 pub use github::GithubConnector;
+
+pub mod whatsapp;
+pub use whatsapp::WhatsAppConnector;
