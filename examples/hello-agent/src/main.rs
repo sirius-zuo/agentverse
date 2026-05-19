@@ -9,6 +9,7 @@
 use agentverse::{OpenAICompatible, PromptConfig, PromptRegistry};
 use agentverse_memory::SimpleMemory;
 use agentverse_react::ReActStrategy;
+use agentverse_tools::{Calculator, DateTimeTool, SyncToolAdapter, ToolRegistry};
 use std::io::Write;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -34,7 +35,10 @@ async fn main() {
         .expect("prompt config"),
     );
     let memory = Arc::new(Mutex::new(SimpleMemory::new(50)));
-    let mut agent = ReActStrategy::new(registry, model, vec![], memory, 10);
+    let mut tools = ToolRegistry::new();
+    tools.register_with_category(SyncToolAdapter(Calculator), "math");
+    tools.register_with_category(SyncToolAdapter(DateTimeTool), "utility");
+    let mut agent = ReActStrategy::new(registry, model, tools, memory, 10);
 
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
 

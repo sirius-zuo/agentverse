@@ -7,4 +7,5 @@ edition.workspace = true
 agentverse = { path = "../../avs-core" }
 agentverse-memory = { path = "../../avs-memory" }
 agentverse-react = { path = "../../avs-react" }
+agentverse-tools = { path = "../../avs-tools" }
 tokio.workspace = true
