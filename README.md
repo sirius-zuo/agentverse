@@ -212,7 +212,7 @@ Response:
 | Example | Strategy | Tools | Description |
 |---|---|---|---|
 | `hello-agent` | ReAct | Calculator, DateTime | Interactive REPL — best starting point for the new `ToolRegistry` API |
-| `rag-qa` | ReAct | Calculator | Single-question agent exercising the tool-call loop with arithmetic |
+| `react-calculator` | ReAct | Calculator | Multi-step ReAct loop — model breaks arithmetic into sequential tool calls |
 | `web-search-agent` | ReAct | FileSearch | Multi-step file-search reasoning — `PROJECT_DIR` env var sets the search root |
 | `anthropic-react` | ReAct | Calculator | Anthropic Claude with prompt caching; shows cache_write/cache_read token split |
 | `code-review-agent` | Hierarchical | FileSearch, Calculator | Decompose → plan per sub-goal → execute → synthesize (uses `avs-plan` legacy tool API) |
@@ -248,7 +248,7 @@ Because `react.j2` never changes within a session, it is effectively free after 
 
 Each example ships a `prompts/` directory. The layout depends on the strategy:
 
-**ReAct** (`hello-agent`, `rag-qa`, `web-search-agent`, `anthropic-react`):
+**ReAct** (`hello-agent`, `react-calculator`, `web-search-agent`, `anthropic-react`):
 ```
 prompts/
   system.j2              # Identity + rules (no tools here)
@@ -336,7 +336,7 @@ AgentVerse/
 └── examples/              # Example agents
     ├── hello-agent/       # Simple agent, no tools
     ├── slack-hr-assistant/ # Slack integration
-    ├── rag-qa/            # Document Q&A
+    ├── react-calculator/  # Multi-step ReAct loop with Calculator
     ├── web-search-agent/  # Plan-and-Execute
     └── code-review-agent/ # Hierarchical planning
 ```

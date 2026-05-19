@@ -1,10 +1,13 @@
-// examples/rag-qa/src/main.rs
+// examples/react-calculator/src/main.rs
 //
-// Agent with a Calculator tool — exercises the tool-call loop.
+// Demonstrates the ReAct loop with the Calculator tool.
+// The model breaks a multi-step arithmetic problem into sequential tool calls,
+// reasoning before each call and producing a final Answer: when done.
+//
 // Run:
 //   MODEL_BASE_URL=http://localhost:9090/v1 \
 //   MODEL_NAME=Qwen3.6-35B-A3B-GGUF \
-//   cargo run -p example-rag-qa
+//   cargo run -p example-react-calculator
 
 use agentverse::{OpenAICompatible, PromptConfig, PromptRegistry};
 use agentverse_memory::SimpleMemory;

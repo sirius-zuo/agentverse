@@ -41,7 +41,7 @@ AgentVerse/
 └── examples/              # Example agents
     ├── hello-agent/       # Simple agent, no tools
     ├── slack-hr-assistant/ # Slack integration
-    ├── rag-qa/            # Document Q&A
+    ├── react-calculator/  # Multi-step ReAct loop with Calculator
     ├── web-search-agent/  # Plan-and-Execute
     ├── code-review-agent/ # Hierarchical planning
     └── anthropic-react/   # Anthropic Claude with prompt caching
@@ -127,7 +127,7 @@ export MODEL_NAME="phi3-mini"
 
 ### Option 1: ReAct Agent with Tools (recommended)
 
-This is the primary pattern for agents that call tools. It mirrors what `hello-agent`, `rag-qa`, `web-search-agent`, and `anthropic-react` do.
+This is the primary pattern for agents that call tools. It mirrors what `hello-agent`, `react-calculator`, `web-search-agent`, and `anthropic-react` do.
 
 ```rust
 // Cargo.toml

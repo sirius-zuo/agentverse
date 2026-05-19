@@ -14,7 +14,7 @@ members = [
     "avs-server",
     "examples/hello-agent",
     "examples/slack-hr-assistant",
-    "examples/rag-qa",
+    "examples/react-calculator",
     "examples/web-search-agent",
     "examples/code-review-agent",
     "examples/anthropic-react",

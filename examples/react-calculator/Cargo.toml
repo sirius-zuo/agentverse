@@ -1,5 +1,5 @@
 [package]
-name = "example-rag-qa"
+name = "example-react-calculator"
 version.workspace = true
 edition.workspace = true
 
