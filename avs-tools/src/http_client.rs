@@ -53,16 +53,16 @@ impl AsyncTool for HttpClient {
     }
 
     async fn execute(&self, args: Value) -> ToolResult {
-        let method = args["method"].as_str().ok_or_else(|| {
-            ToolError::Execution("Missing 'method' parameter".to_string())
-        })?;
+        let method = args["method"]
+            .as_str()
+            .ok_or_else(|| ToolError::Execution("Missing 'method' parameter".to_string()))?;
 
-        let url = args["url"].as_str().ok_or_else(|| {
-            ToolError::Execution("Missing 'url' parameter".to_string())
-        })?;
+        let url = args["url"]
+            .as_str()
+            .ok_or_else(|| ToolError::Execution("Missing 'url' parameter".to_string()))?;
 
-        let parsed = Url::parse(url)
-            .map_err(|e| ToolError::Execution(format!("Invalid URL: {e}")))?;
+        let parsed =
+            Url::parse(url).map_err(|e| ToolError::Execution(format!("Invalid URL: {e}")))?;
         if !"http".eq_ignore_ascii_case(parsed.scheme())
             && !"https".eq_ignore_ascii_case(parsed.scheme())
         {
@@ -76,9 +76,7 @@ impl AsyncTool for HttpClient {
             "POST" => HTTP_CLIENT.post(url),
             "PUT" => HTTP_CLIENT.put(url),
             "DELETE" => HTTP_CLIENT.delete(url),
-            other => {
-                return Err(ToolError::Execution(format!("Unsupported method: {other}")))
-            }
+            other => return Err(ToolError::Execution(format!("Unsupported method: {other}"))),
         };
 
         if let Some(headers) = args["headers"].as_object() {

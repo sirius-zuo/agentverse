@@ -66,9 +66,9 @@ impl AsyncTool for ShellTool {
     }
 
     async fn execute(&self, args: Value) -> ToolResult {
-        let command = args["command"].as_str().ok_or_else(|| {
-            ToolError::Execution("Missing 'command' parameter".to_string())
-        })?;
+        let command = args["command"]
+            .as_str()
+            .ok_or_else(|| ToolError::Execution("Missing 'command' parameter".to_string()))?;
 
         let parts = shell_words::split(command)
             .map_err(|e| ToolError::Execution(format!("Invalid command syntax: {e}")))?;

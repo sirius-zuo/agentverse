@@ -339,8 +339,11 @@ async fn test_react_strategy_tool_call_then_answer() {
 
 #[tokio::test]
 async fn test_react_strategy_max_iterations() {
-    let mut strategy =
-        mock_strategy(vec!["Thought: still thinking.".to_string()], empty_registry(), 2);
+    let mut strategy = mock_strategy(
+        vec!["Thought: still thinking.".to_string()],
+        empty_registry(),
+        2,
+    );
     let err = strategy.run("infinite loop".to_string()).await.unwrap_err();
     assert!(err.to_string().contains("Max iterations"));
 }
@@ -595,5 +598,9 @@ async fn test_cycle_skeleton_execute_calculator_via_registry() {
 
     assert!(result.is_ok(), "expected Ok, got {:?}", result);
     let output = result.unwrap();
-    assert!(output.contains("7"), "expected result 7 in output: {}", output);
+    assert!(
+        output.contains("7"),
+        "expected result 7 in output: {}",
+        output
+    );
 }

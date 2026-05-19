@@ -8,7 +8,10 @@ async fn test_registry_register_and_execute() {
     registry.register(Calculator);
     assert!(registry.has_tool("calculator"));
     let result = registry
-        .execute("calculator", json!({ "operation": "add", "a": 2.0, "b": 3.0 }))
+        .execute(
+            "calculator",
+            json!({ "operation": "add", "a": 2.0, "b": 3.0 }),
+        )
         .await;
     assert!(result.is_ok());
     assert_eq!(result.unwrap()["result"], 5.0);
@@ -350,11 +353,7 @@ async fn test_shell_blocked_command() {
 
 #[tokio::test]
 async fn test_shell_timeout() {
-    let tool = ShellTool::new(
-        ".",
-        Duration::from_millis(100),
-        Vec::<String>::new(),
-    );
+    let tool = ShellTool::new(".", Duration::from_millis(100), Vec::<String>::new());
     let result = tool.execute(json!({ "command": "sleep 10" })).await;
     assert!(result.is_err());
     let msg = result.unwrap_err().to_string();

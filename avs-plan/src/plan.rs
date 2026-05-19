@@ -6,8 +6,8 @@
 use super::planner::generate_plan;
 use agentverse::memory::{Message, MessageRole};
 use agentverse::{AgentError, GenerateRequest, ModelProvider, PromptRegistry};
-use agentverse_tools::ToolRegistry;
 use agentverse_guardrails::check_output;
+use agentverse_tools::ToolRegistry;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -194,8 +194,16 @@ where
     }
 
     /// Execute a single tool by name.
-    async fn execute_tool(&self, tool_name: &str, args: serde_json::Value) -> Result<String, AgentError> {
-        let result = self.tools.execute(tool_name, args).await.map_err(AgentError::Tool)?;
+    async fn execute_tool(
+        &self,
+        tool_name: &str,
+        args: serde_json::Value,
+    ) -> Result<String, AgentError> {
+        let result = self
+            .tools
+            .execute(tool_name, args)
+            .await
+            .map_err(AgentError::Tool)?;
         Ok(result.to_string())
     }
 }
