@@ -1,4 +1,4 @@
-use agentverse_integration::{ConnectorError, IntegrationError, InvokerError};
+use agentverse_integration::{ConnectorError, IntegrationError};
 
 #[test]
 fn connector_error_display() {
