@@ -204,7 +204,10 @@ where
             .execute(tool_name, args)
             .await
             .map_err(AgentError::Tool)?;
-        Ok(result.to_string())
+        Ok(match result {
+            serde_json::Value::String(s) => s,
+            v => v.to_string(),
+        })
     }
 }
 

@@ -107,10 +107,13 @@ impl AsyncTool for ShellTool {
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
         let exit_code = output.status.code().unwrap_or(-1);
 
-        Ok(json!({
-            "stdout": stdout,
-            "stderr": stderr,
-            "exit_code": exit_code,
-        }))
+        let mut out = stdout;
+        if !stderr.trim().is_empty() {
+            out.push_str(&format!("\n[stderr: {}]", stderr.trim()));
+        }
+        if exit_code != 0 {
+            out.push_str(&format!("\n[exit code: {}]", exit_code));
+        }
+        Ok(json!(out))
     }
 }
