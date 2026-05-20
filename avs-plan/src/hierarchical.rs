@@ -112,10 +112,6 @@ where
             let mut step_results: Vec<String> = Vec::new();
             for step in &sub_plan.steps {
                 if step.id > self.max_iterations {
-                    self.memory.lock().await.append(agentverse::Message {
-                        role: agentverse::memory::MessageRole::System,
-                        content: format!("Sub-goal {} step {}: max iterations reached", i, step.id),
-                    });
                     break;
                 }
 
@@ -129,18 +125,7 @@ where
                     format!("Reasoning: {}", step.description)
                 };
 
-                step_results.push(result.clone());
-
-                self.memory.lock().await.append(agentverse::Message {
-                    role: agentverse::memory::MessageRole::System,
-                    content: format!(
-                        "Sub-goal {} step {} ({}): {}",
-                        i,
-                        step.id,
-                        step.tool.as_deref().unwrap_or("reasoning"),
-                        result
-                    ),
-                });
+                step_results.push(result);
             }
 
             let sub_result = step_results.join("\n");
@@ -148,7 +133,7 @@ where
 
             self.memory.lock().await.append(agentverse::Message {
                 role: agentverse::memory::MessageRole::System,
-                content: format!("Sub-goal {} completed: {}", i, sub_result),
+                content: format!("Sub-goal {}: {}", i, sub_result),
             });
         }
 
