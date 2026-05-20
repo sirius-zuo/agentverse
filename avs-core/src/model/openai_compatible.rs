@@ -15,8 +15,8 @@ pub struct OpenAICompatible {
     model_name: String,
     api_key: String,
     /// When true, sends `chat_template_kwargs: {"enable_thinking": false}`.
-    /// Needed for Qwen3 models on llama.cpp to avoid assistant-prefill conflicts.
-    /// Set via env var `LLAMA_DISABLE_THINKING=1`.
+    /// Defaults to true — thinking is disabled unless `LLAMA_DISABLE_THINKING=0` is set.
+    /// Keeping thinking off makes structured-output formats (ReAct) more reliable.
     disable_thinking: bool,
 }
 
@@ -85,8 +85,8 @@ struct ResponseMessage {
 
 fn read_disable_thinking() -> bool {
     std::env::var("LLAMA_DISABLE_THINKING")
-        .map(|v| v == "1" || v.to_lowercase() == "true")
-        .unwrap_or(false)
+        .map(|v| !(v == "0" || v.to_lowercase() == "false"))
+        .unwrap_or(true)
 }
 
 impl OpenAICompatible {
