@@ -161,11 +161,11 @@ impl IntegrationRuntime {
             .map_err(IntegrationError::Input)?;
 
         loop {
-            let event = self
-                .input
-                .receive()
-                .await
-                .map_err(IntegrationError::Input)?;
+            let event = match self.input.receive().await {
+                Ok(event) => event,
+                Err(crate::error::ConnectorError::Eof) => return Ok(()),
+                Err(e) => return Err(IntegrationError::Input(e)),
+            };
 
             match handler(event).await {
                 Ok(response) => {

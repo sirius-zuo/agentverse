@@ -186,3 +186,26 @@ outputs = ["slack"]
     let msg = err.to_string();
     assert!(msg.contains("slack"), "error should mention missing connector name");
 }
+
+#[tokio::test]
+async fn runtime_stops_cleanly_on_eof() {
+    struct EofInput;
+    impl Connector for EofInput { fn name(&self) -> &str { "eof" } }
+    #[async_trait]
+    impl InputConnector for EofInput {
+        async fn receive(&self) -> Result<Event, ConnectorError> {
+            Err(ConnectorError::Eof)
+        }
+    }
+
+    let runtime = IntegrationRuntime::new(
+        Box::new(EofInput),
+        vec![],
+    );
+
+    let result = runtime
+        .run(|event| async move { Ok::<Event, std::convert::Infallible>(event) })
+        .await;
+
+    assert!(result.is_ok(), "EOF should be a clean shutdown, not an error");
+}
