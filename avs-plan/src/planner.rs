@@ -4,6 +4,49 @@ use agentverse_guardrails::check_prompt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Deserialize a `Vec<usize>` where each element may be an integer or a
+/// numeric string (models sometimes emit `"depends_on": ["1"]`).
+fn deserialize_id_vec<'de, D>(deserializer: D) -> Result<Vec<usize>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{SeqAccess, Visitor};
+
+    struct IdVecVisitor;
+
+    impl<'de> Visitor<'de> for IdVecVisitor {
+        type Value = Vec<usize>;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("array of integers or integer strings")
+        }
+
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+            let mut out = Vec::new();
+            while let Some(v) = seq.next_element::<serde_json::Value>()? {
+                let n = match v {
+                    serde_json::Value::Number(n) => n
+                        .as_u64()
+                        .ok_or_else(|| serde::de::Error::custom("expected non-negative integer"))?
+                        as usize,
+                    serde_json::Value::String(s) => s.parse::<usize>().map_err(|_| {
+                        serde::de::Error::custom(format!("cannot parse {s:?} as integer"))
+                    })?,
+                    other => {
+                        return Err(serde::de::Error::custom(format!(
+                            "expected integer or string, got {other}"
+                        )))
+                    }
+                };
+                out.push(n);
+            }
+            Ok(out)
+        }
+    }
+
+    deserializer.deserialize_seq(IdVecVisitor)
+}
+
 /// A single step in a plan.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PlanStep {
@@ -18,7 +61,7 @@ pub struct PlanStep {
     #[serde(default)]
     pub args: Option<serde_json::Value>,
     /// IDs of steps this depends on (empty if no dependencies).
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_id_vec")]
     pub depends_on: Vec<usize>,
 }
 
