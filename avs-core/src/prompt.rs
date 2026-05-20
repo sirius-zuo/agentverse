@@ -58,6 +58,10 @@ const DEFAULT_PLAN_AND_EXECUTE_TEMPLATE: &str =
     "You are a planning assistant. Generate a step-by-step plan.\n\n\
      Available tools:\n\
      {{ tools }}\n\n\
+     {% if conversation %}\n\
+     Previous results:\n\
+     {{ conversation }}\n\n\
+     {% endif %}\
      {% if examples %}\n\
      Examples:\n\
      {% for example in examples %}\n\
