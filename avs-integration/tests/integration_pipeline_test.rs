@@ -1,22 +1,19 @@
-use agentverse_integration::{
-    AgentInvoker, Connector, ConnectorError, Event, InputConnector, Integration, IntegrationError,
-    InvokerError, OutputConnector,
-};
+// avs-integration/tests/integration_pipeline_test.rs
+// End-to-end: IntegrationRuntime routes one event through a handler to two outputs.
+use agentverse_integration::{Connector, ConnectorError, Event, InputConnector, IntegrationRuntime, OutputConnector};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use uuid::Uuid;
 
-// Input: returns one event, then errors to stop the loop.
 struct OneShotInput {
     event: Event,
     sent: Mutex<bool>,
 }
 
 impl Connector for OneShotInput {
-    fn name(&self) -> &str {
-        "one-shot"
-    }
+    fn name(&self) -> &str { "one-shot" }
 }
 
 #[async_trait]
@@ -32,28 +29,12 @@ impl InputConnector for OneShotInput {
     }
 }
 
-// Invoker: uppercases the text.
-struct UpperInvoker;
-
-#[async_trait]
-impl AgentInvoker for UpperInvoker {
-    async fn invoke(&self, event: Event) -> Result<Event, InvokerError> {
-        Ok(Event {
-            text: event.text.to_uppercase(),
-            ..event
-        })
-    }
-}
-
-// Output: records received events.
 struct RecordingOutput {
     received: Arc<Mutex<Vec<Event>>>,
 }
 
 impl Connector for RecordingOutput {
-    fn name(&self) -> &str {
-        "recorder"
-    }
+    fn name(&self) -> &str { "recorder" }
 }
 
 #[async_trait]
@@ -65,14 +46,14 @@ impl OutputConnector for RecordingOutput {
 }
 
 #[tokio::test]
-async fn integration_routes_one_event_to_two_outputs() {
+async fn runtime_routes_one_event_to_two_outputs() {
     let received_a = Arc::new(Mutex::new(vec![]));
     let received_b = Arc::new(Mutex::new(vec![]));
 
-    let integration = Integration::new(
+    let runtime = IntegrationRuntime::new(
         Box::new(OneShotInput {
             event: Event {
-                id: uuid::Uuid::new_v4(),
+                id: Uuid::new_v4(),
                 conversation_id: "ch1".to_string(),
                 user_id: "u1".to_string(),
                 text: "hello".to_string(),
@@ -80,21 +61,23 @@ async fn integration_routes_one_event_to_two_outputs() {
             },
             sent: Mutex::new(false),
         }),
-        Box::new(UpperInvoker),
         vec![
-            Box::new(RecordingOutput {
-                received: Arc::clone(&received_a),
-            }),
-            Box::new(RecordingOutput {
-                received: Arc::clone(&received_b),
-            }),
+            Box::new(RecordingOutput { received: Arc::clone(&received_a) }),
+            Box::new(RecordingOutput { received: Arc::clone(&received_b) }),
         ],
     );
 
-    // run() stops when OneShotInput errors on the second receive call.
-    let result = integration.run().await;
-    assert!(matches!(result, Err(IntegrationError::Input(_))));
+    let result = runtime
+        .run(|event| async move {
+            Ok::<Event, std::convert::Infallible>(Event {
+                text: event.text.to_uppercase(),
+                ..event
+            })
+        })
+        .await;
 
+    // run() stops when OneShotInput errors on the second receive call.
+    assert!(result.is_err());
     let a = received_a.lock().await;
     let b = received_b.lock().await;
     assert_eq!(a.len(), 1);

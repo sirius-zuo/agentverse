@@ -1,16 +1,17 @@
-// Smoke test: all public types are importable and the module compiles cleanly.
+// avs-integration/tests/integration_test.rs
+// Smoke test: verify all public types are importable after the redesign.
 use agentverse_integration::{
-    Connector, ConnectorError, Event, GithubConnector, Integration, IntegrationError, InvokerError,
-    SlackConnector, WhatsAppConnector,
+    Connector, ConnectorError, Event, GithubConnector, IntegrationConfig,
+    IntegrationError, IntegrationRuntime, SlackConnector, WhatsAppConnector,
 };
 
 #[test]
 fn all_public_types_accessible() {
     let _ = std::any::TypeId::of::<Event>();
     let _ = std::any::TypeId::of::<ConnectorError>();
-    let _ = std::any::TypeId::of::<InvokerError>();
     let _ = std::any::TypeId::of::<IntegrationError>();
-    let _ = std::any::TypeId::of::<Integration>();
+    let _ = std::any::TypeId::of::<IntegrationRuntime>();
+    let _ = std::any::TypeId::of::<IntegrationConfig>();
 }
 
 #[test]

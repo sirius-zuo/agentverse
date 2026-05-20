@@ -1,3 +1,4 @@
+// avs-integration/src/error.rs — final state:
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -13,17 +14,9 @@ pub enum ConnectorError {
 }
 
 #[derive(Error, Debug)]
-pub enum InvokerError {
-    #[error("Agent error: {0}")]
-    Agent(String),
-}
-
-#[derive(Error, Debug)]
 pub enum IntegrationError {
     #[error("Input error: {0}")]
     Input(ConnectorError),
-    #[error("Invoker error: {0}")]
-    Invoker(InvokerError),
     #[error("Output error on {connector}: {source}")]
     Output {
         connector: String,

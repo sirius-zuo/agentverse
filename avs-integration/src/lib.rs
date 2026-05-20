@@ -1,22 +1,19 @@
+// avs-integration/src/lib.rs
 pub mod config;
-pub mod console;
 pub mod connector;
+pub mod console;
 pub mod error;
 pub mod event;
 pub mod github;
-pub mod integration;
-pub mod invoker;
 pub mod runtime;
 pub mod slack;
 pub mod whatsapp;
 
 pub use config::IntegrationConfig;
 pub use connector::{Connector, InputConnector, OutputConnector};
-pub use error::{ConnectorError, IntegrationError, InvokerError};
+pub use error::{ConnectorError, IntegrationError};
 pub use event::Event;
 pub use github::GithubConnector;
-pub use integration::Integration;
-pub use invoker::{AgentInvoker, StrategyInvoker};
 pub use runtime::IntegrationRuntime;
 pub use slack::SlackConnector;
 pub use whatsapp::WhatsAppConnector;
