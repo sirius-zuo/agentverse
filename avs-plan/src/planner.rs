@@ -87,17 +87,14 @@ pub async fn generate_plan(
     model: &dyn ModelProvider,
     registry: &PromptRegistry,
     request: &str,
-    tools: &[String],
+    tools: &str,
     conversation: &str,
 ) -> Result<Plan, AgentError> {
-    let tools_desc = if tools.is_empty() {
-        "none (reasoning only)".to_string()
-    } else {
-        tools.join(", ")
-    };
-
     let mut context = HashMap::new();
-    context.insert("tools".to_string(), serde_json::Value::String(tools_desc));
+    context.insert(
+        "tools".to_string(),
+        serde_json::Value::String(tools.to_string()),
+    );
     context.insert(
         "conversation".to_string(),
         serde_json::Value::String(conversation.to_string()),

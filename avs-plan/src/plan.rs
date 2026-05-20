@@ -57,7 +57,7 @@ where
             content: input.clone(),
         });
 
-        let tool_names: Vec<String> = self.tools.tool_names();
+        let tool_summaries = self.tools.tool_summaries();
 
         let conversation = self
             .memory
@@ -83,7 +83,7 @@ where
             &*self.model,
             &self.registry,
             &input,
-            &tool_names,
+            &tool_summaries,
             &conversation,
         )
         .await?;

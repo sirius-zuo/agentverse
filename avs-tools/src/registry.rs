@@ -76,6 +76,45 @@ impl ToolRegistry {
         self.tools.keys().cloned().collect()
     }
 
+    /// Return a human-readable summary of every tool with its required args,
+    /// suitable for injecting into a planner system prompt.
+    pub fn tool_summaries(&self) -> String {
+        if self.tools.is_empty() {
+            return "none (reasoning only)".to_string();
+        }
+        let mut entries: Vec<String> = self
+            .tools
+            .values()
+            .map(|(t, _)| {
+                let params = t.parameters();
+                let required: Vec<&str> = params
+                    .get("required")
+                    .and_then(|r| r.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+                    .unwrap_or_default();
+                let props = params.get("properties").and_then(|p| p.as_object());
+                let args_hint = if let Some(props) = props {
+                    let fields: Vec<String> = required
+                        .iter()
+                        .filter_map(|k| {
+                            props.get(*k).map(|v| {
+                                let desc =
+                                    v.get("description").and_then(|d| d.as_str()).unwrap_or("");
+                                format!("\"{k}\": \"{desc}\"")
+                            })
+                        })
+                        .collect();
+                    format!("{{{}}}", fields.join(", "))
+                } else {
+                    "{}".to_string()
+                };
+                format!("- {}: {}\n  args: {}", t.name(), t.description(), args_hint)
+            })
+            .collect();
+        entries.sort();
+        entries.join("\n")
+    }
+
     /// Check if a tool is registered.
     pub fn has_tool(&self, name: &str) -> bool {
         self.tools.contains_key(name)
