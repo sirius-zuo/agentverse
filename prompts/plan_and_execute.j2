@@ -3,11 +3,6 @@ You are a planning assistant. Generate a step-by-step plan.
 Available tools:
 {{ tools }}
 
-{% if conversation %}
-Previous results:
-{{ conversation }}
-
-{% endif %}
 {% if examples %}
 Examples:
 {% for example in examples %}
@@ -21,3 +16,8 @@ Respond with ONLY a JSON object. Rules:
 - Shell commands must use single quotes for quoting (e.g. grep '^pattern' not grep "^pattern")
 - "description" values must not contain double-quote characters
 {"description": "...", "steps": [{"id": 1, "description": "...", "tool": "...", "args": {}, "depends_on": []}]}
+{% if conversation %}
+
+Previous results:
+{{ conversation }}
+{% endif %}

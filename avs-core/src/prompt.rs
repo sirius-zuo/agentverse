@@ -58,10 +58,6 @@ const DEFAULT_PLAN_AND_EXECUTE_TEMPLATE: &str =
     "You are a planning assistant. Generate a step-by-step plan.\n\n\
      Available tools:\n\
      {{ tools }}\n\n\
-     {% if conversation %}\n\
-     Previous results:\n\
-     {{ conversation }}\n\n\
-     {% endif %}\
      {% if examples %}\n\
      Examples:\n\
      {% for example in examples %}\n\
@@ -73,7 +69,11 @@ const DEFAULT_PLAN_AND_EXECUTE_TEMPLATE: &str =
      - Each step has exactly one \"args\" object — do not repeat the key\n\
      - Shell commands must use single quotes for quoting (e.g. grep '^pattern' not grep \"^pattern\")\n\
      - \"description\" values must not contain double-quote characters\n\
-     {\"description\": \"...\", \"steps\": [{\"id\": 1, \"description\": \"...\", \"tool\": \"...\", \"args\": {}, \"depends_on\": []}]}";
+     {\"description\": \"...\", \"steps\": [{\"id\": 1, \"description\": \"...\", \"tool\": \"...\", \"args\": {}, \"depends_on\": []}]}\n\
+     {% if conversation %}\n\
+     Previous results:\n\
+     {{ conversation }}\n\
+     {% endif %}";
 
 const DEFAULT_HIERARCHICAL_DECOMPOSE_TEMPLATE: &str =
     "Break this request into sub-goals. Each sub-goal should be independently executable.\n\n\
