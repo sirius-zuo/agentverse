@@ -18,7 +18,7 @@ use agentverse::{
 };
 use agentverse_memory::SimpleMemory;
 use agentverse_plan::HierarchicalStrategy;
-use agentverse_tools::{Calculator, FileSearch, ShellTool, ToolRegistry};
+use agentverse_tools::{FileSearch, ShellTool, ToolRegistry};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -61,7 +61,7 @@ async fn main() {
 
     println!("Code Review Agent — model: {} @ {}", model_name, base_url);
     println!("Strategy: Hierarchical Planning");
-    println!("Tools: FileSearch + Calculator + ShellTool");
+    println!("Tools: FileSearch + ShellTool");
     println!();
 
     let model = Arc::new(LoggingModel(OpenAICompatible::new(
@@ -79,7 +79,6 @@ async fn main() {
     let memory = Arc::new(Mutex::new(SimpleMemory::new(50)));
     let mut tools = ToolRegistry::new();
     tools.register_with_category(FileSearch, "filesystem");
-    tools.register_with_category(Calculator, "math");
     // ShellTool lets the agent read file contents with `cat` or search with
     // `grep`. It runs commands in `project_dir` with a 30-second timeout.
     //
