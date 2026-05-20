@@ -80,7 +80,7 @@ async fn main() {
         .run(move |event: Event| {
             let strategy = Arc::clone(&strategy);
             async move {
-                let answer = strategy.lock().await.process(event.text.clone()).await?;
+                let answer = strategy.lock().await.process(event.text).await?;
                 Ok::<Event, agentverse::AgentError>(Event { text: answer, ..event })
             }
         })
