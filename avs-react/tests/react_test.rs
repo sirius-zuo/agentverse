@@ -339,10 +339,12 @@ async fn test_react_strategy_tool_call_then_answer() {
 
 #[tokio::test]
 async fn test_react_strategy_max_iterations() {
+    // max_iterations=1: the iteration check fires on re-entry after the first
+    // Continue, before the pending_answer fallback has a chance to trigger.
     let mut strategy = mock_strategy(
         vec!["Thought: still thinking.".to_string()],
         empty_registry(),
-        2,
+        1,
     );
     let err = strategy.run("infinite loop".to_string()).await.unwrap_err();
     assert!(err.to_string().contains("Max iterations"));

@@ -19,6 +19,10 @@ where
     M: agentverse::Memory,
 {
     skeleton: CycleSkeleton<P, M>,
+    /// Thought saved when we issued the nudge. If the model responds with
+    /// another Continue instead of Answer/Action, we return this thought
+    /// directly — it was already a complete answer, just missing the label.
+    pending_answer: Option<String>,
 }
 
 impl<P, M> ReActStrategy<P, M>
@@ -36,6 +40,7 @@ where
     ) -> Self {
         Self {
             skeleton: CycleSkeleton::new(prompt_registry, model, tools, memory, max_iterations),
+            pending_answer: None,
         }
     }
 
@@ -45,8 +50,9 @@ where
     /// or max iterations is reached.
     pub async fn run(&mut self, input: String) -> Result<agentverse::CycleResult, AgentError> {
         // Insert the react preamble as the first message when a react.j2 file
-        // Reset per-run so the iteration limit applies to this question, not the session total.
+        // Reset per-run state.
         self.skeleton.reset_iteration();
+        self.pending_answer = None;
 
         // was loaded.  Idempotent — does nothing on subsequent calls.
         self.skeleton.prime_react_preamble().await;
@@ -81,20 +87,31 @@ where
 
             match action {
                 CycleAction::Continue { thought } => {
+                    // If we already nudged last iteration and the model still didn't
+                    // emit Answer: or Action:, the pre-nudge thought was already a
+                    // complete answer — use it rather than the confused post-nudge one.
+                    if let Some(saved) = self.pending_answer.take() {
+                        return Ok(agentverse::CycleResult {
+                            answer: saved,
+                            total_usage: self.skeleton.total_usage(),
+                        });
+                    }
+
+                    self.pending_answer = Some(thought.clone());
                     let mut mem = self.skeleton.memory().lock().await;
                     mem.append(agentverse::Message {
                         role: agentverse::memory::MessageRole::Assistant,
                         content: format!("Thought: {}", thought),
                     });
                     // Anthropic rejects requests ending with an assistant message.
-                    // The nudge must also push the model toward a terminal action —
-                    // "Continue." alone causes an infinite thought loop.
+                    // The nudge pushes the model toward a terminal action.
                     mem.append(agentverse::Message {
                         role: agentverse::memory::MessageRole::User,
                         content: "Either call a tool (Action: / Action Input:) or give your final answer (Answer: ...).".to_string(),
                     });
                 }
                 CycleAction::ToolCall { tool_name, args } => {
+                    self.pending_answer = None;
                     // Save the model's own reasoning so the next iteration has full context.
                     self.skeleton
                         .memory()
