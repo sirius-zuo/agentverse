@@ -1,3 +1,4 @@
+pub mod config;
 pub mod connector;
 pub mod error;
 pub mod event;
@@ -7,6 +8,7 @@ pub mod invoker;
 pub mod slack;
 pub mod whatsapp;
 
+pub use config::IntegrationConfig;
 pub use connector::{Connector, InputConnector, OutputConnector};
 pub use error::{ConnectorError, IntegrationError, InvokerError};
 pub use event::Event;
