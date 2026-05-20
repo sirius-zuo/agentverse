@@ -8,6 +8,8 @@ pub enum ConnectorError {
     Auth(String),
     #[error("Platform error: {0}")]
     Platform(String),
+    #[error("EOF")]
+    Eof,
 }
 
 #[derive(Error, Debug)]

@@ -25,7 +25,6 @@ impl Default for ConsoleConnector {
     }
 }
 
-#[async_trait]
 impl Connector for ConsoleConnector {
     fn name(&self) -> &str {
         "console"
@@ -34,6 +33,7 @@ impl Connector for ConsoleConnector {
 
 #[async_trait]
 impl InputConnector for ConsoleConnector {
+    /// Returns `Err(ConnectorError::Eof)` on EOF or blank input.
     async fn receive(&self) -> Result<Event, ConnectorError> {
         // Flush stdout so any prompt appears before we block on input.
         tokio::io::stdout()
@@ -51,7 +51,7 @@ impl InputConnector for ConsoleConnector {
 
         let text = line.trim().to_string();
         if text.is_empty() {
-            return Err(ConnectorError::Connection("EOF".to_string()));
+            return Err(ConnectorError::Eof);
         }
 
         Ok(Event {
