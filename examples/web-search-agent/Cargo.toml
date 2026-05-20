@@ -8,4 +8,5 @@ agentverse = { path = "../../avs-core" }
 agentverse-memory = { path = "../../avs-memory" }
 agentverse-plan = { path = "../../avs-plan" }
 agentverse-tools = { path = "../../avs-tools" }
+async-trait.workspace = true
 tokio.workspace = true

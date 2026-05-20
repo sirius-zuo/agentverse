@@ -6,12 +6,40 @@
 //   MODEL_NAME=Qwen3.6-35B-A3B-GGUF \
 //   cargo run -p example-web-search-agent
 
-use agentverse::{OpenAICompatible, PromptConfig, PromptRegistry};
+use agentverse::{
+    GenerateRequest, GenerateResponse, ModelError, ModelProvider, OpenAICompatible, PromptConfig,
+    PromptRegistry,
+};
 use agentverse_memory::SimpleMemory;
 use agentverse_plan::PlanStrategy;
 use agentverse_tools::{HttpClient, ToolRegistry};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+
+struct LoggingModel<M>(M);
+
+#[async_trait::async_trait]
+impl<M: ModelProvider + Send + Sync> ModelProvider for LoggingModel<M> {
+    fn name(&self) -> &str {
+        self.0.name()
+    }
+
+    async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, ModelError> {
+        println!("┌─ generate() ──────────────────────────────────────────");
+        if let Some(sys) = &request.system {
+            println!("│ [system]\n│ {}", sys.replace('\n', "\n│ "));
+        }
+        for msg in &request.messages {
+            let role = format!("{:?}", msg.role).to_lowercase();
+            println!("│ [{role}]\n│ {}", msg.content.replace('\n', "\n│ "));
+        }
+        if let Some(tools) = &request.tools {
+            println!("│ [tools] {} registered", tools.len());
+        }
+        println!("└───────────────────────────────────────────────────────");
+        self.0.generate(request).await
+    }
+}
 
 #[tokio::main]
 async fn main() {
@@ -23,7 +51,11 @@ async fn main() {
 
     println!("Web Search Agent — model: {} @ {}", model_name, base_url);
 
-    let model = Arc::new(OpenAICompatible::new(&base_url, &model_name, &api_key));
+    let model = Arc::new(LoggingModel(OpenAICompatible::new(
+        &base_url,
+        &model_name,
+        &api_key,
+    )));
     let registry = Arc::new(
         PromptRegistry::from_config(&PromptConfig {
             prompts_dir: Some(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string()),

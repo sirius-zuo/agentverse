@@ -13,12 +13,40 @@
 //   ANTHROPIC_API_KEY=sk-ant-... \
 //   cargo run -p example-anthropic-react
 
-use agentverse::{AnthropicProvider, PromptConfig, PromptRegistry};
+use agentverse::{
+    AnthropicProvider, GenerateRequest, GenerateResponse, ModelError, ModelProvider, PromptConfig,
+    PromptRegistry,
+};
 use agentverse_memory::SimpleMemory;
 use agentverse_react::ReActStrategy;
 use agentverse_tools::{Calculator, ToolRegistry};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+
+struct LoggingModel<M>(M);
+
+#[async_trait::async_trait]
+impl<M: ModelProvider + Send + Sync> ModelProvider for LoggingModel<M> {
+    fn name(&self) -> &str {
+        self.0.name()
+    }
+
+    async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, ModelError> {
+        println!("┌─ generate() ──────────────────────────────────────────");
+        if let Some(sys) = &request.system {
+            println!("│ [system]\n│ {}", sys.replace('\n', "\n│ "));
+        }
+        for msg in &request.messages {
+            let role = format!("{:?}", msg.role).to_lowercase();
+            println!("│ [{role}]\n│ {}", msg.content.replace('\n', "\n│ "));
+        }
+        if let Some(tools) = &request.tools {
+            println!("│ [tools] {} registered", tools.len());
+        }
+        println!("└───────────────────────────────────────────────────────");
+        self.0.generate(request).await
+    }
+}
 
 #[tokio::main]
 async fn main() {
@@ -34,11 +62,11 @@ async fn main() {
     println!("Prompt caching: enabled (system prompt + penultimate message)");
     println!();
 
-    let model = Arc::new(AnthropicProvider::new(
+    let model = Arc::new(LoggingModel(AnthropicProvider::new(
         "https://api.anthropic.com",
         &model_name,
         &api_key,
-    ));
+    )));
 
     // Load the system prompt from prompts/system.j2 (relative to the workspace
     // root, where `cargo run` is invoked).
