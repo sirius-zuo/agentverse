@@ -1,0 +1,9 @@
+# examples/slack-hr-assistant/agent.toml
+[integration]
+input = "slack"
+outputs = ["slack"]
+
+[connector.slack]
+port = 3000
+bot_token_env = "SLACK_BOT_TOKEN"
+signing_secret_env = "SLACK_SIGNING_SECRET"
