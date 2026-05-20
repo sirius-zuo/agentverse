@@ -82,10 +82,7 @@ pub async fn generate_plan(
     })?;
 
     let request_obj = GenerateRequest {
-        system: Some(format!(
-            "{}\n\nRespond with ONLY a JSON object:\n{{\"description\": \"...\", \"steps\": [{{\"id\": 1, \"description\": \"...\", \"tool\": \"...\", \"args\": {{}}, \"depends_on\": []}}]}}",
-            strategy_prompt
-        )),
+        system: Some(strategy_prompt),
         messages: vec![Message {
             role: MessageRole::User,
             content: format!("Request: {}", request),
@@ -146,10 +143,7 @@ pub async fn decompose_request(
     })?;
 
     let request_obj = GenerateRequest {
-        system: Some(format!(
-            "{}\n\nRespond with ONLY a JSON array of strings.",
-            strategy_prompt
-        )),
+        system: Some(strategy_prompt),
         messages: vec![Message {
             role: MessageRole::User,
             content: format!("Request: {}", request),
