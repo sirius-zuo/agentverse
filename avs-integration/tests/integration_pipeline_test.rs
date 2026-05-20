@@ -77,7 +77,7 @@ async fn runtime_routes_one_event_to_two_outputs() {
         .await;
 
     // run() stops when OneShotInput errors on the second receive call.
-    assert!(result.is_err());
+    assert!(matches!(result, Err(agentverse_integration::IntegrationError::Input(_))));
     let a = received_a.lock().await;
     let b = received_b.lock().await;
     assert_eq!(a.len(), 1);

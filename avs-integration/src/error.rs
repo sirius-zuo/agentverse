@@ -1,4 +1,3 @@
-// avs-integration/src/error.rs — final state:
 use thiserror::Error;
 
 #[derive(Error, Debug)]
