@@ -1,5 +1,4 @@
-use agentverse_integration::{Connector, ConnectorError, Event, InputConnector, OutputConnector};
-use agentverse_integration::runtime::IntegrationRuntime;
+use agentverse_integration::{Connector, ConnectorError, Event, InputConnector, IntegrationRuntime, OutputConnector};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -168,4 +167,22 @@ async fn from_config_errors_on_malformed_toml() {
     writeln!(f, "not valid toml ][[[").unwrap();
     let result = IntegrationRuntime::from_config(f.path().to_str().unwrap()).await;
     assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn from_config_errors_when_input_connector_not_defined() {
+    use std::io::Write;
+    let mut f = tempfile::NamedTempFile::new().unwrap();
+    writeln!(f, r#"
+[integration]
+input = "slack"
+outputs = ["slack"]
+"#).unwrap();
+    // No [connector.slack] section — env var lookup never happens.
+    // from_config reads the file, parses it, then from_parsed_config
+    // fails because "slack" isn't in the built connector map.
+    let result = IntegrationRuntime::from_config(f.path().to_str().unwrap()).await;
+    let err = result.err().expect("expected an error");
+    let msg = err.to_string();
+    assert!(msg.contains("slack"), "error should mention missing connector name");
 }

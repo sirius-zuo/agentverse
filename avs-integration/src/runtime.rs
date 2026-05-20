@@ -16,7 +16,6 @@ enum BuiltConnector {
     Slack(Arc<SlackConnector>),
     Github(Arc<GithubConnector>),
     Whatsapp(Arc<WhatsAppConnector>),
-    Console(Arc<ConsoleConnector>),
 }
 
 impl BuiltConnector {
@@ -25,7 +24,6 @@ impl BuiltConnector {
             Self::Slack(c) => Box::new(Arc::clone(c)),
             Self::Github(c) => Box::new(Arc::clone(c)),
             Self::Whatsapp(c) => Box::new(Arc::clone(c)),
-            Self::Console(c) => Box::new(Arc::clone(c)),
         }
     }
 
@@ -34,7 +32,6 @@ impl BuiltConnector {
             Self::Slack(c) => Box::new(Arc::clone(c)),
             Self::Github(c) => Box::new(Arc::clone(c)),
             Self::Whatsapp(c) => Box::new(Arc::clone(c)),
-            Self::Console(c) => Box::new(Arc::clone(c)),
         }
     }
 }
@@ -69,7 +66,7 @@ impl IntegrationRuntime {
     /// Fails fast if the file exists but is malformed, or if a referenced
     /// env var is not set.
     pub async fn from_config(path: &str) -> Result<Self, IntegrationError> {
-        match std::fs::read_to_string(path) {
+        match tokio::fs::read_to_string(path).await {
             Ok(content) => {
                 let config: IntegrationConfig = toml::from_str(&content)
                     .map_err(|e| IntegrationError::Config(e.to_string()))?;
