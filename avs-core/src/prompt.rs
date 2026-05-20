@@ -69,7 +69,7 @@ const DEFAULT_PLAN_AND_EXECUTE_TEMPLATE: &str =
      Assistant: {{ example.output }}\n\
      {% endfor %}\n\
      {% endif %}\n\n\
-     Respond with ONLY a JSON object:\n\
+     Respond with ONLY a JSON object. Each step must have exactly one \"args\" object — do not repeat the \"args\" key:\n\
      {\"description\": \"...\", \"steps\": [{\"id\": 1, \"description\": \"...\", \"tool\": \"...\", \"args\": {}, \"depends_on\": []}]}";
 
 const DEFAULT_HIERARCHICAL_DECOMPOSE_TEMPLATE: &str =

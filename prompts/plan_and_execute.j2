@@ -16,5 +16,5 @@ Assistant: {{ example.output }}
 {% endfor %}
 {% endif %}
 
-Respond with ONLY a JSON object:
+Respond with ONLY a JSON object. Each step must have exactly one "args" object — do not repeat the "args" key:
 {"description": "...", "steps": [{"id": 1, "description": "...", "tool": "...", "args": {}, "depends_on": []}]}

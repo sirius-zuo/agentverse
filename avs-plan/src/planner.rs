@@ -145,7 +145,15 @@ pub async fn generate_plan(
         _ => raw,
     };
 
-    let plan: Plan = serde_json::from_str(json_str).map_err(|e| {
+    // Parse via Value first so duplicate keys (e.g. "args" appearing twice in
+    // a step) are silently merged (last value wins) rather than hard-erroring.
+    let value: serde_json::Value = serde_json::from_str(json_str).map_err(|e| {
+        AgentError::Model(agentverse::ModelError::InvalidResponse(format!(
+            "Failed to parse plan JSON: {}. Response was: {}",
+            e, response.content
+        )))
+    })?;
+    let plan: Plan = serde_json::from_value(value).map_err(|e| {
         AgentError::Model(agentverse::ModelError::InvalidResponse(format!(
             "Failed to parse plan JSON: {}. Response was: {}",
             e, response.content
