@@ -87,10 +87,11 @@ where
                         content: format!("Thought: {}", thought),
                     });
                     // Anthropic rejects requests ending with an assistant message.
-                    // A user nudge ensures the next build_request sees a user turn last.
+                    // The nudge must also push the model toward a terminal action —
+                    // "Continue." alone causes an infinite thought loop.
                     mem.append(agentverse::Message {
                         role: agentverse::memory::MessageRole::User,
-                        content: "Continue.".to_string(),
+                        content: "Either call a tool (Action: / Action Input:) or give your final answer (Answer: ...).".to_string(),
                     });
                 }
                 CycleAction::ToolCall { tool_name, args } => {
