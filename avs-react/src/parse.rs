@@ -53,7 +53,13 @@ pub fn parse_response(response: &str) -> CycleAction {
         return CycleAction::ToolCall { tool_name, args };
     }
 
-    let thought = response.trim().to_string();
+    // Strip a leading "Thought: " prefix so the caller doesn't double-wrap it.
+    let raw = response.trim();
+    let thought = if raw.to_lowercase().starts_with("thought:") {
+        raw["thought:".len()..].trim().to_string()
+    } else {
+        raw.to_string()
+    };
     if thought.is_empty() {
         CycleAction::Error {
             message: "Empty response from model".to_string(),

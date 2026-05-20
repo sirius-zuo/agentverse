@@ -81,14 +81,17 @@ where
 
             match action {
                 CycleAction::Continue { thought } => {
-                    self.skeleton
-                        .memory()
-                        .lock()
-                        .await
-                        .append(agentverse::Message {
-                            role: agentverse::memory::MessageRole::Assistant,
-                            content: format!("Thought: {}", thought),
-                        });
+                    let mut mem = self.skeleton.memory().lock().await;
+                    mem.append(agentverse::Message {
+                        role: agentverse::memory::MessageRole::Assistant,
+                        content: format!("Thought: {}", thought),
+                    });
+                    // Anthropic rejects requests ending with an assistant message.
+                    // A user nudge ensures the next build_request sees a user turn last.
+                    mem.append(agentverse::Message {
+                        role: agentverse::memory::MessageRole::User,
+                        content: "Continue.".to_string(),
+                    });
                 }
                 CycleAction::ToolCall { tool_name, args } => {
                     // Save the model's own reasoning so the next iteration has full context.
