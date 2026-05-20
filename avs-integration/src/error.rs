@@ -29,4 +29,6 @@ pub enum IntegrationError {
         connector: String,
         source: ConnectorError,
     },
+    #[error("Config error: {0}")]
+    Config(String),
 }

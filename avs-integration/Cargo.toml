@@ -25,3 +25,4 @@ agentverse = { path = "../avs-core" }
 axum.workspace = true
 tokio.workspace = true
 uuid.workspace = true
+tempfile = "3"
