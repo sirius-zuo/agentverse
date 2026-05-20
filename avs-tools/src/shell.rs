@@ -77,6 +77,7 @@ impl AsyncTool for ShellTool {
             return Err(ToolError::Execution("Command is empty".to_string()));
         }
 
+        // Best-effort blocked-command check on the first token.
         let binary = &parts[0];
         if self.blocked.iter().any(|b| b == binary) {
             return Err(ToolError::Execution(format!(
@@ -84,14 +85,15 @@ impl AsyncTool for ShellTool {
             )));
         }
 
-        let child = Command::new(binary)
-            .args(&parts[1..])
+        // Run via `sh -c` so pipes, redirections, and variables work.
+        let child = Command::new("sh")
+            .args(["-c", command])
             .current_dir(&self.workdir)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true)
             .spawn()
-            .map_err(|e| ToolError::Execution(format!("Failed to spawn '{binary}': {e}")))?;
+            .map_err(|e| ToolError::Execution(format!("Failed to spawn command: {e}")))?;
 
         let output = timeout(self.timeout_duration, child.wait_with_output())
             .await
