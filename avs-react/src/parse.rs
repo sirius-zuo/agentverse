@@ -19,19 +19,17 @@ use serde_json::Value;
 /// that follow an indented format example is handled correctly.
 /// Answer takes priority over Action when both appear.
 pub fn parse_response(response: &str) -> CycleAction {
-    let mut found_answer: Option<String> = None;
+    let lines: Vec<&str> = response.lines().collect();
+    let mut answer_idx: Option<usize> = None;
     let mut found_action: Option<String> = None;
     let mut found_action_input: Option<String> = None;
 
-    for line in response.lines() {
+    for (i, &line) in lines.iter().enumerate() {
         let trimmed = line.trim();
         let lower = trimmed.to_lowercase();
 
-        if lower.starts_with("answer:") && found_answer.is_none() {
-            let val = trimmed["Answer:".len()..].trim().to_string();
-            if !val.is_empty() {
-                found_answer = Some(val);
-            }
+        if lower.starts_with("answer:") && answer_idx.is_none() {
+            answer_idx = Some(i);
         } else if lower.starts_with("action input:") && found_action_input.is_none() {
             found_action_input = Some(trimmed["Action Input:".len()..].trim().to_string());
         } else if lower.starts_with("action:") && found_action.is_none() {
@@ -42,8 +40,21 @@ pub fn parse_response(response: &str) -> CycleAction {
         }
     }
 
-    if let Some(answer) = found_answer {
-        return CycleAction::Done { answer };
+    // Answer captures everything from the Answer: label to end-of-response so
+    // multi-line answers (bullet lists, etc.) are not truncated.
+    if let Some(idx) = answer_idx {
+        let first = lines[idx].trim()["answer:".len()..].trim();
+        let rest = lines[idx + 1..].join("\n");
+        let answer = if rest.trim().is_empty() {
+            first.to_string()
+        } else if first.is_empty() {
+            rest.trim().to_string()
+        } else {
+            format!("{}\n{}", first, rest).trim().to_string()
+        };
+        if !answer.is_empty() {
+            return CycleAction::Done { answer };
+        }
     }
 
     if let Some(tool_name) = found_action {
@@ -177,6 +188,21 @@ mod tests {
         let result = parse_response("Thought: Done.\n    Answer: 1569");
         match result {
             CycleAction::Done { answer } => assert_eq!(answer, "1569"),
+            other => panic!("Expected Done, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_multiline_answer() {
+        let result = parse_response(
+            "Answer: Here is what I can do:\n- Calculator: math\n- DateTime: current time",
+        );
+        match result {
+            CycleAction::Done { answer } => {
+                assert!(answer.contains("Here is what I can do:"));
+                assert!(answer.contains("- Calculator: math"));
+                assert!(answer.contains("- DateTime: current time"));
+            }
             other => panic!("Expected Done, got {:?}", other),
         }
     }
