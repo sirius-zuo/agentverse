@@ -100,14 +100,26 @@ where
                 .collect::<Vec<_>>()
                 .join("\n");
 
-            let sub_plan = generate_plan(
+            let sub_plan = match generate_plan(
                 &*self.model,
                 &self.registry,
                 sub_goal,
                 &tool_summaries,
                 &conversation,
             )
-            .await?;
+            .await
+            {
+                Ok(p) => p,
+                Err(e) => {
+                    let msg = format!("Plan generation failed: {e}");
+                    sub_goal_results.push((i, msg.clone()));
+                    self.memory.lock().await.append(agentverse::Message {
+                        role: agentverse::memory::MessageRole::System,
+                        content: format!("Sub-goal {i}: {msg}"),
+                    });
+                    continue;
+                }
+            };
 
             let mut step_results: Vec<String> = Vec::new();
             for step in &sub_plan.steps {

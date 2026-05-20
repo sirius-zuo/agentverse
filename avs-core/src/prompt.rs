@@ -69,7 +69,10 @@ const DEFAULT_PLAN_AND_EXECUTE_TEMPLATE: &str =
      Assistant: {{ example.output }}\n\
      {% endfor %}\n\
      {% endif %}\n\n\
-     Respond with ONLY a JSON object. Each step must have exactly one \"args\" object — do not repeat the \"args\" key:\n\
+     Respond with ONLY a JSON object. Rules:\n\
+     - Each step has exactly one \"args\" object — do not repeat the key\n\
+     - Shell commands must use single quotes for quoting (e.g. grep '^pattern' not grep \"^pattern\")\n\
+     - \"description\" values must not contain double-quote characters\n\
      {\"description\": \"...\", \"steps\": [{\"id\": 1, \"description\": \"...\", \"tool\": \"...\", \"args\": {}, \"depends_on\": []}]}";
 
 const DEFAULT_HIERARCHICAL_DECOMPOSE_TEMPLATE: &str =

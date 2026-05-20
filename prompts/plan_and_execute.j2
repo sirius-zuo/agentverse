@@ -16,5 +16,8 @@ Assistant: {{ example.output }}
 {% endfor %}
 {% endif %}
 
-Respond with ONLY a JSON object. Each step must have exactly one "args" object — do not repeat the "args" key:
+Respond with ONLY a JSON object. Rules:
+- Each step has exactly one "args" object — do not repeat the key
+- Shell commands must use single quotes for quoting (e.g. grep '^pattern' not grep "^pattern")
+- "description" values must not contain double-quote characters
 {"description": "...", "steps": [{"id": 1, "description": "...", "tool": "...", "args": {}, "depends_on": []}]}
