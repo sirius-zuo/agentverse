@@ -14,7 +14,7 @@ use axum::{
     Router,
 };
 use config::ServerConfig;
-use routes::{health, invoke, ready, AppState};
+use routes::{aether_invoke, health, invoke, ready, AppState};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
@@ -98,12 +98,61 @@ async fn main() {
         tools: Arc::new(Mutex::new(tool_registry)),
     };
 
+    // Register with aether if AETHER_REGISTRY_URL is set
+    let aether_instance_id: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+
+    if let Some(registry_url) = &server_config.aether_registry_url {
+        let own_url = format!("http://{}:{}", server_config.host, server_config.port);
+        let aether = aether_client::AetherClient::new(
+            registry_url.clone(),
+            server_config.agent_name.clone(),
+            own_url,
+            vec![],
+        );
+        if let Some(reg) = aether.register().await {
+            *aether_instance_id.lock().await = Some(reg.instance_id.clone());
+            info!(instance_id = %reg.instance_id, "Registered with aether");
+        }
+    }
+
+    // Deregister on SIGTERM (or Ctrl-C on non-Unix)
+    {
+        let registry_url = server_config.aether_registry_url.clone();
+        let agent_name = server_config.agent_name.clone();
+        let agent_url = format!("http://{}:{}", server_config.host, server_config.port);
+        let instance_id_clone = Arc::clone(&aether_instance_id);
+
+        tokio::spawn(async move {
+            #[cfg(unix)]
+            {
+                use tokio::signal::unix::{signal, SignalKind};
+                let mut sigterm = signal(SignalKind::terminate())
+                    .expect("failed to install SIGTERM handler");
+                sigterm.recv().await;
+            }
+            #[cfg(not(unix))]
+            {
+                tokio::signal::ctrl_c().await.ok();
+            }
+
+            if let Some(url) = registry_url {
+                if let Some(id) = instance_id_clone.lock().await.as_deref() {
+                    let client = aether_client::AetherClient::new(&url, &agent_name, &agent_url, vec![]);
+                    client.deregister(id).await;
+                    info!("Deregistered from aether");
+                }
+            }
+            std::process::exit(0);
+        });
+    }
+
     // Build routes
     let cors = CorsLayer::permissive();
     let app = Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
         .route("/invoke", post(invoke))
+        .route("/aether/invoke", post(aether_invoke))
         .layer(cors)
         .layer(middleware::from_fn(auth::auth_middleware))
         .with_state(state);
