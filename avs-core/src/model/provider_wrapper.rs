@@ -4,6 +4,8 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
+use tracing::info;
+
 use super::{AnthropicProvider, GeminiProvider, ModelProvider, OpenAICompatible};
 use crate::config::ProviderConfig;
 use crate::error::{AgentError, ModelError};
@@ -131,6 +133,19 @@ impl ModelProvider for ProviderWrapper {
     }
 
     async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, ModelError> {
+        // Debug: log full request before sending
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            if let Some(sys) = &request.system {
+                tracing::debug!(system_prompt = %sys, "LLM request: system");
+            }
+            for (i, msg) in request.messages.iter().enumerate() {
+                tracing::debug!(index = i, role = ?msg.role, content = %msg.content, "LLM request: message");
+            }
+            if let Some(tools) = &request.tools {
+                tracing::debug!(tool_count = tools.len(), "LLM request: tools");
+            }
+        }
+
         let mut cb = self.circuit_breaker.write().await;
         if !cb.can_execute() {
             return Err(ModelError::CircuitOpen(
@@ -147,6 +162,16 @@ impl ModelProvider for ProviderWrapper {
                 Ok(response) => {
                     let mut cb = self.circuit_breaker.write().await;
                     cb.record_success();
+                    info!(
+                        input_tokens = response.usage.input_tokens,
+                        output_tokens = response.usage.output_tokens,
+                        cache_read_tokens = response.usage.cache_read_tokens,
+                        cache_write_tokens = response.usage.cache_write_tokens,
+                        "LLM call complete"
+                    );
+                    if tracing::enabled!(tracing::Level::DEBUG) {
+                        tracing::debug!(response = %response.content, "LLM response");
+                    }
                     return Ok(response);
                 }
                 Err(e) => {
@@ -156,7 +181,6 @@ impl ModelProvider for ProviderWrapper {
                         cb.record_failure();
                         return Err(Self::convert_to_rate_limited(e));
                     }
-                    // Wait before retry with exponential backoff
                     let delay =
                         Duration::from_millis(self.retry_delay_ms * 2u64.pow(attempt as u32));
                     tokio::time::sleep(delay).await;
@@ -167,5 +191,45 @@ impl ModelProvider for ProviderWrapper {
         Err(last_error.unwrap_or_else(|| {
             ModelError::ApiError("Unexpected: no error after retries".to_string())
         }))
+    }
+}
+
+#[cfg(test)]
+mod logging_tests {
+    use super::*;
+    use crate::model::{GenerateResponse, UsageStats};
+    use crate::error::ModelError;
+
+    struct FakeProvider;
+
+    #[async_trait::async_trait]
+    impl ModelProvider for FakeProvider {
+        fn name(&self) -> &str { "fake" }
+        async fn generate(&self, _request: GenerateRequest) -> Result<GenerateResponse, ModelError> {
+            Ok(GenerateResponse {
+                content: "ok".to_string(),
+                usage: UsageStats {
+                    input_tokens: 10,
+                    output_tokens: 5,
+                    cache_read_tokens: 2,
+                    cache_write_tokens: 0,
+                },
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn generate_logs_usage_without_panic() {
+        let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+
+        let wrapper = ProviderWrapper::new(FakeProvider);
+        let result = wrapper.generate(GenerateRequest {
+            system: Some("sys".to_string()),
+            messages: vec![],
+            tools: None,
+        }).await;
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        assert_eq!(resp.usage.input_tokens, 10);
     }
 }
