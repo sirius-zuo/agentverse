@@ -1,4 +1,5 @@
 // avs-server/src/routes.rs
+use crate::envelope::{Envelope, EnvelopeKind};
 use agentverse::Agent;
 use agentverse_guardrails::{check_output, check_prompt, RateLimiter};
 use agentverse_tools::ToolRegistry;
@@ -133,6 +134,48 @@ pub async fn ready() -> impl IntoResponse {
     )
 }
 
+pub async fn aether_invoke(
+    State(state): State<AppState>,
+    Json(env): Json<Envelope>,
+) -> impl IntoResponse {
+    if env.kind != EnvelopeKind::Invoke {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "expected envelope kind: invoke" })),
+        );
+    }
+
+    let input = env.payload["input"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+
+    let agent = state.agent.lock().await;
+    let result = agent.invoke("aether", &input).await;
+    drop(agent);
+
+    match result {
+        Ok(output) => {
+            let response = Envelope {
+                id: env.id,
+                kind: EnvelopeKind::Result,
+                payload: serde_json::json!({ "output": output }),
+                metadata: env.metadata,
+            };
+            (StatusCode::OK, Json(serde_json::to_value(response).unwrap()))
+        }
+        Err(e) => {
+            let response = Envelope {
+                id: env.id,
+                kind: EnvelopeKind::Error,
+                payload: serde_json::json!({ "error": e.to_string() }),
+                metadata: env.metadata,
+            };
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::to_value(response).unwrap()))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,6 +216,7 @@ mod tests {
             .route("/health", get(health))
             .route("/ready", get(ready))
             .route("/invoke", post(invoke))
+            .route("/aether/invoke", post(aether_invoke))
             .with_state(state)
     }
 
@@ -258,5 +302,34 @@ mod tests {
         assert!(
             res.status() == StatusCode::OK || res.status() == StatusCode::INTERNAL_SERVER_ERROR
         );
+    }
+
+    #[tokio::test]
+    async fn test_aether_invoke_with_invoke_kind() {
+        let state = make_state();
+        let app = make_app(state);
+        let env = serde_json::json!({
+            "id": "00000000-0000-0000-0000-000000000001",
+            "kind": "invoke",
+            "payload": {"input": "hello from aether"},
+            "metadata": {}
+        });
+        let res = post_json(app, "/aether/invoke", env).await;
+        // 200 (model ok) or 500 (API unreachable with test key) — not 400
+        assert_ne!(res.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_aether_invoke_non_invoke_kind_returns_400() {
+        let state = make_state();
+        let app = make_app(state);
+        let env = serde_json::json!({
+            "id": "00000000-0000-0000-0000-000000000002",
+            "kind": "ping",
+            "payload": {},
+            "metadata": {}
+        });
+        let res = post_json(app, "/aether/invoke", env).await;
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
     }
 }

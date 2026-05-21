@@ -1,4 +1,5 @@
 // avs-server/src/main.rs
+mod aether_client;
 mod auth;
 mod config;
 mod envelope;
