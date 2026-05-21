@@ -387,3 +387,65 @@ fn test_shell_metadata() {
         .unwrap()
         .contains(&json!("command")));
 }
+
+// ─── WebSearch tests ──────────────────────────────────────────────────────────
+
+use agentverse_tools::WebSearch;
+
+const SAMPLE_DDG_HTML: &str = r#"
+    <div class="result">
+        <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Frust-lang.org&rut=abc">The Rust Programming Language</a>
+        <span class="result__snippet">A systems programming language focused on safety.</span>
+    </div>
+    <div class="result">
+        <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fdoc.rust-lang.org&rut=def">Rust Documentation</a>
+        <span class="result__snippet">Official Rust language documentation.</span>
+    </div>
+    <div class="result">
+        <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fcrates.io&rut=ghi">crates.io</a>
+        <span class="result__snippet">Rust package registry.</span>
+    </div>
+"#;
+
+#[test]
+fn web_search_parse_extracts_all_results() {
+    let results = agentverse_tools::web_search::parse_ddg_html(SAMPLE_DDG_HTML, 10);
+    assert_eq!(results.len(), 3);
+    assert_eq!(results[0].0, "The Rust Programming Language");
+    assert_eq!(results[0].1, "https://rust-lang.org");
+    assert_eq!(results[0].2, "A systems programming language focused on safety.");
+}
+
+#[test]
+fn web_search_parse_respects_max_results() {
+    let results = agentverse_tools::web_search::parse_ddg_html(SAMPLE_DDG_HTML, 1);
+    assert_eq!(results.len(), 1);
+}
+
+#[test]
+fn web_search_parse_extracts_all_urls() {
+    let results = agentverse_tools::web_search::parse_ddg_html(SAMPLE_DDG_HTML, 10);
+    assert_eq!(results[1].1, "https://doc.rust-lang.org");
+    assert_eq!(results[2].1, "https://crates.io");
+}
+
+#[test]
+fn web_search_tool_name() {
+    assert_eq!(WebSearch.name(), "web_search");
+}
+
+#[tokio::test]
+#[ignore = "hits real network"]
+async fn web_search_live_returns_results() {
+    let result = WebSearch
+        .execute(json!({
+            "query": "rust programming language",
+            "max_results": 2
+        }))
+        .await;
+    assert!(result.is_ok());
+    let arr = result.unwrap();
+    assert!(!arr.as_array().unwrap().is_empty());
+    assert!(arr[0]["title"].as_str().is_some());
+    assert!(arr[0]["url"].as_str().is_some());
+}
