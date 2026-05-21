@@ -4,6 +4,7 @@ mod config;
 mod envelope;
 mod routes;
 mod stdio_adapter;
+mod unix_adapter;
 
 use agentverse::{Agent, Config};
 use agentverse_guardrails::RateLimiter;
@@ -100,6 +101,12 @@ async fn main() {
             (model_name.clone(), "gemini".to_string())
         }
     };
+
+    if std::env::var("AETHER_SOCKET_PATH").is_ok() {
+        info!(model = %model_name, provider = %provider_name, "Starting in Unix socket adapter mode");
+        unix_adapter::run_unix(agent, model_name, provider_name).await;
+        return;
+    }
 
     if cli.stdio {
         info!(model = %model_name, provider = %provider_name, "Starting in stdio adapter mode");
