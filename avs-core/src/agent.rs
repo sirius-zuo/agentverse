@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
+use tracing::info;
 
 use crate::config::Config;
 use crate::error::AgentError;
@@ -29,6 +30,13 @@ impl Agent {
         prompt_config: &PromptConfig,
     ) -> Result<Self, AgentError> {
         config.validate()?;
+
+        let (model_name, provider_name) = match &config.provider {
+            crate::config::ProviderConfig::OpenAI { model_name, .. } => (model_name.as_str(), "openai"),
+            crate::config::ProviderConfig::Anthropic { model_name, .. } => (model_name.as_str(), "anthropic"),
+            crate::config::ProviderConfig::Gemini { model_name, .. } => (model_name.as_str(), "gemini"),
+        };
+        info!(model = %model_name, provider = %provider_name, "Agent initialized");
 
         let prompt_registry = PromptRegistry::from_config(prompt_config)?;
 
@@ -59,10 +67,11 @@ impl Agent {
     }
 
     pub async fn invoke(&self, _user_id: &str, input: &str) -> Result<String, AgentError> {
-        let provider = self
-            .provider
-            .as_ref()
-            .ok_or_else(|| AgentError::Model(crate::error::ModelError::ApiError("no provider configured".to_string())))?;
+        let provider = self.provider.as_ref().ok_or_else(|| {
+            AgentError::Model(crate::error::ModelError::ApiError(
+                "no provider configured".to_string(),
+            ))
+        })?;
 
         let mut memory = self.memory.write().await;
         memory.append(Message {
@@ -101,5 +110,29 @@ impl Agent {
         });
 
         Ok(response.content)
+    }
+}
+
+#[cfg(test)]
+mod startup_log_tests {
+    use super::*;
+    use crate::config::{Config, ProviderConfig};
+
+    #[test]
+    fn from_config_logs_without_panic() {
+        let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+        let config = Config {
+            provider: ProviderConfig::OpenAI {
+                model_name: "gpt-4o".to_string(),
+                api_key: "test-key".to_string(),
+                base_url: None,
+            },
+            max_messages: 10,
+            tools: vec![],
+            prompts_dir: None,
+            system_prompt: None,
+        };
+        let result = Agent::from_config(config);
+        assert!(result.is_ok());
     }
 }
