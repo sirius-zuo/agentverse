@@ -5,7 +5,7 @@ use tokio::sync::RwLock;
 use crate::config::{Config, ProviderConfig};
 use crate::error::AgentError;
 use crate::memory::{Memory, Message, ShortTermMemory};
-use crate::model::{AnthropicProvider, GeminiProvider, OpenAICompatible, ProviderWrapper};
+use crate::model::{AnthropicProvider, GeminiProvider, ModelProvider, OpenAICompatible, ProviderWrapper};
 use crate::prompt::{PromptConfig, PromptRegistry};
 use crate::tracing::{DefaultTracer, Tracer};
 
@@ -68,17 +68,23 @@ impl Agent {
         &self.prompt_registry
     }
 
-    pub async fn invoke(&self, user_id: &str, input: &str) -> Result<String, AgentError> {
+    pub async fn invoke(&self, _user_id: &str, input: &str) -> Result<String, AgentError> {
+        let provider = self
+            .provider
+            .as_ref()
+            .ok_or_else(|| AgentError::Model(crate::error::ModelError::ApiError("no provider configured".to_string())))?;
+
         let mut memory = self.memory.write().await;
         memory.append(Message {
             role: crate::memory::MessageRole::User,
             content: input.to_string(),
         });
+        let messages = memory
+            .last_n(100)
+            .await
+            .map_err(|e| AgentError::Memory(e.to_string()))?;
         drop(memory);
 
-        // TODO: Strategy loop will be implemented in avs-react
-        // For now, return a placeholder using the system prompt
-        let _ = user_id;
         let mut context = std::collections::HashMap::new();
         context.insert(
             "conversation".to_string(),
@@ -87,7 +93,23 @@ impl Agent {
         let system = self
             .prompt_registry
             .render("system", context)
-            .unwrap_or_else(|_| "You are a helpful assistant.".to_string());
-        Ok(format!("[{}] {}", system, input))
+            .ok()
+            .filter(|s| !s.is_empty());
+
+        let response = provider
+            .generate(crate::model::GenerateRequest {
+                system,
+                messages,
+                tools: None,
+            })
+            .await?;
+
+        let mut memory = self.memory.write().await;
+        memory.append(Message {
+            role: crate::memory::MessageRole::Assistant,
+            content: response.content.clone(),
+        });
+
+        Ok(response.content)
     }
 }
