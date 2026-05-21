@@ -102,6 +102,7 @@ where
                     });
                     info!(
                         iteration = self.current_iteration,
+                        action = "continue",
                         "Thought only, continuing"
                     );
                 }
@@ -116,7 +117,8 @@ where
                     });
                     info!(
                         iteration = self.current_iteration,
-                        tool = tool_name,
+                        action = "tool_call",
+                        tool = %tool_name,
                         "Tool executed"
                     );
                 }
@@ -125,7 +127,13 @@ where
                         role: agentverse::memory::MessageRole::Assistant,
                         content: answer.clone(),
                     });
-                    info!(iteration = self.current_iteration, "Strategy completed");
+                    info!(
+                        iterations = self.current_iteration,
+                        action = "done",
+                        total_input_tokens = self.total_usage.input_tokens,
+                        total_output_tokens = self.total_usage.output_tokens,
+                        "Strategy completed"
+                    );
                     return Ok(agentverse::CycleResult {
                         answer,
                         total_usage: self.total_usage,
@@ -363,5 +371,47 @@ where
     /// so the limit applies per question, not across the agent's lifetime.
     pub fn reset_iteration(&mut self) {
         self.current_iteration = 0;
+    }
+}
+
+#[cfg(test)]
+mod cycle_log_tests {
+    use super::*;
+    use agentverse::{GenerateRequest, GenerateResponse, ModelError, UsageStats};
+    use agentverse_memory::SimpleMemory;
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+
+    struct FakeModel;
+
+    #[async_trait::async_trait]
+    impl agentverse::ModelProvider for FakeModel {
+        fn name(&self) -> &str { "fake" }
+        async fn generate(&self, _req: GenerateRequest) -> Result<GenerateResponse, ModelError> {
+            Ok(GenerateResponse {
+                content: "Answer: 42".to_string(),
+                usage: UsageStats { input_tokens: 5, output_tokens: 3, cache_read_tokens: 0, cache_write_tokens: 0 },
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn done_log_includes_iteration_and_tokens() {
+        let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+
+        let registry = Arc::new(agentverse::PromptRegistry::from_config(
+            &agentverse::PromptConfig::default()
+        ).unwrap());
+        let model = Arc::new(FakeModel);
+        let tools = agentverse_tools::ToolRegistry::new();
+        let memory = Arc::new(Mutex::new(SimpleMemory::new(10)));
+
+        let mut skeleton = CycleSkeleton::new(registry, model, tools, memory, 5);
+        let result = skeleton.run("hello".to_string(), |_s| async move {
+            Ok(CycleAction::Done { answer: "42".to_string() })
+        }).await;
+        assert!(result.is_ok());
+        let r = result.unwrap();
+        assert_eq!(r.answer, "42");
     }
 }
