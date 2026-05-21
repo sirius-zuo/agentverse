@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
-use tracing::info;
+use tracing::{info, warn, error};
 
 use super::{AnthropicProvider, GeminiProvider, ModelProvider, OpenAICompatible};
 use crate::config::ProviderConfig;
@@ -175,10 +175,12 @@ impl ModelProvider for ProviderWrapper {
                     if !Self::should_retry(&e) || attempt == self.max_retries {
                         let mut cb = self.circuit_breaker.write().await;
                         cb.record_failure();
+                        error!(attempt, error = %e, "LLM call failed");
                         return Err(Self::convert_to_rate_limited(e));
                     }
                     let delay =
                         Duration::from_millis(self.retry_delay_ms * 2u64.pow(attempt as u32));
+                    warn!(attempt, retry_delay_ms = delay.as_millis(), error = %e, "LLM call failed, retrying");
                     tokio::time::sleep(delay).await;
                 }
             }

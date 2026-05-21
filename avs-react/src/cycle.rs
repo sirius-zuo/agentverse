@@ -128,7 +128,7 @@ where
                         content: answer.clone(),
                     });
                     info!(
-                        iterations = self.current_iteration,
+                        iteration = self.current_iteration,
                         action = "done",
                         total_input_tokens = self.total_usage.input_tokens,
                         total_output_tokens = self.total_usage.output_tokens,

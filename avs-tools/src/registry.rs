@@ -3,6 +3,17 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+fn safe_truncate(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut idx = max_bytes;
+    while idx > 0 && !s.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    &s[..idx]
+}
+
 /// Registry of available async tools, optionally tagged with a category.
 ///
 /// Internal storage uses `Arc<dyn AsyncTool>` so `filter_category` can
@@ -54,16 +65,14 @@ impl ToolRegistry {
             })?;
 
         let args_str = args.to_string();
-        let args_preview = if args_str.len() > 200 { &args_str[..200] } else { &args_str };
-        tracing::debug!(tool_name = %name, tool_args = %args_preview, "Tool call");
+        tracing::debug!(tool_name = %name, tool_args = %safe_truncate(&args_str, 200), "Tool call");
 
         let result = tool.execute(args).await;
 
         match &result {
             Ok(v) => {
                 let res_str = v.to_string();
-                let res_preview = if res_str.len() > 200 { &res_str[..200] } else { &res_str };
-                tracing::info!(tool_name = %name, tool_result = %res_preview, "Tool executed");
+                tracing::info!(tool_name = %name, tool_result = %safe_truncate(&res_str, 200), "Tool executed");
             }
             Err(e) => {
                 tracing::warn!(tool_name = %name, error = %e, "Tool error");

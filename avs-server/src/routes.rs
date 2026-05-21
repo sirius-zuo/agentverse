@@ -164,10 +164,20 @@ pub async fn aether_invoke(
         );
     }
 
+    let request_id = uuid::Uuid::new_v4();
+    let start = std::time::Instant::now();
+
     let input = env.payload["input"]
         .as_str()
         .unwrap_or_default()
         .to_string();
+
+    info!(
+        request_id = %request_id,
+        envelope_id = %env.id,
+        message_len = input.len(),
+        "Processing aether request"
+    );
 
     let agent = state.agent.lock().await;
     let result = agent.invoke("aether", &input).await;
@@ -175,6 +185,13 @@ pub async fn aether_invoke(
 
     match result {
         Ok(output) => {
+            info!(
+                request_id = %request_id,
+                envelope_id = %env.id,
+                status = 200,
+                latency_ms = start.elapsed().as_millis(),
+                "Aether request completed"
+            );
             let response = Envelope {
                 id: env.id,
                 kind: EnvelopeKind::Result,
@@ -187,6 +204,14 @@ pub async fn aether_invoke(
             )
         }
         Err(e) => {
+            error!(
+                request_id = %request_id,
+                envelope_id = %env.id,
+                status = 500,
+                latency_ms = start.elapsed().as_millis(),
+                error = %e,
+                "Aether request failed"
+            );
             let response = Envelope {
                 id: env.id,
                 kind: EnvelopeKind::Error,

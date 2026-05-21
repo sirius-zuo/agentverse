@@ -36,10 +36,23 @@ async fn main() {
         ServerConfig::from_env()
     };
 
+    let (model_name, provider_name) = match &server_config.agent.provider {
+        agentverse::ProviderConfig::OpenAI { model_name, .. } => {
+            (model_name.clone(), "openai".to_string())
+        }
+        agentverse::ProviderConfig::Anthropic { model_name, .. } => {
+            (model_name.clone(), "anthropic".to_string())
+        }
+        agentverse::ProviderConfig::Gemini { model_name, .. } => {
+            (model_name.clone(), "gemini".to_string())
+        }
+    };
+
     info!(
         host = %server_config.host,
         port = server_config.port,
-        provider = ?server_config.agent.provider,
+        model = %model_name,
+        provider = %provider_name,
         "Starting AgentVerse server"
     );
 
@@ -71,18 +84,6 @@ async fn main() {
     ));
 
     // Build app state
-    let (model_name, _provider_name) = match &server_config.agent.provider {
-        agentverse::ProviderConfig::OpenAI { model_name, .. } => {
-            (model_name.clone(), "openai".to_string())
-        }
-        agentverse::ProviderConfig::Anthropic { model_name, .. } => {
-            (model_name.clone(), "anthropic".to_string())
-        }
-        agentverse::ProviderConfig::Gemini { model_name, .. } => {
-            (model_name.clone(), "gemini".to_string())
-        }
-    };
-
     let state = AppState {
         agent: Arc::new(Mutex::new(agent)),
         rate_limiter,
