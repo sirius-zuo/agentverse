@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
-use crate::config::{Config, ProviderConfig};
+use crate::config::Config;
 use crate::error::AgentError;
 use crate::memory::{Memory, Message, ShortTermMemory};
 use crate::model::{ModelProvider, ProviderWrapper};
