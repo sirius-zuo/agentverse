@@ -14,3 +14,4 @@ chrono.workspace = true
 url = "2"
 shell-words = "1"
 tokio = { workspace = true, features = ["process", "time"] }
+scraper = "0.22"
