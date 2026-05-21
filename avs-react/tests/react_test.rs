@@ -262,41 +262,6 @@ async fn test_cycle_skeleton_build_request() {
     assert!(request.messages.iter().any(|m| m.content.contains("Hello")));
 }
 
-#[tokio::test]
-async fn test_cycle_run_with_answer() {
-    let mut skeleton = mock_skeleton(vec!["Answer: done".to_string()], empty_registry(), 10);
-
-    let result = skeleton
-        .run("test input".to_string(), |_s| async {
-            Ok(CycleAction::Done {
-                answer: "immediate".to_string(),
-            })
-        })
-        .await;
-
-    assert_eq!(result.unwrap().answer, "immediate");
-}
-
-#[tokio::test]
-async fn test_cycle_run_max_iterations() {
-    let mut skeleton = mock_skeleton(vec!["Thought: looping".to_string()], empty_registry(), 2);
-
-    let result = skeleton
-        .run("test".to_string(), |_s| async {
-            Ok(CycleAction::Continue {
-                thought: "looping".to_string(),
-            })
-        })
-        .await;
-
-    assert!(result.is_err());
-    match result.unwrap_err() {
-        agentverse::AgentError::Model(agentverse::ModelError::Timeout(msg)) => {
-            assert!(msg.contains("Max iterations"));
-        }
-        other => panic!("Expected Timeout error, got {:?}", other),
-    }
-}
 
 // ─── ReActStrategy::run() tests ───────────────────────────────────────────────
 
@@ -533,54 +498,6 @@ async fn test_cycle_build_tools_str_with_parameters() {
     assert!(system.contains("required"));
 }
 
-#[tokio::test]
-async fn test_cycle_run_with_tool_call() {
-    let mut tool_registry = ToolRegistry::new();
-    tool_registry.register(MockTool::new("echo", "echo"));
-
-    let mut skeleton = CycleSkeleton::new(
-        Arc::new(PromptRegistry::new()),
-        Arc::new(MockModel {
-            responses: vec!["Answer: done".to_string()],
-            index: AtomicUsize::new(0),
-        }),
-        tool_registry,
-        Arc::new(Mutex::new(TestMemory::new(10))),
-        5,
-    );
-    let mut calls = 0usize;
-    let result = skeleton
-        .run("test".to_string(), |_s| {
-            let action = if calls == 0 {
-                calls += 1;
-                CycleAction::ToolCall {
-                    tool_name: "echo".to_string(),
-                    args: json!({}),
-                }
-            } else {
-                CycleAction::Done {
-                    answer: "done".to_string(),
-                }
-            };
-            async move { Ok(action) }
-        })
-        .await;
-    assert_eq!(result.unwrap().answer, "done");
-}
-
-#[tokio::test]
-async fn test_cycle_run_with_error_action() {
-    let mut skeleton = mock_skeleton(vec![], empty_registry(), 5);
-    let result = skeleton
-        .run("test".to_string(), |_s| async {
-            Ok(CycleAction::Error {
-                message: "strategy error".to_string(),
-            })
-        })
-        .await;
-    assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("strategy error"));
-}
 
 // ─── New test: ToolRegistry with Calculator ───────────────────────────────────
 

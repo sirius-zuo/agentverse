@@ -87,6 +87,18 @@ impl ProviderWrapper {
         }
     }
 
+    pub fn openai(api_base: &str, model_name: &str, api_key: &str) -> Self {
+        Self::new(OpenAICompatible::new(api_base, model_name, api_key))
+    }
+
+    pub fn anthropic(api_base: &str, model_name: &str, api_key: &str) -> Self {
+        Self::new(AnthropicProvider::new(api_base, model_name, api_key))
+    }
+
+    pub fn gemini(api_base: &str, model_name: &str, api_key: &str) -> Self {
+        Self::new(GeminiProvider::new(api_base, model_name, api_key))
+    }
+
     pub fn from_config(config: ProviderConfig) -> Result<Self, AgentError> {
         let inner: Arc<dyn ModelProvider> = match config {
             ProviderConfig::OpenAI { .. } => Arc::new(OpenAICompatible::from_config(config)?),

@@ -3,13 +3,12 @@
 //! Provides the fixed loop structure; each strategy only implements
 //! its own `step()` logic via a closure.
 
-use agentverse::{AgentError, Message, ModelProvider, PromptRegistry};
+use agentverse::{AgentError, ModelProvider, PromptRegistry};
 use agentverse_guardrails::{check_output, check_prompt};
 use agentverse_tools::ToolRegistry;
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{debug, error, info};
 
 /// The fixed cycle skeleton that all strategies share.
 ///
@@ -69,89 +68,6 @@ where
             total_usage: agentverse::UsageStats::default(),
             react_primed: false,
         }
-    }
-
-    /// Run the strategy loop (async).
-    ///
-    /// Each strategy provides its own `step` closure that returns a `CycleAction`.
-    pub async fn run<F, Fut>(
-        &mut self,
-        initial_message: String,
-        mut step: F,
-    ) -> Result<agentverse::CycleResult, AgentError>
-    where
-        F: FnMut(&mut Self) -> Fut,
-        Fut: std::future::Future<Output = Result<CycleAction, AgentError>>,
-    {
-        self.memory.lock().await.append(Message {
-            role: agentverse::memory::MessageRole::User,
-            content: initial_message,
-        });
-
-        while self.current_iteration < self.max_iterations {
-            self.current_iteration += 1;
-            debug!(iteration = self.current_iteration, "Running strategy step");
-
-            let action = step(self).await?;
-
-            match action {
-                CycleAction::Continue { thought } => {
-                    self.memory.lock().await.append(Message {
-                        role: agentverse::memory::MessageRole::Assistant,
-                        content: format!("Thought: {}", thought),
-                    });
-                    info!(
-                        iteration = self.current_iteration,
-                        action = "continue",
-                        "Thought only, continuing"
-                    );
-                }
-                CycleAction::ToolCall { tool_name, args } => {
-                    let result = self.execute_tool(&tool_name, args).await?;
-                    // User role for tool observations — text-based ReAct does not use
-                    // native tool calling, so "tool" role (which requires tool_call_id)
-                    // breaks chat templates on local models.
-                    self.memory.lock().await.append(Message {
-                        role: agentverse::memory::MessageRole::User,
-                        content: format!("Tool: {}\nResult: {}", tool_name, result),
-                    });
-                    info!(
-                        iteration = self.current_iteration,
-                        action = "tool_call",
-                        tool = %tool_name,
-                        "Tool executed"
-                    );
-                }
-                CycleAction::Done { answer } => {
-                    self.memory.lock().await.append(Message {
-                        role: agentverse::memory::MessageRole::Assistant,
-                        content: answer.clone(),
-                    });
-                    info!(
-                        iteration = self.current_iteration,
-                        action = "done",
-                        total_input_tokens = self.total_usage.input_tokens,
-                        total_output_tokens = self.total_usage.output_tokens,
-                        "Strategy completed"
-                    );
-                    return Ok(agentverse::CycleResult {
-                        answer,
-                        total_usage: self.total_usage,
-                    });
-                }
-                CycleAction::Error { message } => {
-                    error!(error = %message, "Strategy error");
-                    return Err(AgentError::Model(agentverse::ModelError::InvalidResponse(
-                        message,
-                    )));
-                }
-            }
-        }
-
-        Err(AgentError::Model(agentverse::ModelError::Timeout(format!(
-            "Max iterations ({}) reached",
-            self.max_iterations
-        ))))
     }
 
     /// Execute a tool by name with the given arguments.
@@ -374,44 +290,3 @@ where
     }
 }
 
-#[cfg(test)]
-mod cycle_log_tests {
-    use super::*;
-    use agentverse::{GenerateRequest, GenerateResponse, ModelError, UsageStats};
-    use agentverse_memory::SimpleMemory;
-    use std::sync::Arc;
-    use tokio::sync::Mutex;
-
-    struct FakeModel;
-
-    #[async_trait::async_trait]
-    impl agentverse::ModelProvider for FakeModel {
-        fn name(&self) -> &str { "fake" }
-        async fn generate(&self, _req: GenerateRequest) -> Result<GenerateResponse, ModelError> {
-            Ok(GenerateResponse {
-                content: "Answer: 42".to_string(),
-                usage: UsageStats { input_tokens: 5, output_tokens: 3, cache_read_tokens: 0, cache_write_tokens: 0 },
-            })
-        }
-    }
-
-    #[tokio::test]
-    async fn done_log_includes_iteration_and_tokens() {
-        let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-
-        let registry = Arc::new(agentverse::PromptRegistry::from_config(
-            &agentverse::PromptConfig::default()
-        ).unwrap());
-        let model = Arc::new(FakeModel);
-        let tools = agentverse_tools::ToolRegistry::new();
-        let memory = Arc::new(Mutex::new(SimpleMemory::new(10)));
-
-        let mut skeleton = CycleSkeleton::new(registry, model, tools, memory, 5);
-        let result = skeleton.run("hello".to_string(), |_s| async move {
-            Ok(CycleAction::Done { answer: "42".to_string() })
-        }).await;
-        assert!(result.is_ok());
-        let r = result.unwrap();
-        assert_eq!(r.answer, "42");
-    }
-}

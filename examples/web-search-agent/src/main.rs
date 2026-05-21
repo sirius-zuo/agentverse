@@ -8,7 +8,7 @@
 //   MODEL_NAME=Qwen3.6-35B-A3B-GGUF \
 //   cargo run -p example-web-search-agent -- "rust async programming" 3
 
-use agentverse::{OpenAICompatible, PromptConfig, PromptRegistry, ProviderWrapper};
+use agentverse::{PromptConfig, PromptRegistry, ProviderWrapper};
 use agentverse_memory::SimpleMemory;
 use agentverse_plan::PlanStrategy;
 use agentverse_logging as avs_logging;
@@ -44,7 +44,7 @@ async fn main() {
 
     tracing::info!(model = %model_name, base_url = %base_url, topic = %topic, n = %n, "Web Search Agent");
 
-    let model = Arc::new(ProviderWrapper::new(OpenAICompatible::new(&base_url, &model_name, &api_key)));
+    let model = Arc::new(ProviderWrapper::openai(&base_url, &model_name, &api_key));
     let registry = Arc::new(
         PromptRegistry::from_config(&PromptConfig {
             prompts_dir: Some(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string()),
