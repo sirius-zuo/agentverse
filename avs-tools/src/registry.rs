@@ -48,8 +48,28 @@ impl ToolRegistry {
         let (tool, _) = self
             .tools
             .get(name)
-            .ok_or_else(|| ToolError::NotFound(name.to_string()))?;
-        tool.execute(args).await
+            .ok_or_else(|| {
+                tracing::warn!(tool_name = %name, "Tool not found");
+                ToolError::NotFound(name.to_string())
+            })?;
+
+        let args_str = args.to_string();
+        let args_preview = if args_str.len() > 200 { &args_str[..200] } else { &args_str };
+        tracing::debug!(tool_name = %name, tool_args = %args_preview, "Tool call");
+
+        let result = tool.execute(args).await;
+
+        match &result {
+            Ok(v) => {
+                let res_str = v.to_string();
+                let res_preview = if res_str.len() > 200 { &res_str[..200] } else { &res_str };
+                tracing::info!(tool_name = %name, tool_result = %res_preview, "Tool executed");
+            }
+            Err(e) => {
+                tracing::warn!(tool_name = %name, error = %e, "Tool error");
+            }
+        }
+        result
     }
 
     /// Return JSON schema objects for all registered tools (for prompt injection).
@@ -134,5 +154,41 @@ impl ToolRegistry {
 impl Default for ToolRegistry {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod logging_tests {
+    use super::*;
+    use agentverse::{AsyncTool, ToolResult};
+    use serde_json::json;
+
+    struct EchoTool;
+
+    #[async_trait::async_trait]
+    impl AsyncTool for EchoTool {
+        fn name(&self) -> &str { "echo" }
+        fn description(&self) -> &str { "echoes input" }
+        fn parameters(&self) -> serde_json::Value { json!({"type":"object","properties":{"msg":{"type":"string"}},"required":["msg"]}) }
+        async fn execute(&self, args: serde_json::Value) -> ToolResult {
+            Ok(args["msg"].as_str().unwrap_or("").to_string().into())
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_logs_without_panic() {
+        let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+        let mut registry = ToolRegistry::new();
+        registry.register(EchoTool);
+        let result = registry.execute("echo", json!({"msg": "hello"})).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn execute_unknown_tool_logs_error() {
+        let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+        let registry = ToolRegistry::new();
+        let result = registry.execute("nonexistent", json!({})).await;
+        assert!(result.is_err());
     }
 }

@@ -15,3 +15,8 @@ url = "2"
 shell-words = "1"
 tokio = { workspace = true, features = ["process", "time"] }
 scraper = "0.22"
+tracing.workspace = true
+
+[dev-dependencies]
+tracing-subscriber = { workspace = true }
+async-trait = { workspace = true }
