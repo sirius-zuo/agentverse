@@ -34,9 +34,8 @@ async fn main() {
         .unwrap_or_else(|_| "/Users/jinzuo/projects/AgentVerse".to_string());
 
     tracing::info!(model = %model_name, base_url = %base_url, "Code Review Agent");
-    println!("Strategy: Hierarchical Planning");
-    println!("Tools: FileSearch + ShellTool");
-    println!();
+    tracing::info!("Strategy: Hierarchical Planning");
+    tracing::info!("Tools: FileSearch + ShellTool");
 
     let model = Arc::new(OpenAICompatible::new(&base_url, &model_name, &api_key));
     let registry = Arc::new(

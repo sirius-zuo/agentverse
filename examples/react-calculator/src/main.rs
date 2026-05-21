@@ -30,10 +30,8 @@ async fn main() {
         std::env::var("MODEL_NAME").unwrap_or_else(|_| "Qwen3.6-35B-A3B-GGUF".to_string());
 
     tracing::info!(model = %model_name, base_url = %base_url, "ReAct Calculator");
-    println!("Tool: Calculator (add, subtract, multiply, divide)");
-    println!(
-        "Type an arithmetic question and press Enter. Type \"exit\" or press Ctrl+C to quit.\n"
-    );
+    tracing::info!("Tool: Calculator (add, subtract, multiply, divide)");
+    println!("Type an arithmetic question and press Enter. Type \"exit\" or press Ctrl+C to quit.\n");
 
     let model = Arc::new(OpenAICompatible::new(&base_url, &model_name, &api_key));
     let registry = Arc::new(

@@ -33,9 +33,8 @@ async fn main() {
         .unwrap_or_else(|_| "claude-haiku-4-5-20251001".to_string());
 
     tracing::info!(model = %model_name, "Anthropic ReAct Agent");
-    println!("Tool: Calculator");
-    println!("Prompt caching: enabled (system prompt + penultimate message)");
-    println!();
+    tracing::info!("Tool: Calculator");
+    tracing::info!("Prompt caching: enabled (system prompt + penultimate message)");
 
     let model = Arc::new(AnthropicProvider::new(
         "https://api.anthropic.com",

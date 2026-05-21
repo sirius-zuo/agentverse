@@ -46,7 +46,7 @@ async fn main() {
         .await
         .expect("integration config");
 
-    println!("HR assistant ready…");
+    tracing::info!("HR assistant ready");
     runtime
         .run(move |event: Event| {
             let strategy = Arc::clone(&strategy);
