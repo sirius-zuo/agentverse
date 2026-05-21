@@ -1,5 +1,6 @@
 use tracing_subscriber::EnvFilter;
 
+/// Initialises the global tracing subscriber. Reads `RUST_LOG` for level filter and `LOG_FORMAT=json` for structured JSON output. Safe to call multiple times.
 pub fn init() {
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info"));
@@ -8,14 +9,13 @@ pub fn init() {
         tracing_subscriber::fmt()
             .json()
             .with_env_filter(filter)
-            .with_target(false)
+            .with_target(true)
             .try_init()
             .ok();
     } else {
         tracing_subscriber::fmt()
             .with_env_filter(filter)
             .with_target(false)
-            .with_thread_ids(false)
             .try_init()
             .ok();
     }
