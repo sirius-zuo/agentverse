@@ -8,6 +8,8 @@ pub struct ServerConfig {
     pub port: u16,
     pub agent: AgentConfig,
     pub guardrails: GuardrailsConfig,
+    pub aether_registry_url: Option<String>,
+    pub agent_name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,6 +50,9 @@ impl Default for ServerConfig {
                 enabled: true,
                 max_requests_per_minute: 60,
             },
+            aether_registry_url: std::env::var("AETHER_REGISTRY_URL").ok(),
+            agent_name: std::env::var("AGENT_NAME")
+                .unwrap_or_else(|_| "agentverse-agent".to_string()),
         }
     }
 }

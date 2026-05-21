@@ -3,7 +3,6 @@ mod auth;
 mod config;
 mod envelope;
 mod routes;
-mod unix_adapter;
 
 use agentverse::{Agent, Config};
 use agentverse_guardrails::RateLimiter;
@@ -89,12 +88,6 @@ async fn main() {
             (model_name.clone(), "gemini".to_string())
         }
     };
-
-    if std::env::var("AETHER_SOCKET_PATH").is_ok() {
-        info!(model = %model_name, provider = %provider_name, "Starting in Unix socket adapter mode");
-        unix_adapter::run_unix(agent, model_name, provider_name).await;
-        return;
-    }
 
     let state = AppState {
         agent: Arc::new(Mutex::new(agent)),
