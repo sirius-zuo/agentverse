@@ -3,6 +3,7 @@ members = [
     "avs-core",
     "avs-guardrails",
     "avs-integration",
+    "avs-logging",
     "avs-memory",
     "avs-memory-lancedb",
     "avs-memory-pgvector",
