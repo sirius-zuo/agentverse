@@ -9,6 +9,7 @@ pub struct RegisterResponse {
 #[derive(Debug)]
 pub struct AetherRegistration {
     pub instance_id: String,
+    /// Returned by the registry; reserved for a future polling-aware shutdown.
     #[allow(dead_code)]
     pub poll_interval_secs: u64,
 }
@@ -99,6 +100,7 @@ impl AetherClient {
     }
 
     /// POST /registry/instances/{id}/events — fire-and-forget.
+    /// Called from the /invoke error path once that wiring is added.
     #[allow(dead_code)]
     pub async fn push_event(
         &self,
