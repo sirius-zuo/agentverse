@@ -12,45 +12,19 @@
 //   PROJECT_DIR=/path/to/AgentVerse \
 //   cargo run -p example-code-review-agent
 
-use agentverse::{
-    GenerateRequest, GenerateResponse, ModelError, ModelProvider, OpenAICompatible, PromptConfig,
-    PromptRegistry,
-};
+use agentverse::{OpenAICompatible, PromptConfig, PromptRegistry};
 use agentverse_memory::SimpleMemory;
 use agentverse_plan::HierarchicalStrategy;
 use agentverse_tools::{FileSearch, ShellTool, ToolRegistry};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
-
-/// Wraps any ModelProvider and prints each GenerateRequest to stdout before forwarding it.
-struct LoggingModel<M>(M);
-
-#[async_trait::async_trait]
-impl<M: ModelProvider + Send + Sync> ModelProvider for LoggingModel<M> {
-    fn name(&self) -> &str {
-        self.0.name()
-    }
-
-    async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, ModelError> {
-        println!("┌─ generate() ──────────────────────────────────────────");
-        if let Some(sys) = &request.system {
-            println!("│ [system]\n│ {}", sys.replace('\n', "\n│ "));
-        }
-        for msg in &request.messages {
-            let role = format!("{:?}", msg.role).to_lowercase();
-            println!("│ [{role}]\n│ {}", msg.content.replace('\n', "\n│ "));
-        }
-        if let Some(tools) = &request.tools {
-            println!("│ [tools] {} registered", tools.len());
-        }
-        println!("└───────────────────────────────────────────────────────");
-        self.0.generate(request).await
-    }
-}
+use agentverse_logging as avs_logging;
 
 #[tokio::main]
 async fn main() {
+    avs_logging::init();
+
     let base_url =
         std::env::var("MODEL_BASE_URL").unwrap_or_else(|_| "http://localhost:9090/v1".to_string());
     let api_key = std::env::var("MODEL_API_KEY").unwrap_or_default();
@@ -59,16 +33,12 @@ async fn main() {
     let project_dir = std::env::var("PROJECT_DIR")
         .unwrap_or_else(|_| "/Users/jinzuo/projects/AgentVerse".to_string());
 
-    println!("Code Review Agent — model: {} @ {}", model_name, base_url);
+    tracing::info!(model = %model_name, base_url = %base_url, "Code Review Agent");
     println!("Strategy: Hierarchical Planning");
     println!("Tools: FileSearch + ShellTool");
     println!();
 
-    let model = Arc::new(LoggingModel(OpenAICompatible::new(
-        &base_url,
-        &model_name,
-        &api_key,
-    )));
+    let model = Arc::new(OpenAICompatible::new(&base_url, &model_name, &api_key));
     let registry = Arc::new(
         PromptRegistry::from_config(&PromptConfig {
             prompts_dir: Some(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string()),

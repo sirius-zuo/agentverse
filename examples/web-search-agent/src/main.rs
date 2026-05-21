@@ -8,40 +8,18 @@
 //   MODEL_NAME=Qwen3.6-35B-A3B-GGUF \
 //   cargo run -p example-web-search-agent -- "rust async programming" 3
 
-use agentverse::{
-    GenerateRequest, GenerateResponse, ModelError, ModelProvider, OpenAICompatible, PromptConfig,
-    PromptRegistry,
-};
+use agentverse::{OpenAICompatible, PromptConfig, PromptRegistry};
 use agentverse_memory::SimpleMemory;
 use agentverse_plan::PlanStrategy;
 use agentverse_tools::{ToolRegistry, WebSearch};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-
-struct LoggingModel<M>(M);
-
-#[async_trait::async_trait]
-impl<M: ModelProvider + Send + Sync> ModelProvider for LoggingModel<M> {
-    fn name(&self) -> &str {
-        self.0.name()
-    }
-
-    async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, ModelError> {
-        println!("┌─ generate() ──────────────────────────────────────────");
-        if let Some(sys) = &request.system {
-            println!("│ [system]\n│ {}", sys.replace('\n', "\n│ "));
-        }
-        for msg in &request.messages {
-            let role = format!("{:?}", msg.role).to_lowercase();
-            println!("│ [{role}]\n│ {}", msg.content.replace('\n', "\n│ "));
-        }
-        println!("└───────────────────────────────────────────────────────");
-        self.0.generate(request).await
-    }
-}
+use agentverse_logging as avs_logging;
 
 #[tokio::main]
 async fn main() {
+    avs_logging::init();
+
     let args: Vec<String> = std::env::args().collect();
     if args.len() != 3 {
         eprintln!("Usage: {} <topic> <n>", args[0]);
@@ -64,16 +42,9 @@ async fn main() {
     let model_name =
         std::env::var("MODEL_NAME").unwrap_or_else(|_| "Qwen3.6-35B-A3B-GGUF".to_string());
 
-    println!(
-        "Web Search Agent — topic: {:?}, n: {}, model: {} @ {}",
-        topic, n, model_name, base_url
-    );
+    tracing::info!(model = %model_name, base_url = %base_url, topic = %topic, n = %n, "Web Search Agent");
 
-    let model = Arc::new(LoggingModel(OpenAICompatible::new(
-        &base_url,
-        &model_name,
-        &api_key,
-    )));
+    let model = Arc::new(OpenAICompatible::new(&base_url, &model_name, &api_key));
     let registry = Arc::new(
         PromptRegistry::from_config(&PromptConfig {
             prompts_dir: Some(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string()),

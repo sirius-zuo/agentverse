@@ -5,8 +5,9 @@ edition.workspace = true
 
 [dependencies]
 agentverse = { path = "../../avs-core" }
+agentverse-logging = { path = "../../avs-logging" }
 agentverse-memory = { path = "../../avs-memory" }
 agentverse-react = { path = "../../avs-react" }
 agentverse-tools = { path = "../../avs-tools" }
-async-trait.workspace = true
 tokio.workspace = true
+tracing.workspace = true
