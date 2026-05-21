@@ -19,6 +19,7 @@ agentverse-integration = { path = "../avs-integration" }
 agentverse-tools = { path = "../avs-tools" }
 agentverse-memory = { path = "../avs-memory" }
 agentverse-memory-lancedb = { path = "../avs-memory-lancedb" }
+agentverse-logging = { path = "../avs-logging" }
 axum = { workspace = true, features = ["macros"] }
 serde.workspace = true
 serde_json.workspace = true
@@ -26,7 +27,6 @@ tokio.workspace = true
 clap.workspace = true
 uuid.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
 serde_yaml.workspace = true
 utoipa = { workspace = true }
 utoipa-swagger-ui = { workspace = true }

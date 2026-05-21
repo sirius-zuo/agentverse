@@ -10,7 +10,7 @@ use axum::Json;
 use serde::Deserialize;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{error, info, Span};
+use tracing::{error, info};
 
 #[derive(Debug, Deserialize)]
 pub struct InvokeRequest {
@@ -34,7 +34,6 @@ pub async fn invoke(
     State(state): State<AppState>,
     Json(request): Json<InvokeRequest>,
 ) -> impl IntoResponse {
-    // Validate request
     if request.message.trim().is_empty() {
         return (
             StatusCode::BAD_REQUEST,
@@ -44,16 +43,16 @@ pub async fn invoke(
         );
     }
 
-    // Request-level tracing span
-    let req_span = Span::current();
+    let request_id = uuid::Uuid::new_v4();
+    let start = std::time::Instant::now();
+
     info!(
-        parent: &req_span,
+        request_id = %request_id,
         user_id = %request.user_id,
         message_len = request.message.len(),
         "Processing request"
     );
 
-    // Rate limiting
     if let Err(e) = state.rate_limiter.check(&request.user_id) {
         return (
             StatusCode::TOO_MANY_REQUESTS,
@@ -63,10 +62,14 @@ pub async fn invoke(
         );
     }
 
-    // Prompt guardrail
     if state.guardrails_enabled {
         if let Err(e) = check_prompt(&request.message) {
-            error!(error = %e, user_id = %request.user_id, "Prompt guardrail triggered");
+            error!(
+                request_id = %request_id,
+                error = %e,
+                user_id = %request.user_id,
+                "Prompt guardrail triggered"
+            );
             return (
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({
@@ -78,15 +81,18 @@ pub async fn invoke(
 
     let agent = state.agent.lock().await;
     let result = agent.invoke(&request.user_id, &request.message).await;
-
     drop(agent);
 
     match result {
         Ok(response) => {
-            // Output guardrail
             if state.guardrails_enabled {
                 if let Err(e) = check_output(&response) {
-                    error!(error = %e, user_id = %request.user_id, "Output guardrail triggered");
+                    error!(
+                        request_id = %request_id,
+                        error = %e,
+                        user_id = %request.user_id,
+                        "Output guardrail triggered"
+                    );
                     return (
                         StatusCode::FORBIDDEN,
                         Json(serde_json::json!({
@@ -96,7 +102,13 @@ pub async fn invoke(
                 }
             }
 
-            info!(user_id = %request.user_id, "Request completed");
+            info!(
+                request_id = %request_id,
+                user_id = %request.user_id,
+                status = 200,
+                latency_ms = start.elapsed().as_millis(),
+                "Request completed"
+            );
             (
                 StatusCode::OK,
                 Json(serde_json::json!({
@@ -106,7 +118,14 @@ pub async fn invoke(
             )
         }
         Err(e) => {
-            error!(error = %e, user_id = %request.user_id, "Request failed");
+            error!(
+                request_id = %request_id,
+                user_id = %request.user_id,
+                status = 500,
+                latency_ms = start.elapsed().as_millis(),
+                error = %e,
+                "Request failed"
+            );
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({

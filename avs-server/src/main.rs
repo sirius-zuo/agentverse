@@ -19,19 +19,12 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
 use tracing::info;
-use tracing_subscriber::{
-    fmt::Layer, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, EnvFilter,
-};
+use agentverse_logging as avs_logging;
 
 #[tokio::main]
 async fn main() {
     // Initialize logging
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-
-    tracing_subscriber::registry()
-        .with(Layer::new().with_writer(std::io::stderr))
-        .with(env_filter)
-        .init();
+    avs_logging::init();
 
     // Load configuration
     let server_config = if let Ok(path) = std::env::var("CONFIG_PATH") {
