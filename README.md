@@ -15,13 +15,15 @@ AgentVerse provides a modular architecture for building AI agents with support f
 
 ### Run an Example Agent
 
-The fastest way to try AgentVerse is to run one of the bundled examples. They use the `ProviderConfig::OpenAI` default, which works with any OpenAI-compatible endpoint (OpenAI API, llama.cpp, Ollama, vLLM, etc.).
+The fastest way to try AgentVerse is to run one of the bundled examples. They work with any OpenAI-compatible endpoint (OpenAI API, llama.cpp, Ollama, vLLM, etc.).
 
 ```bash
-OPENAI_API_KEY=sk-xxx cargo run -p example-hello-agent
+MODEL_BASE_URL=http://localhost:9090/v1 MODEL_NAME=your-model cargo run -p example-hello-agent
+# or with OpenAI
+MODEL_BASE_URL=https://api.openai.com/v1 MODEL_API_KEY=sk-xxx MODEL_NAME=gpt-4 cargo run -p example-hello-agent
 ```
 
-> **Using a local LLM?** Set `MODEL_BASE_URL` to point to your endpoint — the example agents use the same `Config` structure as the HTTP server, so no code changes needed.
+All examples call `avs_logging::init()` at startup; set `RUST_LOG=debug` to see structured logs.
 
 ### Run the HTTP Server (Optional)
 
@@ -144,12 +146,13 @@ provider:
 
 | Variable | Default | Description |
 |---|---|---|
-| `MODEL_BASE_URL` | *(none)* | OpenAI-compatible LLM endpoint (e.g. `https://api.openai.com`, `http://127.0.0.1:9090`) |
+| `MODEL_BASE_URL` | *(none)* | OpenAI-compatible LLM endpoint (e.g. `https://api.openai.com/v1`, `http://127.0.0.1:9090/v1`) |
 | `MODEL_API_KEY` | *(empty)* | API key (required for OpenAI/Anthropic/Gemini, optional for local LLMs) |
 | `MODEL_NAME` | *(inferred)* | Model identifier (e.g. `gpt-4`, `phi3-mini`) |
 | `API_KEY` | *(empty)* | Server auth token (Bearer token for `/invoke` on port 8080) |
 | `CONFIG_PATH` | *(none)* | Path to YAML config file |
-| `RUST_LOG` | `info` | Logging level |
+| `RUST_LOG` | `info` | Log level filter (e.g. `debug`, `agentverse=trace`) |
+| `LOG_FORMAT` | *(text)* | Set to `json` for structured JSON log output |
 
 When running as an Aether node, pass these same variables in `StdioFactory::envs` — the binary reads them at startup regardless of transport mode.
 
@@ -195,37 +198,41 @@ Response:
 | Crate | Description |
 |---|---|
 | `agentverse` | Core framework — Agent, Config, ToolResult, Memory, PromptRegistry |
+| `agentverse-logging` | Logging init — `avs_logging::init()` wires `tracing-subscriber` with `RUST_LOG` / `LOG_FORMAT` |
 | `agentverse-react` | ReAct strategy loop |
 | `agentverse-plan` | Plan-and-Execute + Hierarchical strategies |
 | `agentverse-router` | Dynamic strategy routing |
 | `agentverse-memory` | Layered memory system (short/long term) |
 | `agentverse-memory-lancedb` | LanceDB-backed long-term memory |
 | `agentverse-memory-pgvector` | pgvector-backed long-term memory |
-| `agentverse-tools` | Built-in tools (Calculator, DateTime, FileSearch, HttpClient, ShellTool) + async ToolRegistry |
+| `agentverse-tools` | Built-in tools (Calculator, DateTime, FileSearch, HttpClient, ShellTool, WebSearch) + async ToolRegistry |
 | `agentverse-mcp` | MCP client for external tool servers |
 | `agentverse-guardrails` | Security layer (prompt/output/rate limiting) |
-| `agentverse-integration` | Slack, Webhook adapters |
+| `agentverse-integration` | IntegrationRuntime with Slack, console connectors |
 | `agentverse-server` | Standalone HTTP server |
 
 ## Examples
 
 | Example | Strategy | Tools | Description |
 |---|---|---|---|
-| `hello-agent` | ReAct | Calculator, DateTime | Interactive REPL — best starting point for the new `ToolRegistry` API |
+| `hello-agent` | ReAct | Calculator, DateTime | Interactive REPL — best starting point |
 | `react-calculator` | ReAct | Calculator | Multi-step ReAct loop — model breaks arithmetic into sequential tool calls |
-| `web-search-agent` | ReAct | FileSearch | Multi-step file-search reasoning — `PROJECT_DIR` env var sets the search root |
+| `web-search-agent` | Plan-and-Execute | WebSearch | Takes `<topic> <n>` CLI args; fetches top N DuckDuckGo results and summarises them |
 | `anthropic-react` | ReAct | Calculator | Anthropic Claude with prompt caching; shows cache_write/cache_read token split |
-| `code-review-agent` | Hierarchical | FileSearch, Calculator | Decompose → plan per sub-goal → execute → synthesize (uses `avs-plan` legacy tool API) |
-| `slack-hr-assistant` | Plan-and-Execute | — | Slack bot via `AgentBuilder` and `SlackAdapter` |
+| `code-review-agent` | Hierarchical | FileSearch, ShellTool | Decompose → plan per sub-goal → execute → synthesize |
+| `slack-hr-assistant` | Plan-and-Execute | — | Slack/console bot driven by `IntegrationRuntime` and `agent.toml` config |
 
 ```bash
 # Local LLM (llama.cpp / Ollama)
-MODEL_BASE_URL=http://localhost:9090/v1 \
-MODEL_NAME=your-model \
-cargo run -p example-hello-agent
+MODEL_BASE_URL=http://localhost:9090/v1 MODEL_NAME=your-model \
+  cargo run -p example-hello-agent
+
+# Web search (takes topic and result count as positional args)
+MODEL_BASE_URL=http://localhost:9090/v1 MODEL_NAME=your-model \
+  cargo run -p example-web-search-agent -- "rust async" 3
 
 # Anthropic Claude
-ANTHROPIC_API_KEY=sk-ant-... cargo run -p example-anthropic-react
+MODEL_API_KEY=sk-ant-... cargo run -p example-anthropic-react
 ```
 
 Each example has a `prompts/` directory with `system.j2` (identity), strategy template (e.g. `react.j2`, `hierarchical.j2`), and optional few-shot examples in `.toml` files. See [Prompt Templates](#prompt-templates) below.
@@ -322,23 +329,25 @@ The file stem becomes the example-set name (`react_examples.toml` → `"react_ex
 ```
 AgentVerse/
 ├── avs-core/              # Core: Agent, Config, PromptRegistry, Memory, Tool traits
+├── avs-logging/           # Logging init: avs_logging::init() (RUST_LOG / LOG_FORMAT)
 ├── avs-react/             # ReAct strategy loop
 ├── avs-plan/              # Plan-and-Execute + Hierarchical strategies
 ├── avs-router/            # Dynamic strategy routing
-├── avs-tools/             # Built-in tools (Calculator, DateTime, FileSearch, HttpClient)
+├── avs-tools/             # Built-in tools (Calculator, DateTime, FileSearch, HttpClient, WebSearch, ShellTool)
 ├── avs-mcp/               # MCP client for external tool servers
 ├── avs-guardrails/        # Security: prompt injection, output filtering, rate limiting
-├── avs-integration/       # Slack, Webhook adapters
+├── avs-integration/       # IntegrationRuntime with Slack, console connectors
 ├── avs-memory/            # Memory traits (Memory, ShortTermMemory)
 ├── avs-memory-lancedb/    # LanceDB-backed long-term memory
 ├── avs-memory-pgvector/   # pgvector-backed long-term memory
 ├── avs-server/            # Standalone HTTP server
 └── examples/              # Example agents
-    ├── hello-agent/       # Simple agent, no tools
-    ├── slack-hr-assistant/ # Slack integration
+    ├── hello-agent/       # Interactive REPL with Calculator + DateTime
     ├── react-calculator/  # Multi-step ReAct loop with Calculator
-    ├── web-search-agent/  # Plan-and-Execute
-    └── code-review-agent/ # Hierarchical planning
+    ├── web-search-agent/  # Plan-and-Execute with WebSearch (CLI args)
+    ├── anthropic-react/   # Anthropic Claude with prompt caching
+    ├── code-review-agent/ # Hierarchical planning with FileSearch + ShellTool
+    └── slack-hr-assistant/ # IntegrationRuntime Slack/console bot
 ```
 
 ## License

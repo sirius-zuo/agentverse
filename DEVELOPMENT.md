@@ -27,24 +27,25 @@ AgentVerse is a modular Rust framework organized as a Cargo workspace:
 ```
 AgentVerse/
 ├── avs-core/              # Core: Agent, Config, PromptRegistry, Memory, Tool traits
+├── avs-logging/           # Logging init: avs_logging::init() (RUST_LOG / LOG_FORMAT)
 ├── avs-react/             # ReAct strategy loop
 ├── avs-plan/              # Plan-and-Execute + Hierarchical strategies
 ├── avs-router/            # Dynamic strategy routing
-├── avs-tools/             # Built-in tools (Calculator, DateTime, FileSearch, HttpClient)
+├── avs-tools/             # Built-in tools (Calculator, DateTime, FileSearch, HttpClient, WebSearch, ShellTool)
 ├── avs-mcp/               # MCP client for external tool servers
 ├── avs-guardrails/        # Security: prompt injection, output filtering, rate limiting
-├── avs-integration/       # Slack, Webhook adapters
+├── avs-integration/       # IntegrationRuntime with Slack, console connectors
 ├── avs-memory/            # Memory traits (Memory, ShortTermMemory)
 ├── avs-memory-lancedb/    # LanceDB-backed long-term memory
 ├── avs-memory-pgvector/   # pgvector-backed long-term memory
 ├── avs-server/            # Standalone HTTP server
 └── examples/              # Example agents
-    ├── hello-agent/       # Simple agent, no tools
-    ├── slack-hr-assistant/ # Slack integration
+    ├── hello-agent/       # Interactive REPL with Calculator + DateTime
     ├── react-calculator/  # Multi-step ReAct loop with Calculator
-    ├── web-search-agent/  # Plan-and-Execute
-    ├── code-review-agent/ # Hierarchical planning
-    └── anthropic-react/   # Anthropic Claude with prompt caching
+    ├── web-search-agent/  # Plan-and-Execute with WebSearch (CLI args)
+    ├── anthropic-react/   # Anthropic Claude with prompt caching
+    ├── code-review-agent/ # Hierarchical planning with FileSearch + ShellTool
+    └── slack-hr-assistant/ # IntegrationRuntime Slack/console bot
 ```
 
 ### Key Concepts
@@ -127,19 +128,21 @@ export MODEL_NAME="phi3-mini"
 
 ### Option 1: ReAct Agent with Tools (recommended)
 
-This is the primary pattern for agents that call tools. It mirrors what `hello-agent`, `react-calculator`, `web-search-agent`, and `anthropic-react` do.
+This is the primary pattern for agents that call tools. It mirrors what `hello-agent`, `react-calculator`, and `anthropic-react` do.
 
 ```rust
 // Cargo.toml
 [dependencies]
 agentverse = { path = "path/to/avs-core" }
+agentverse-logging = { path = "path/to/avs-logging" }
 agentverse-react = { path = "path/to/avs-react" }
 agentverse-tools = { path = "path/to/avs-tools" }
 agentverse-memory = { path = "path/to/avs-memory" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 // src/main.rs
-use agentverse::{OpenAICompatible, PromptConfig, PromptRegistry};
+use agentverse::{PromptConfig, PromptRegistry, ProviderWrapper};
+use agentverse_logging as avs_logging;
 use agentverse_memory::SimpleMemory;
 use agentverse_react::ReActStrategy;
 use agentverse_tools::{Calculator, DateTimeTool, ToolRegistry};
@@ -148,11 +151,15 @@ use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() {
-    let model = Arc::new(OpenAICompatible::new(
-        &std::env::var("MODEL_BASE_URL").unwrap_or_else(|_| "http://localhost:9090/v1".to_string()),
-        &std::env::var("MODEL_NAME").unwrap_or_else(|_| "my-model".to_string()),
-        &std::env::var("MODEL_API_KEY").unwrap_or_default(),
-    ));
+    avs_logging::init(); // reads RUST_LOG and LOG_FORMAT
+
+    let base_url = std::env::var("MODEL_BASE_URL")
+        .unwrap_or_else(|_| "http://localhost:9090/v1".to_string());
+    let api_key = std::env::var("MODEL_API_KEY").unwrap_or_default();
+    let model_name = std::env::var("MODEL_NAME")
+        .unwrap_or_else(|_| "my-model".to_string());
+
+    let model = Arc::new(ProviderWrapper::openai(&base_url, &model_name, &api_key));
 
     let registry = Arc::new(
         PromptRegistry::from_config(&PromptConfig {
@@ -206,13 +213,13 @@ async fn main() {
 
 ### Option 3: ReAct Agent with Anthropic Claude
 
-Same pattern as Option 1, swap the model provider. Anthropic caches the system prompt automatically.
+Same pattern as Option 1 — use the `ProviderWrapper::anthropic` factory method. Anthropic caches the system prompt automatically.
 
 ```rust
-use agentverse::AnthropicProvider;
+use agentverse::ProviderWrapper;
 use agentverse_tools::{Calculator, ToolRegistry};
 
-let model = Arc::new(AnthropicProvider::new(
+let model = Arc::new(ProviderWrapper::anthropic(
     "https://api.anthropic.com",
     "claude-haiku-4-5-20251001",
     &std::env::var("ANTHROPIC_API_KEY").unwrap(),
@@ -286,23 +293,37 @@ provider:
   api_key: "your-gemini-api-key"
 ```
 
-### ProviderWrapper: Retry and Circuit Breaker
+### ProviderWrapper: Factory Methods, Logging, and Resilience
 
-The `ProviderWrapper` adds resilience to all providers with configurable retry and circuit breaker logic.
+`ProviderWrapper` is the single entry point for all LLM providers. Use its factory methods — you never need to import concrete provider types (`OpenAICompatible`, `AnthropicProvider`, `GeminiProvider`) directly.
 
-**Default Settings:**
+```rust
+use agentverse::ProviderWrapper;
+
+// OpenAI or any OpenAI-compatible endpoint (llama.cpp, Ollama, vLLM, etc.)
+let model = Arc::new(ProviderWrapper::openai(&base_url, &model_name, &api_key));
+
+// Anthropic Claude
+let model = Arc::new(ProviderWrapper::anthropic(
+    "https://api.anthropic.com", &model_name, &api_key,
+));
+
+// Google Gemini
+let model = Arc::new(ProviderWrapper::gemini(
+    "https://generativelanguage.googleapis.com", &model_name, &api_key,
+));
+```
+
+**Built-in structured logging** — every `generate()` call emits:
+- `debug`: full prompt with `>>>>>>>>>> LLM PROMPT BEGIN/END <<<<<<<<<<` markers
+- `debug`: full response with `>>>>>>>>>> LLM RESPONSE BEGIN/END <<<<<<<<<<` markers
+- `warn`: each retry attempt
+- `error`: final failure after all retries
+
+**Resilience (default settings):**
 - **Retries**: 3 attempts with exponential backoff (500ms base delay)
 - **Circuit Breaker**: Opens after 5 consecutive failures, resets after 30 seconds
 - **Retryable Errors**: `RateLimited` (HTTP 429) and `ApiError` (HTTP 5xx)
-- **Non-Retryable Errors**: `InvalidResponse`, `CircuitOpen`, `Timeout`
-
-**Custom Configuration:**
-```rust
-let provider = OpenAICompatible::from_config(config)?;
-let wrapper = ProviderWrapper::new(provider)
-    .with_retries(5, 1000)  // 5 retries, 1s base delay
-    .with_circuit_breaker(10, 60);  // Open after 10 failures, reset after 60s
-```
 
 **Error Variants:**
 - `ModelError::RateLimited` — HTTP 429 response
@@ -426,7 +447,7 @@ impl AsyncTool for MyCalculator {
 `ToolRegistry` is the unified async tool store. All tools implement `AsyncTool` and register directly.
 
 ```rust
-use agentverse_tools::{ToolRegistry, Calculator, DateTimeTool, ShellTool};
+use agentverse_tools::{ToolRegistry, Calculator, DateTimeTool, ShellTool, WebSearch};
 use std::time::Duration;
 
 let mut registry = ToolRegistry::new();
@@ -434,6 +455,7 @@ let mut registry = ToolRegistry::new();
 // Built-in tools register directly
 registry.register_with_category(Calculator, "math");
 registry.register_with_category(DateTimeTool, "utility");
+registry.register(WebSearch); // DuckDuckGo search + page fetching
 
 // Custom tools register the same way
 registry.register_with_category(WeatherTool, "network");
@@ -478,7 +500,7 @@ The agent calls it with a `command` string:
 { "command": "cargo test -p my-crate" }
 ```
 
-The response always includes `stdout`, `stderr`, and `exit_code`. Non-zero exit codes are returned as `Ok` — the agent decides how to handle them.
+The response is a plain text string: stdout, followed by `[stderr: ...]` if stderr is non-empty, and `[exit code: N]` if the exit code is non-zero. Non-zero exit codes are returned as `Ok` — the agent decides how to handle them.
 
 **Security note:** `workdir` sets the initial current directory but does not restrict filesystem access. Pair with a blocked-command list and OS-level isolation for stronger sandboxing.
 
@@ -869,33 +891,47 @@ let results = memory.retrieve(query, top_k).await?;
 
 ## Integrating External Systems
 
-### Slack Adapter
+### IntegrationRuntime
+
+`IntegrationRuntime` is the unified connector host. It loads its connector config (Slack, console fallback) from a TOML file, then calls your agent closure for each incoming event.
 
 ```rust
-use agentverse_integration::SlackAdapter;
+use agentverse_integration::{Event, IntegrationRuntime};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
-let adapter = SlackAdapter::new(
-    agent,
-    &std::env::var("SLACK_BOT_TOKEN").expect("SLACK_BOT_TOKEN"),
-    &std::env::var("SLACK_SIGNING_SECRET").expect("SLACK_SIGNING_SECRET"),
-    3000,
-);
+// strategy is any Arc<Mutex<impl RunStrategy>>
+let runtime = IntegrationRuntime::from_config("agent.toml")
+    .await
+    .expect("integration config");
 
-adapter.start().await.expect("Failed to start Slack adapter");
+runtime
+    .run(move |event: Event| {
+        let strategy = Arc::clone(&strategy);
+        async move {
+            let answer = strategy.lock().await.process(event.text).await?;
+            Ok::<Event, agentverse::AgentError>(Event { text: answer, ..event })
+        }
+    })
+    .await
+    .expect("integration failed");
 ```
 
-### Webhook Adapter
+**`agent.toml` example (Slack connector):**
+```toml
+[connector]
+type = "slack"
+bot_token = "xoxb-..."
+signing_secret = "..."
+port = 3000
+```
 
-```rust
-use agentverse_integration::WebhookAdapter;
+If no config file is found, or the connector type is `console`, `IntegrationRuntime` falls back to a stdin/stdout console loop — useful for local development without Slack credentials.
 
-let adapter = WebhookAdapter::new(
-    agent,
-    "/webhook",
-    Some("my-secret-token"),
-);
-
-adapter.start().await.expect("Failed to start Webhook adapter");
+**Required environment variables for Slack:**
+```bash
+SLACK_BOT_TOKEN=xoxb-...
+SLACK_SIGNING_SECRET=...
 ```
 
 ---
@@ -1062,19 +1098,57 @@ cargo test -p agentverse-server --test stdio_test
 
 ## Debugging & Observability
 
-### Logging
+### Logging Setup
 
-AgentVerse uses `tracing` for structured logging:
+All examples and the server call `avs_logging::init()` at startup. This reads two environment variables:
+
+| Variable | Effect |
+|----------|--------|
+| `RUST_LOG` | Log level filter — e.g. `info`, `debug`, `agentverse_react=trace` |
+| `LOG_FORMAT` | Set to `json` for structured JSON output; omit for human-readable text |
 
 ```bash
-# Verbose output
-RUST_LOG=debug cargo run -p agentverse-server
+# Human-readable debug output
+RUST_LOG=debug cargo run -p example-hello-agent
 
-# JSON structured logs
-RUST_LOG=json cargo run -p agentverse-server
+# JSON structured logs (for log aggregators)
+LOG_FORMAT=json RUST_LOG=info cargo run -p agentverse-server
 
-# Filter by component
-RUST_LOG=agentverse=info,agentverse_guardrails=debug cargo run -p agentverse-server
+# Filter to a single crate
+RUST_LOG=agentverse_react=debug cargo run -p example-hello-agent
+```
+
+### What Gets Logged
+
+**`ProviderWrapper`** (every LLM call, at `debug` level):
+```
+>>>>>>>>>> LLM PROMPT BEGIN <<<<<<<<<<
+SYSTEM  content="You are a calculator assistant..."
+MSG     index=0 role=User content="What is 6 * 7?"
+>>>>>>>>>> LLM PROMPT END <<<<<<<<<<
+>>>>>>>>>> LLM RESPONSE BEGIN <<<<<<<<<<
+RESPONSE content="Thought: I need to multiply..."
+>>>>>>>>>> LLM RESPONSE END <<<<<<<<<<
+```
+Retry attempts log at `warn`; final failure logs at `error`.
+
+**`ToolRegistry`** (every tool call, at `debug` level):
+```
+Executing tool  tool="calculator" args="{\"operation\":\"multiply\",..."
+Tool result     tool="calculator" result="{\"result\":42}"
+```
+
+**`ReActStrategy`** (each loop iteration, at `info` level):
+```
+Thought only, continuing  iteration=1 action="continue"
+Tool executed             iteration=2 action="tool_call" tool="calculator"
+Strategy completed        iteration=3 action="done" total_input_tokens=... total_output_tokens=...
+```
+
+**`AgentMemory`** (store/retrieve, at `debug` level):
+```
+Memory stored    role="assistant" content_len=42 capacity=50
+Memory retrieved count=12
 ```
 
 ### Available Log Levels
@@ -1082,27 +1156,29 @@ RUST_LOG=agentverse=info,agentverse_guardrails=debug cargo run -p agentverse-ser
 | Level | Use Case |
 |-------|----------|
 | `trace` | Detailed execution flow |
-| `debug` | Strategy steps, tool calls |
-| `info` | Request/response summary |
-| `warn` | Guardrail warnings |
-| `error` | Failures, API errors |
+| `debug` | LLM prompt/response, tool calls, memory ops |
+| `info` | Strategy loop steps, request/response summary, server startup |
+| `warn` | Retry attempts, guardrail warnings |
+| `error` | Final failures, API errors |
 
 ### Common Debugging Scenarios
 
 **Agent not responding:**
 1. Check `MODEL_BASE_URL` and `MODEL_API_KEY`
 2. Verify the model server is running: `curl $MODEL_BASE_URL/v1/models`
-3. Enable debug logging: `RUST_LOG=debug`
+3. Enable debug logging: `RUST_LOG=debug` — you'll see the full LLM prompt between the `BEGIN/END` markers
+
+**Tool not being called:**
+1. `RUST_LOG=debug` — confirm the tool schema appears in the `TOOLS count=N` log line
+2. Check that the tool name in the prompt matches `tool.name()` exactly
+
+**Tool execution failing:**
+1. `RUST_LOG=debug` — check the `args=` value in the "Executing tool" log
+2. Verify JSON argument format matches the tool's `parameters()` schema
 
 **Guardrail blocking requests:**
 1. Check the guardrail error in logs
 2. Verify prompt doesn't contain injection patterns
-3. Temporarily disable guardrails for testing (not recommended for production)
-
-**Tool execution failing:**
-1. Check tool description in the prompt
-2. Verify JSON argument format
-3. Use `RUST_LOG=debug` to see tool call details
 
 ---
 
@@ -1112,24 +1188,26 @@ RUST_LOG=agentverse=info,agentverse_guardrails=debug cargo run -p agentverse-ser
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MODEL_BASE_URL` | `http://localhost:9090` | OpenAI-compatible LLM backend endpoint |
+| `MODEL_BASE_URL` | `http://localhost:9090/v1` | OpenAI-compatible LLM backend endpoint |
 | `MODEL_API_KEY` | *(empty)* | API key |
 | `MODEL_NAME` | *(inferred)* | Model identifier |
 | `API_KEY` | *(empty)* | Server auth token |
 | `CONFIG_PATH` | *(none)* | YAML config file path |
-| `RUST_LOG` | `info` | Logging level |
+| `RUST_LOG` | `info` | Log level filter (e.g. `debug`, `agentverse_react=trace`) |
+| `LOG_FORMAT` | *(text)* | Set to `json` for structured JSON log output |
 
 ### Key Crates
 
 | Crate | Key Types |
 |-------|-----------|
-| `agentverse` | `Agent`, `Config`, `ProviderConfig`, `AgentBuilder`, `PromptRegistry`, `Example`, `AsyncTool`, `ModelError` |
+| `agentverse` | `Agent`, `Config`, `ProviderConfig`, `ProviderWrapper`, `AgentBuilder`, `PromptRegistry`, `Example`, `AsyncTool`, `ModelError` |
+| `agentverse-logging` | `init()` |
 | `agentverse-react` | `ReActStrategy` |
 | `agentverse-plan` | `PlanStrategy`, `HierarchicalStrategy` |
 | `agentverse-router` | `StrategyRouter`, `StrategyName` |
 | `agentverse-guardrails` | `check_prompt`, `check_output`, `RateLimiter` |
-| `agentverse-tools` | `ToolRegistry`, `Calculator`, `DateTimeTool`, `FileSearch`, `HttpClient`, `ShellTool` |
-| `agentverse-integration` | `SlackAdapter`, `WebhookAdapter` |
+| `agentverse-tools` | `ToolRegistry`, `Calculator`, `DateTimeTool`, `FileSearch`, `HttpClient`, `ShellTool`, `WebSearch` |
+| `agentverse-integration` | `IntegrationRuntime`, `Event` |
 
 ### ProviderConfig Enum
 
