@@ -295,7 +295,7 @@ async fn test_generate_plan_success() {
         index: AtomicUsize::new(0),
     };
     let registry = PromptRegistry::default();
-    let plan = agentverse_plan::planner::generate_plan(&model, &registry, "do something", &[], "")
+    let plan = agentverse_plan::planner::generate_plan(&model, &registry, "do something", "", "")
         .await
         .unwrap();
     assert_eq!(plan.description, "Test plan");
@@ -309,7 +309,7 @@ async fn test_generate_plan_invalid_json() {
         index: AtomicUsize::new(0),
     };
     let registry = PromptRegistry::default();
-    let err = agentverse_plan::planner::generate_plan(&model, &registry, "do something", &[], "")
+    let err = agentverse_plan::planner::generate_plan(&model, &registry, "do something", "", "")
         .await
         .unwrap_err();
     assert!(err.to_string().contains("Failed to parse plan JSON"));
@@ -326,7 +326,7 @@ async fn test_generate_plan_with_tools() {
         &model,
         &registry,
         "do something",
-        &["echo".to_string()],
+        "echo",
         "User: do something",
     )
     .await

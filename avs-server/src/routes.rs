@@ -162,7 +162,10 @@ pub async fn aether_invoke(
                 payload: serde_json::json!({ "output": output }),
                 metadata: env.metadata,
             };
-            (StatusCode::OK, Json(serde_json::to_value(response).unwrap()))
+            (
+                StatusCode::OK,
+                Json(serde_json::to_value(response).unwrap()),
+            )
         }
         Err(e) => {
             let response = Envelope {
@@ -171,7 +174,10 @@ pub async fn aether_invoke(
                 payload: serde_json::json!({ "error": e.to_string() }),
                 metadata: env.metadata,
             };
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::to_value(response).unwrap()))
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::to_value(response).unwrap()),
+            )
         }
     }
 }

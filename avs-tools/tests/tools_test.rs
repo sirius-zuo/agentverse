@@ -413,7 +413,10 @@ fn web_search_parse_extracts_all_results() {
     assert_eq!(results.len(), 3);
     assert_eq!(results[0].0, "The Rust Programming Language");
     assert_eq!(results[0].1, "https://rust-lang.org");
-    assert_eq!(results[0].2, "A systems programming language focused on safety.");
+    assert_eq!(
+        results[0].2,
+        "A systems programming language focused on safety."
+    );
 }
 
 #[test]

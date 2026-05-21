@@ -78,7 +78,7 @@ async fn main() {
     ));
 
     // Build app state
-    let (model_name, provider_name) = match &server_config.agent.provider {
+    let (model_name, _provider_name) = match &server_config.agent.provider {
         agentverse::ProviderConfig::OpenAI { model_name, .. } => {
             (model_name.clone(), "openai".to_string())
         }
@@ -126,8 +126,8 @@ async fn main() {
             #[cfg(unix)]
             {
                 use tokio::signal::unix::{signal, SignalKind};
-                let mut sigterm = signal(SignalKind::terminate())
-                    .expect("failed to install SIGTERM handler");
+                let mut sigterm =
+                    signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
                 sigterm.recv().await;
             }
             #[cfg(not(unix))]
@@ -137,7 +137,8 @@ async fn main() {
 
             if let Some(url) = registry_url {
                 if let Some(id) = instance_id_clone.lock().await.as_deref() {
-                    let client = aether_client::AetherClient::new(&url, &agent_name, &agent_url, vec![]);
+                    let client =
+                        aether_client::AetherClient::new(&url, &agent_name, &agent_url, vec![]);
                     client.deregister(id).await;
                     info!("Deregistered from aether");
                 }

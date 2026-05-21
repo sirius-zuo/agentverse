@@ -81,7 +81,10 @@ async fn main() {
             let strategy = Arc::clone(&strategy);
             async move {
                 let answer = strategy.lock().await.process(event.text).await?;
-                Ok::<Event, agentverse::AgentError>(Event { text: answer, ..event })
+                Ok::<Event, agentverse::AgentError>(Event {
+                    text: answer,
+                    ..event
+                })
             }
         })
         .await

@@ -9,6 +9,7 @@ pub struct RegisterResponse {
 #[derive(Debug)]
 pub struct AetherRegistration {
     pub instance_id: String,
+    #[allow(dead_code)]
     pub poll_interval_secs: u64,
 }
 
@@ -46,24 +47,34 @@ impl AetherClient {
             capabilities: &'a [String],
         }
 
-        let url = format!("{}/registry/agents", self.registry_url.trim_end_matches('/'));
-        match self.client.post(&url).json(&Req {
-            name: &self.agent_name,
-            http_url: &self.agent_http_url,
-            capabilities: &self.capabilities,
-        }).send().await {
-            Ok(res) if res.status().is_success() => {
-                match res.json::<RegisterResponse>().await {
-                    Ok(r) => {
-                        tracing::info!(instance_id = %r.instance_id, "Registered with aether registry");
-                        Some(AetherRegistration { instance_id: r.instance_id, poll_interval_secs: r.poll_interval_secs })
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "Failed to parse aether registration response");
-                        None
-                    }
+        let url = format!(
+            "{}/registry/agents",
+            self.registry_url.trim_end_matches('/')
+        );
+        match self
+            .client
+            .post(&url)
+            .json(&Req {
+                name: &self.agent_name,
+                http_url: &self.agent_http_url,
+                capabilities: &self.capabilities,
+            })
+            .send()
+            .await
+        {
+            Ok(res) if res.status().is_success() => match res.json::<RegisterResponse>().await {
+                Ok(r) => {
+                    tracing::info!(instance_id = %r.instance_id, "Registered with aether registry");
+                    Some(AetherRegistration {
+                        instance_id: r.instance_id,
+                        poll_interval_secs: r.poll_interval_secs,
+                    })
                 }
-            }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to parse aether registration response");
+                    None
+                }
+            },
             Ok(res) => {
                 tracing::warn!(status = %res.status(), "Aether registration rejected");
                 None
@@ -77,16 +88,32 @@ impl AetherClient {
 
     /// DELETE /registry/instances/{id} — best-effort.
     pub async fn deregister(&self, instance_id: &str) {
-        let url = format!("{}/registry/instances/{}", self.registry_url.trim_end_matches('/'), instance_id);
+        let url = format!(
+            "{}/registry/instances/{}",
+            self.registry_url.trim_end_matches('/'),
+            instance_id
+        );
         if let Err(e) = self.client.delete(&url).send().await {
             tracing::warn!(error = %e, "Failed to deregister from aether (best-effort)");
         }
     }
 
     /// POST /registry/instances/{id}/events — fire-and-forget.
-    pub async fn push_event(&self, instance_id: &str, event_type: &str, payload: serde_json::Value) {
-        let url = format!("{}/registry/instances/{}/events", self.registry_url.trim_end_matches('/'), instance_id);
-        let _ = self.client.post(&url)
+    #[allow(dead_code)]
+    pub async fn push_event(
+        &self,
+        instance_id: &str,
+        event_type: &str,
+        payload: serde_json::Value,
+    ) {
+        let url = format!(
+            "{}/registry/instances/{}/events",
+            self.registry_url.trim_end_matches('/'),
+            instance_id
+        );
+        let _ = self
+            .client
+            .post(&url)
             .json(&serde_json::json!({ "event_type": event_type, "payload": payload }))
             .send()
             .await;
@@ -99,7 +126,12 @@ mod tests {
     use httpmock::prelude::*;
 
     fn make_client(base_url: &str) -> AetherClient {
-        AetherClient::new(base_url, "test-agent", "http://127.0.0.1:8080", vec!["chat".to_string()])
+        AetherClient::new(
+            base_url,
+            "test-agent",
+            "http://127.0.0.1:8080",
+            vec!["chat".to_string()],
+        )
     }
 
     #[tokio::test]
@@ -140,18 +172,21 @@ mod tests {
     #[tokio::test]
     async fn deregister_does_not_panic_on_error() {
         let client = make_client("http://127.0.0.1:1");
-        client.deregister("any-id").await;  // must not panic
+        client.deregister("any-id").await; // must not panic
     }
 
     #[tokio::test]
     async fn push_event_is_fire_and_forget() {
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
-            when.method("POST").path("/registry/instances/inst-1/events");
+            when.method("POST")
+                .path("/registry/instances/inst-1/events");
             then.status(202);
         });
         let client = make_client(&server.base_url());
-        client.push_event("inst-1", "error", serde_json::json!({"msg": "oops"})).await;
+        client
+            .push_event("inst-1", "error", serde_json::json!({"msg": "oops"}))
+            .await;
         mock.assert();
     }
 }
