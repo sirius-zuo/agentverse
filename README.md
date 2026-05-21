@@ -1,8 +1,6 @@
 # AgentVerse
 
-Lightweight, extensible AI Agent framework in Rust.
-
-AgentVerse provides a modular architecture for building AI agents with support for multiple orchestration strategies (ReAct, Plan-and-Execute, Hierarchical), built-in tools, prompt engineering with Jinja2 templates, security guardrails, and an HTTP server for remote access.
+AgentVerse is a lightweight Rust framework for building AI agents that are production-ready from day one — type-safe, async-native, and resilient by design. Agents reason through multi-step problems, call tools, maintain conversation context, and reach users wherever they are: Slack, GitHub, WhatsApp, or a plain HTTP endpoint. Swap between ReAct, Plan-and-Execute, and Hierarchical orchestration; connect any OpenAI-compatible, Anthropic, or Gemini model; tune costs with built-in prompt cache optimization and flexible memory management; and compose exactly the capabilities you need from a workspace of focused, independent crates.
 
 ## Quick Start
 
