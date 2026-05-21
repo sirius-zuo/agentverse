@@ -15,11 +15,11 @@
 use agentverse::{OpenAICompatible, PromptConfig, PromptRegistry};
 use agentverse_memory::SimpleMemory;
 use agentverse_plan::HierarchicalStrategy;
+use agentverse_logging as avs_logging;
 use agentverse_tools::{FileSearch, ShellTool, ToolRegistry};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
-use agentverse_logging as avs_logging;
 
 #[tokio::main]
 async fn main() {

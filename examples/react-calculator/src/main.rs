@@ -12,12 +12,12 @@
 use agentverse::{OpenAICompatible, PromptConfig, PromptRegistry};
 use agentverse_memory::SimpleMemory;
 use agentverse_react::ReActStrategy;
+use agentverse_logging as avs_logging;
 use agentverse_tools::{Calculator, ToolRegistry};
 use std::io::Write;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::Mutex;
-use agentverse_logging as avs_logging;
 
 #[tokio::main]
 async fn main() {
