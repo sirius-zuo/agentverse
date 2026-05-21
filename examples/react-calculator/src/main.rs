@@ -9,7 +9,7 @@
 //   MODEL_NAME=Qwen3.6-35B-A3B-GGUF \
 //   cargo run -p example-react-calculator
 
-use agentverse::{OpenAICompatible, PromptConfig, PromptRegistry};
+use agentverse::{OpenAICompatible, PromptConfig, PromptRegistry, ProviderWrapper};
 use agentverse_memory::SimpleMemory;
 use agentverse_react::ReActStrategy;
 use agentverse_logging as avs_logging;
@@ -33,7 +33,7 @@ async fn main() {
     tracing::info!("Tool: Calculator (add, subtract, multiply, divide)");
     println!("Type an arithmetic question and press Enter. Type \"exit\" or press Ctrl+C to quit.\n");
 
-    let model = Arc::new(OpenAICompatible::new(&base_url, &model_name, &api_key));
+    let model = Arc::new(ProviderWrapper::new(OpenAICompatible::new(&base_url, &model_name, &api_key)));
     let registry = Arc::new(
         PromptRegistry::from_config(&PromptConfig {
             prompts_dir: Some(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string()),

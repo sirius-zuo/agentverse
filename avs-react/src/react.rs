@@ -6,6 +6,7 @@
 use super::cycle::{CycleAction, CycleSkeleton};
 use super::parse::parse_response;
 use agentverse::{AgentError, ModelProvider, PromptRegistry};
+use tracing::info;
 use agentverse_tools::ToolRegistry;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -85,18 +86,27 @@ where
 
             let action = parse_response(&response.content);
 
+            let iteration = self.skeleton.current_iteration();
             match action {
                 CycleAction::Continue { thought } => {
                     // If we already nudged last iteration and the model still didn't
                     // emit Answer: or Action:, the pre-nudge thought was already a
                     // complete answer — use it rather than the confused post-nudge one.
                     if let Some(saved) = self.pending_answer.take() {
+                        info!(
+                            iteration,
+                            action = "done",
+                            total_input_tokens = self.skeleton.total_usage().input_tokens,
+                            total_output_tokens = self.skeleton.total_usage().output_tokens,
+                            "Strategy completed (nudge fallback)"
+                        );
                         return Ok(agentverse::CycleResult {
                             answer: saved,
                             total_usage: self.skeleton.total_usage(),
                         });
                     }
 
+                    info!(iteration, action = "continue", "Thought only, continuing");
                     self.pending_answer = Some(thought.clone());
                     let mut mem = self.skeleton.memory().lock().await;
                     mem.append(agentverse::Message {
@@ -122,6 +132,7 @@ where
                             content: response.content.clone(),
                         });
                     let result = self.skeleton.execute_tool(&tool_name, args).await?;
+                    info!(iteration, action = "tool_call", tool = %tool_name, "Tool executed");
                     // Use User role for tool observations — text-based ReAct does not use
                     // native tool calling, so "tool" role (which requires tool_call_id) breaks
                     // chat templates on local models.
@@ -143,12 +154,20 @@ where
                             role: agentverse::memory::MessageRole::Assistant,
                             content: answer.clone(),
                         });
+                    info!(
+                        iteration,
+                        action = "done",
+                        total_input_tokens = self.skeleton.total_usage().input_tokens,
+                        total_output_tokens = self.skeleton.total_usage().output_tokens,
+                        "Strategy completed"
+                    );
                     return Ok(agentverse::CycleResult {
                         answer,
                         total_usage: self.skeleton.total_usage(),
                     });
                 }
                 CycleAction::Error { message } => {
+                    tracing::error!(iteration, error = %message, "Strategy error");
                     return Err(AgentError::Model(agentverse::ModelError::InvalidResponse(
                         message,
                     )));
