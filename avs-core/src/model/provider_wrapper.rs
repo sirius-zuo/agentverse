@@ -4,8 +4,9 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
-use super::ModelProvider;
-use crate::error::ModelError;
+use super::{AnthropicProvider, GeminiProvider, ModelProvider, OpenAICompatible};
+use crate::config::ProviderConfig;
+use crate::error::{AgentError, ModelError};
 use crate::model::{GenerateRequest, GenerateResponse};
 
 /// Wrapper around a ModelProvider that adds retry and circuit breaker logic.
@@ -82,6 +83,20 @@ impl ProviderWrapper {
             retry_delay_ms: 500,
             circuit_breaker: Arc::new(RwLock::new(CircuitBreaker::new(5, 30))),
         }
+    }
+
+    pub fn from_config(config: ProviderConfig) -> Result<Self, AgentError> {
+        let inner: Arc<dyn ModelProvider> = match config {
+            ProviderConfig::OpenAI { .. } => Arc::new(OpenAICompatible::from_config(config)?),
+            ProviderConfig::Anthropic { .. } => Arc::new(AnthropicProvider::from_config(config)?),
+            ProviderConfig::Gemini { .. } => Arc::new(GeminiProvider::from_config(config)?),
+        };
+        Ok(Self {
+            inner,
+            max_retries: 3,
+            retry_delay_ms: 500,
+            circuit_breaker: Arc::new(RwLock::new(CircuitBreaker::new(5, 30))),
+        })
     }
 
     pub fn with_retries(mut self, max_retries: usize, retry_delay_ms: u64) -> Self {

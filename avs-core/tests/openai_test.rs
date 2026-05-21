@@ -12,7 +12,8 @@ async fn test_openai_compatible_generate() {
             .header("Authorization", "Bearer test-key")
             .json_body(serde_json::json!({
                 "model": "test-model",
-                "messages": [{"role": "user", "content": "hello"}]
+                "messages": [{"role": "user", "content": "hello"}],
+                "chat_template_kwargs": {"enable_thinking": false}
             }));
         then.status(200).json_body(serde_json::json!({
             "choices": [{

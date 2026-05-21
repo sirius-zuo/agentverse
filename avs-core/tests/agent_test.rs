@@ -5,7 +5,8 @@ fn make_config() -> Config {
         provider: ProviderConfig::OpenAI {
             model_name: "gpt-4".to_string(),
             api_key: "sk-xxx".to_string(),
-            base_url: None,
+            // Port 1 is always closed — forces a connection error without network traffic.
+            base_url: Some("http://127.0.0.1:1/v1".to_string()),
         },
         max_messages: 50,
         tools: vec![],
@@ -22,10 +23,10 @@ fn test_agent_from_config_valid() {
 }
 
 #[tokio::test]
-async fn test_agent_invoke_placeholder() {
+async fn test_agent_invoke_calls_provider() {
     let config = make_config();
     let agent = Agent::from_config(config).unwrap();
+    // Invalid credentials — real provider call fails, confirming invoke() no longer echoes.
     let result = agent.invoke("user1", "hello").await;
-    assert!(result.is_ok());
-    assert!(result.unwrap().contains("hello"));
+    assert!(result.is_err());
 }
