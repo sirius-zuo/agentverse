@@ -145,16 +145,17 @@ impl ModelProvider for ProviderWrapper {
     }
 
     async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, ModelError> {
-        // Debug: log full request before sending
+        tracing::debug!(">>>>>>>>>> LLM PROMPT BEGIN <<<<<<<<<<");
         if let Some(sys) = &request.system {
-            tracing::debug!(system_prompt = %sys, "LLM request: system");
+            tracing::debug!(content = %sys, "SYSTEM");
         }
         for (i, msg) in request.messages.iter().enumerate() {
-            tracing::debug!(index = i, role = ?msg.role, content = %msg.content, "LLM request: message");
+            tracing::debug!(index = i, role = ?msg.role, content = %msg.content, "MSG");
         }
         if let Some(tools) = &request.tools {
-            tracing::debug!(tool_count = tools.len(), "LLM request: tools");
+            tracing::debug!(tool_count = tools.len(), "TOOLS");
         }
+        tracing::debug!(">>>>>>>>>> LLM PROMPT END <<<<<<<<<<");
 
         let mut cb = self.circuit_breaker.write().await;
         if !cb.can_execute() {
@@ -179,7 +180,9 @@ impl ModelProvider for ProviderWrapper {
                         cache_write_tokens = response.usage.cache_write_tokens,
                         "LLM call complete"
                     );
-                    tracing::debug!(response = %response.content, "LLM response");
+                    tracing::debug!(">>>>>>>>>> LLM RESPONSE BEGIN <<<<<<<<<<");
+                    tracing::debug!(content = %response.content, "RESPONSE");
+                    tracing::debug!(">>>>>>>>>> LLM RESPONSE END <<<<<<<<<<");
                     return Ok(response);
                 }
                 Err(e) => {
