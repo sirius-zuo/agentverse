@@ -127,22 +127,27 @@ pub fn parse_ddg_html(html: &str, max: usize) -> Vec<(String, String, String)> {
     out
 }
 
-/// Decode the actual destination URL from a DDG redirect href.
-/// DDG wraps result URLs as `//duckduckgo.com/l/?uddg=<url-encoded-url>&rut=...`
+/// Extract a usable URL from a DDG result href.
+/// DDG sometimes wraps URLs as `//duckduckgo.com/l/?uddg=<encoded>&rut=...`;
+/// other times it returns the destination URL directly. Handle both.
 fn extract_url(href: &str) -> String {
     let full = if href.starts_with("//") {
         format!("https:{href}")
     } else {
         href.to_string()
     };
-    Url::parse(&full)
-        .ok()
-        .and_then(|u| {
-            u.query_pairs()
-                .find(|(k, _)| k == "uddg")
-                .map(|(_, v)| v.into_owned())
-        })
-        .unwrap_or_default()
+    let Ok(u) = Url::parse(&full) else {
+        return String::new();
+    };
+    // DDG redirect format — decode the real destination
+    if let Some((_, v)) = u.query_pairs().find(|(k, _)| k == "uddg") {
+        return v.into_owned();
+    }
+    // Direct URL — return as-is if http(s)
+    if matches!(u.scheme(), "http" | "https") {
+        return full;
+    }
+    String::new()
 }
 
 /// Fetch a URL and extract readable text from `<p>` tags, capped at 2000 chars.

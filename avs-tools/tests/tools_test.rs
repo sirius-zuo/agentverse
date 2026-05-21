@@ -433,6 +433,24 @@ fn web_search_parse_extracts_all_urls() {
 }
 
 #[test]
+fn web_search_parse_direct_urls() {
+    let html = r#"
+        <div class="result">
+            <a class="result__a" href="https://rust-lang.org/">The Rust Programming Language</a>
+            <span class="result__snippet">A systems programming language.</span>
+        </div>
+        <div class="result">
+            <a class="result__a" href="https://doc.rust-lang.org/book/">The Rust Book</a>
+            <span class="result__snippet">The official Rust book.</span>
+        </div>
+    "#;
+    let results = agentverse_tools::web_search::parse_ddg_html(html, 10);
+    assert_eq!(results.len(), 2);
+    assert_eq!(results[0].1, "https://rust-lang.org/");
+    assert_eq!(results[1].1, "https://doc.rust-lang.org/book/");
+}
+
+#[test]
 fn web_search_tool_name() {
     assert_eq!(WebSearch.name(), "web_search");
 }
