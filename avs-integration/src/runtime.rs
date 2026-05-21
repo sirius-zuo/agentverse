@@ -45,10 +45,7 @@ pub struct IntegrationRuntime {
 
 impl IntegrationRuntime {
     /// Create with explicit connectors — useful for tests and programmatic wiring.
-    pub fn new(
-        input: Box<dyn InputConnector>,
-        outputs: Vec<Box<dyn OutputConnector>>,
-    ) -> Self {
+    pub fn new(input: Box<dyn InputConnector>, outputs: Vec<Box<dyn OutputConnector>>) -> Self {
         Self { input, outputs }
     }
 
@@ -102,9 +99,7 @@ impl IntegrationRuntime {
             })?;
             built.insert(
                 "github".to_string(),
-                BuiltConnector::Github(Arc::new(GithubConnector::new(
-                    &token, &secret, cfg.port,
-                ))),
+                BuiltConnector::Github(Arc::new(GithubConnector::new(&token, &secret, cfg.port))),
             );
         }
 
@@ -155,10 +150,7 @@ impl IntegrationRuntime {
         Fut: Future<Output = Result<Event, E>> + Send,
         E: std::error::Error + Send + 'static,
     {
-        self.input
-            .start()
-            .await
-            .map_err(IntegrationError::Input)?;
+        self.input.start().await.map_err(IntegrationError::Input)?;
 
         loop {
             let event = match self.input.receive().await {

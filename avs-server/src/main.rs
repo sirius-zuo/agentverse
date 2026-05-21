@@ -7,6 +7,7 @@ mod routes;
 
 use agentverse::{Agent, Config};
 use agentverse_guardrails::RateLimiter;
+use agentverse_logging as avs_logging;
 use agentverse_tools::{Calculator, DateTimeTool, FileSearch, HttpClient, ToolRegistry};
 use axum::{
     middleware,
@@ -19,7 +20,6 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
 use tracing::info;
-use agentverse_logging as avs_logging;
 
 #[tokio::main]
 async fn main() {

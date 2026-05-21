@@ -13,9 +13,9 @@
 //   cargo run -p example-code-review-agent
 
 use agentverse::{PromptConfig, PromptRegistry, ProviderWrapper};
+use agentverse_logging as avs_logging;
 use agentverse_memory::SimpleMemory;
 use agentverse_plan::HierarchicalStrategy;
-use agentverse_logging as avs_logging;
 use agentverse_tools::{FileSearch, ShellTool, ToolRegistry};
 use std::sync::Arc;
 use std::time::Duration;

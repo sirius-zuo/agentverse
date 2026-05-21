@@ -42,7 +42,11 @@ impl<S: Summarizer + Send + Sync, B: LongTermBackend + Send + Sync> Memory for A
         if self.window.len() >= self.summarization_threshold {
             self.needs_summarization = true;
         }
-        tracing::debug!(operation = "store", window_size = self.window.len(), "Memory append");
+        tracing::debug!(
+            operation = "store",
+            window_size = self.window.len(),
+            "Memory append"
+        );
     }
 
     async fn last_n(&mut self, n: usize) -> Result<Vec<Message>, MemoryError> {
@@ -78,7 +82,11 @@ impl<S: Summarizer + Send + Sync, B: LongTermBackend + Send + Sync> Memory for A
             .collect();
         let mut result = self.pinned.clone();
         result.extend(window_tail);
-        tracing::debug!(operation = "retrieve", count = result.len(), "Memory retrieve");
+        tracing::debug!(
+            operation = "retrieve",
+            count = result.len(),
+            "Memory retrieve"
+        );
         Ok(result)
     }
 
@@ -115,7 +123,7 @@ impl<S: Summarizer + Send + Sync, B: LongTermBackend + Send + Sync> Memory for A
 #[cfg(test)]
 mod logging_tests {
     use super::*;
-    use agentverse::memory::{Memory, Message, MessageRole, MemoryError};
+    use agentverse::memory::{Memory, MemoryError, Message, MessageRole};
     use async_trait::async_trait;
 
     struct NoopBackend;
@@ -123,14 +131,21 @@ mod logging_tests {
 
     #[async_trait]
     impl crate::traits::LongTermBackend for NoopBackend {
-        async fn store(&self, _: Message, _: Vec<f32>) -> Result<(), MemoryError> { Ok(()) }
-        async fn search(&self, _: Vec<f32>, _: usize) -> Result<Vec<Message>, MemoryError> { Ok(vec![]) }
+        async fn store(&self, _: Message, _: Vec<f32>) -> Result<(), MemoryError> {
+            Ok(())
+        }
+        async fn search(&self, _: Vec<f32>, _: usize) -> Result<Vec<Message>, MemoryError> {
+            Ok(vec![])
+        }
     }
 
     #[async_trait]
     impl crate::traits::Summarizer for NoopSummarizer {
         async fn summarize(&self, _msgs: &[Message]) -> Result<Message, MemoryError> {
-            Ok(Message { role: MessageRole::Assistant, content: "summary".to_string() })
+            Ok(Message {
+                role: MessageRole::Assistant,
+                content: "summary".to_string(),
+            })
         }
     }
 
@@ -138,7 +153,10 @@ mod logging_tests {
     async fn memory_ops_log_without_panic() {
         let _ = tracing_subscriber::fmt().with_test_writer().try_init();
         let mut mem = AgentMemory::new(10, 8, NoopSummarizer, NoopBackend);
-        mem.append(Message { role: MessageRole::User, content: "hello".to_string() });
+        mem.append(Message {
+            role: MessageRole::User,
+            content: "hello".to_string(),
+        });
         let msgs = mem.last_n(5).await.unwrap();
         assert_eq!(msgs.len(), 1);
     }

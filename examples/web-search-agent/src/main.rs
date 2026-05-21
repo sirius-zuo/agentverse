@@ -9,9 +9,9 @@
 //   cargo run -p example-web-search-agent -- "rust async programming" 3
 
 use agentverse::{PromptConfig, PromptRegistry, ProviderWrapper};
+use agentverse_logging as avs_logging;
 use agentverse_memory::SimpleMemory;
 use agentverse_plan::PlanStrategy;
-use agentverse_logging as avs_logging;
 use agentverse_tools::{ToolRegistry, WebSearch};
 use std::sync::Arc;
 use tokio::sync::Mutex;

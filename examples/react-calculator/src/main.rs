@@ -10,9 +10,9 @@
 //   cargo run -p example-react-calculator
 
 use agentverse::{PromptConfig, PromptRegistry, ProviderWrapper};
+use agentverse_logging as avs_logging;
 use agentverse_memory::SimpleMemory;
 use agentverse_react::ReActStrategy;
-use agentverse_logging as avs_logging;
 use agentverse_tools::{Calculator, ToolRegistry};
 use std::io::Write;
 use std::sync::Arc;
@@ -31,7 +31,9 @@ async fn main() {
 
     tracing::info!(model = %model_name, base_url = %base_url, "ReAct Calculator");
     tracing::info!("Tool: Calculator (add, subtract, multiply, divide)");
-    println!("Type an arithmetic question and press Enter. Type \"exit\" or press Ctrl+C to quit.\n");
+    println!(
+        "Type an arithmetic question and press Enter. Type \"exit\" or press Ctrl+C to quit.\n"
+    );
 
     let model = Arc::new(ProviderWrapper::openai(&base_url, &model_name, &api_key));
     let registry = Arc::new(

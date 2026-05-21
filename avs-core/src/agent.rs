@@ -32,9 +32,15 @@ impl Agent {
         config.validate()?;
 
         let (model_name, provider_name) = match &config.provider {
-            crate::config::ProviderConfig::OpenAI { model_name, .. } => (model_name.as_str(), "openai"),
-            crate::config::ProviderConfig::Anthropic { model_name, .. } => (model_name.as_str(), "anthropic"),
-            crate::config::ProviderConfig::Gemini { model_name, .. } => (model_name.as_str(), "gemini"),
+            crate::config::ProviderConfig::OpenAI { model_name, .. } => {
+                (model_name.as_str(), "openai")
+            }
+            crate::config::ProviderConfig::Anthropic { model_name, .. } => {
+                (model_name.as_str(), "anthropic")
+            }
+            crate::config::ProviderConfig::Gemini { model_name, .. } => {
+                (model_name.as_str(), "gemini")
+            }
         };
         info!(model = %model_name, provider = %provider_name, "Agent initialized");
 

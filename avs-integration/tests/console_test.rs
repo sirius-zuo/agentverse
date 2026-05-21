@@ -1,5 +1,5 @@
-use agentverse_integration::{Connector, InputConnector, OutputConnector};
 use agentverse_integration::console::ConsoleConnector;
+use agentverse_integration::{Connector, InputConnector, OutputConnector};
 
 #[test]
 fn console_connector_name() {

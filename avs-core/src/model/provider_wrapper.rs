@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 use super::{AnthropicProvider, GeminiProvider, ModelProvider, OpenAICompatible};
 use crate::config::ProviderConfig;
@@ -210,15 +210,20 @@ impl ModelProvider for ProviderWrapper {
 #[cfg(test)]
 mod logging_tests {
     use super::*;
-    use crate::model::{GenerateResponse, UsageStats};
     use crate::error::ModelError;
+    use crate::model::{GenerateResponse, UsageStats};
 
     struct FakeProvider;
 
     #[async_trait::async_trait]
     impl ModelProvider for FakeProvider {
-        fn name(&self) -> &str { "fake" }
-        async fn generate(&self, _request: GenerateRequest) -> Result<GenerateResponse, ModelError> {
+        fn name(&self) -> &str {
+            "fake"
+        }
+        async fn generate(
+            &self,
+            _request: GenerateRequest,
+        ) -> Result<GenerateResponse, ModelError> {
             Ok(GenerateResponse {
                 content: "ok".to_string(),
                 usage: UsageStats {
@@ -236,11 +241,13 @@ mod logging_tests {
         let _ = tracing_subscriber::fmt().with_test_writer().try_init();
 
         let wrapper = ProviderWrapper::new(FakeProvider);
-        let result = wrapper.generate(GenerateRequest {
-            system: Some("sys".to_string()),
-            messages: vec![],
-            tools: None,
-        }).await;
+        let result = wrapper
+            .generate(GenerateRequest {
+                system: Some("sys".to_string()),
+                messages: vec![],
+                tools: None,
+            })
+            .await;
         assert!(result.is_ok());
         let resp = result.unwrap();
         assert_eq!(resp.usage.input_tokens, 10);

@@ -289,4 +289,3 @@ where
         self.current_iteration = 0;
     }
 }
-

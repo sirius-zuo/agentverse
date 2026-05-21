@@ -6,10 +6,10 @@
 use super::cycle::{CycleAction, CycleSkeleton};
 use super::parse::parse_response;
 use agentverse::{AgentError, ModelProvider, PromptRegistry};
-use tracing::info;
 use agentverse_tools::ToolRegistry;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tracing::info;
 
 /// The high-level ReAct strategy interface.
 ///

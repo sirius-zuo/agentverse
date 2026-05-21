@@ -316,8 +316,7 @@ async fn test_shell_basic_stdout() {
     let result = tool.execute(json!({ "command": "echo hello" })).await;
     assert!(result.is_ok());
     let val = result.unwrap();
-    assert_eq!(val["stdout"].as_str().unwrap().trim(), "hello");
-    assert_eq!(val["exit_code"], 0);
+    assert_eq!(val.as_str().unwrap().trim(), "hello");
 }
 
 #[tokio::test]
@@ -327,7 +326,7 @@ async fn test_shell_nonzero_exit_is_not_an_error() {
     let result = tool.execute(json!({ "command": "false" })).await;
     assert!(result.is_ok());
     let val = result.unwrap();
-    assert_ne!(val["exit_code"], 0);
+    assert!(val.as_str().unwrap().contains("[exit code:"));
 }
 
 #[tokio::test]
@@ -338,7 +337,7 @@ async fn test_shell_stderr_captured() {
         .await;
     assert!(result.is_ok());
     let val = result.unwrap();
-    assert!(!val["stderr"].as_str().unwrap_or("").is_empty());
+    assert!(val.as_str().unwrap().contains("[stderr:"));
 }
 
 #[tokio::test]

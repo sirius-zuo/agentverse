@@ -1,6 +1,8 @@
 // avs-integration/tests/integration_pipeline_test.rs
 // End-to-end: IntegrationRuntime routes one event through a handler to two outputs.
-use agentverse_integration::{Connector, ConnectorError, Event, InputConnector, IntegrationRuntime, OutputConnector};
+use agentverse_integration::{
+    Connector, ConnectorError, Event, InputConnector, IntegrationRuntime, OutputConnector,
+};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -13,7 +15,9 @@ struct OneShotInput {
 }
 
 impl Connector for OneShotInput {
-    fn name(&self) -> &str { "one-shot" }
+    fn name(&self) -> &str {
+        "one-shot"
+    }
 }
 
 #[async_trait]
@@ -34,7 +38,9 @@ struct RecordingOutput {
 }
 
 impl Connector for RecordingOutput {
-    fn name(&self) -> &str { "recorder" }
+    fn name(&self) -> &str {
+        "recorder"
+    }
 }
 
 #[async_trait]
@@ -62,8 +68,12 @@ async fn runtime_routes_one_event_to_two_outputs() {
             sent: Mutex::new(false),
         }),
         vec![
-            Box::new(RecordingOutput { received: Arc::clone(&received_a) }),
-            Box::new(RecordingOutput { received: Arc::clone(&received_b) }),
+            Box::new(RecordingOutput {
+                received: Arc::clone(&received_a),
+            }),
+            Box::new(RecordingOutput {
+                received: Arc::clone(&received_b),
+            }),
         ],
     );
 
@@ -77,7 +87,10 @@ async fn runtime_routes_one_event_to_two_outputs() {
         .await;
 
     // run() stops when OneShotInput errors on the second receive call.
-    assert!(matches!(result, Err(agentverse_integration::IntegrationError::Input(_))));
+    assert!(matches!(
+        result,
+        Err(agentverse_integration::IntegrationError::Input(_))
+    ));
     let a = received_a.lock().await;
     let b = received_b.lock().await;
     assert_eq!(a.len(), 1);

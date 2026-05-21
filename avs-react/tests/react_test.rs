@@ -262,7 +262,6 @@ async fn test_cycle_skeleton_build_request() {
     assert!(request.messages.iter().any(|m| m.content.contains("Hello")));
 }
 
-
 // ─── ReActStrategy::run() tests ───────────────────────────────────────────────
 
 #[tokio::test]
@@ -497,7 +496,6 @@ async fn test_cycle_build_tools_str_with_parameters() {
     assert!(system.contains("query"));
     assert!(system.contains("required"));
 }
-
 
 // ─── New test: ToolRegistry with Calculator ───────────────────────────────────
 

@@ -1,8 +1,8 @@
 // avs-integration/tests/integration_test.rs
 // Smoke test: verify all public types are importable after the redesign.
 use agentverse_integration::{
-    Connector, ConnectorError, Event, GithubConnector, IntegrationConfig,
-    IntegrationError, IntegrationRuntime, SlackConnector, WhatsAppConnector,
+    Connector, ConnectorError, Event, GithubConnector, IntegrationConfig, IntegrationError,
+    IntegrationRuntime, SlackConnector, WhatsAppConnector,
 };
 
 #[test]

@@ -14,9 +14,9 @@
 //   cargo run -p example-anthropic-react
 
 use agentverse::{PromptConfig, PromptRegistry, ProviderWrapper};
+use agentverse_logging as avs_logging;
 use agentverse_memory::SimpleMemory;
 use agentverse_react::ReActStrategy;
-use agentverse_logging as avs_logging;
 use agentverse_tools::{Calculator, ToolRegistry};
 use std::sync::Arc;
 use tokio::sync::Mutex;

@@ -10,8 +10,8 @@ pub mod slack;
 pub mod whatsapp;
 
 pub use config::IntegrationConfig;
-pub use console::ConsoleConnector;
 pub use connector::{Connector, InputConnector, OutputConnector};
+pub use console::ConsoleConnector;
 pub use error::{ConnectorError, IntegrationError};
 pub use event::Event;
 pub use github::GithubConnector;

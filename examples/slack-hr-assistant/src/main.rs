@@ -11,9 +11,9 @@
 //   cargo run -p example-slack-hr-assistant
 use agentverse::{PromptConfig, PromptRegistry, ProviderWrapper, RunStrategy};
 use agentverse_integration::{Event, IntegrationRuntime};
+use agentverse_logging as avs_logging;
 use agentverse_memory::SimpleMemory;
 use agentverse_plan::PlanStrategy;
-use agentverse_logging as avs_logging;
 use agentverse_tools::ToolRegistry;
 use std::sync::Arc;
 use tokio::sync::Mutex;

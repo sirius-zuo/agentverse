@@ -56,13 +56,10 @@ impl ToolRegistry {
 
     /// Execute a tool by name.
     pub async fn execute(&self, name: &str, args: Value) -> ToolResult {
-        let (tool, _) = self
-            .tools
-            .get(name)
-            .ok_or_else(|| {
-                tracing::warn!(tool_name = %name, "Tool not found");
-                ToolError::NotFound(name.to_string())
-            })?;
+        let (tool, _) = self.tools.get(name).ok_or_else(|| {
+            tracing::warn!(tool_name = %name, "Tool not found");
+            ToolError::NotFound(name.to_string())
+        })?;
 
         let args_str = args.to_string();
         tracing::debug!(tool_name = %name, tool_args = %safe_truncate(&args_str, 200), "Tool call");
@@ -176,9 +173,15 @@ mod logging_tests {
 
     #[async_trait::async_trait]
     impl AsyncTool for EchoTool {
-        fn name(&self) -> &str { "echo" }
-        fn description(&self) -> &str { "echoes input" }
-        fn parameters(&self) -> serde_json::Value { json!({"type":"object","properties":{"msg":{"type":"string"}},"required":["msg"]}) }
+        fn name(&self) -> &str {
+            "echo"
+        }
+        fn description(&self) -> &str {
+            "echoes input"
+        }
+        fn parameters(&self) -> serde_json::Value {
+            json!({"type":"object","properties":{"msg":{"type":"string"}},"required":["msg"]})
+        }
         async fn execute(&self, args: serde_json::Value) -> ToolResult {
             Ok(args["msg"].as_str().unwrap_or("").to_string().into())
         }

@@ -1,4 +1,6 @@
-use agentverse_integration::{Connector, ConnectorError, Event, InputConnector, IntegrationRuntime, OutputConnector};
+use agentverse_integration::{
+    Connector, ConnectorError, Event, InputConnector, IntegrationRuntime, OutputConnector,
+};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -21,7 +23,9 @@ struct OneShotInput {
 }
 
 impl Connector for OneShotInput {
-    fn name(&self) -> &str { "oneshot" }
+    fn name(&self) -> &str {
+        "oneshot"
+    }
 }
 
 #[async_trait]
@@ -42,7 +46,9 @@ struct RecordingOutput {
 }
 
 impl Connector for RecordingOutput {
-    fn name(&self) -> &str { "recorder" }
+    fn name(&self) -> &str {
+        "recorder"
+    }
 }
 
 #[async_trait]
@@ -54,7 +60,11 @@ impl OutputConnector for RecordingOutput {
 }
 
 struct FailOutput;
-impl Connector for FailOutput { fn name(&self) -> &str { "fail" } }
+impl Connector for FailOutput {
+    fn name(&self) -> &str {
+        "fail"
+    }
+}
 #[async_trait]
 impl OutputConnector for FailOutput {
     async fn send(&self, _: Event) -> Result<(), ConnectorError> {
@@ -68,7 +78,10 @@ async fn runtime_routes_event_through_handler_to_output() {
     let recorded = Arc::clone(&received);
 
     let runtime = IntegrationRuntime::new(
-        Box::new(OneShotInput { event: make_event("hello"), sent: Mutex::new(false) }),
+        Box::new(OneShotInput {
+            event: make_event("hello"),
+            sent: Mutex::new(false),
+        }),
         vec![Box::new(RecordingOutput { received })],
     );
 
@@ -94,11 +107,11 @@ async fn runtime_skips_failed_outputs_and_continues_to_next() {
     let recorded = Arc::clone(&received);
 
     let runtime = IntegrationRuntime::new(
-        Box::new(OneShotInput { event: make_event("hi"), sent: Mutex::new(false) }),
-        vec![
-            Box::new(FailOutput),
-            Box::new(RecordingOutput { received }),
-        ],
+        Box::new(OneShotInput {
+            event: make_event("hi"),
+            sent: Mutex::new(false),
+        }),
+        vec![Box::new(FailOutput), Box::new(RecordingOutput { received })],
     );
 
     let _ = runtime
@@ -116,7 +129,11 @@ async fn runtime_skips_handler_errors_and_reads_next_event() {
     struct TwoShotInput {
         count: Mutex<usize>,
     }
-    impl Connector for TwoShotInput { fn name(&self) -> &str { "twoshot" } }
+    impl Connector for TwoShotInput {
+        fn name(&self) -> &str {
+            "twoshot"
+        }
+    }
     #[async_trait]
     impl InputConnector for TwoShotInput {
         async fn receive(&self) -> Result<Event, ConnectorError> {
@@ -133,7 +150,9 @@ async fn runtime_skips_handler_errors_and_reads_next_event() {
     let recorded = Arc::clone(&received);
 
     let runtime = IntegrationRuntime::new(
-        Box::new(TwoShotInput { count: Mutex::new(0) }),
+        Box::new(TwoShotInput {
+            count: Mutex::new(0),
+        }),
         vec![Box::new(RecordingOutput { received })],
     );
 
@@ -173,24 +192,35 @@ async fn from_config_errors_on_malformed_toml() {
 async fn from_config_errors_when_input_connector_not_defined() {
     use std::io::Write;
     let mut f = tempfile::NamedTempFile::new().unwrap();
-    writeln!(f, r#"
+    writeln!(
+        f,
+        r#"
 [integration]
 input = "slack"
 outputs = ["slack"]
-"#).unwrap();
+"#
+    )
+    .unwrap();
     // No [connector.slack] section — env var lookup never happens.
     // from_config reads the file, parses it, then from_parsed_config
     // fails because "slack" isn't in the built connector map.
     let result = IntegrationRuntime::from_config(f.path().to_str().unwrap()).await;
     let err = result.err().expect("expected an error");
     let msg = err.to_string();
-    assert!(msg.contains("slack"), "error should mention missing connector name");
+    assert!(
+        msg.contains("slack"),
+        "error should mention missing connector name"
+    );
 }
 
 #[tokio::test]
 async fn runtime_stops_cleanly_on_eof() {
     struct EofInput;
-    impl Connector for EofInput { fn name(&self) -> &str { "eof" } }
+    impl Connector for EofInput {
+        fn name(&self) -> &str {
+            "eof"
+        }
+    }
     #[async_trait]
     impl InputConnector for EofInput {
         async fn receive(&self) -> Result<Event, ConnectorError> {
@@ -198,14 +228,14 @@ async fn runtime_stops_cleanly_on_eof() {
         }
     }
 
-    let runtime = IntegrationRuntime::new(
-        Box::new(EofInput),
-        vec![],
-    );
+    let runtime = IntegrationRuntime::new(Box::new(EofInput), vec![]);
 
     let result = runtime
         .run(|event| async move { Ok::<Event, std::convert::Infallible>(event) })
         .await;
 
-    assert!(result.is_ok(), "EOF should be a clean shutdown, not an error");
+    assert!(
+        result.is_ok(),
+        "EOF should be a clean shutdown, not an error"
+    );
 }
