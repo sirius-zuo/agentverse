@@ -3,7 +3,7 @@
 //! Provides the fixed loop structure; each strategy only implements
 //! its own `step()` logic via a closure.
 
-use agentverse::{AgentError, ModelProvider, PromptRegistry};
+use agentverse::{AgentError, PromptRegistry, ProviderWrapper};
 use agentverse_guardrails::{check_output, check_prompt};
 use agentverse_tools::ToolRegistry;
 use serde_json::Value;
@@ -14,13 +14,12 @@ use tokio::sync::Mutex;
 ///
 /// Each strategy provides its own `step()` closure that decides
 /// what happens on each iteration.
-pub struct CycleSkeleton<P, M>
+pub struct CycleSkeleton<M>
 where
-    P: ModelProvider,
     M: agentverse::Memory,
 {
     prompt_registry: Arc<PromptRegistry>,
-    model: Arc<P>,
+    model: Arc<ProviderWrapper>,
     tools: ToolRegistry,
     memory: Arc<Mutex<M>>,
     max_iterations: usize,
@@ -45,15 +44,14 @@ pub enum CycleAction {
     Error { message: String },
 }
 
-impl<P, M> CycleSkeleton<P, M>
+impl<M> CycleSkeleton<M>
 where
-    P: ModelProvider,
     M: agentverse::Memory,
 {
     /// Create a new cycle skeleton.
     pub fn new(
         prompt_registry: Arc<PromptRegistry>,
-        model: Arc<P>,
+        model: Arc<ProviderWrapper>,
         tools: ToolRegistry,
         memory: Arc<Mutex<M>>,
         max_iterations: usize,
@@ -258,7 +256,7 @@ where
     }
 
     /// Return a reference to the model.
-    pub fn model(&self) -> &P {
+    pub fn model(&self) -> &ProviderWrapper {
         &self.model
     }
 

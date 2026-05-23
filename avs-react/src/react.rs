@@ -5,7 +5,7 @@
 
 use super::cycle::{CycleAction, CycleSkeleton};
 use super::parse::parse_response;
-use agentverse::{AgentError, ModelProvider, PromptRegistry};
+use agentverse::{AgentError, PromptRegistry, ProviderWrapper};
 use agentverse_tools::ToolRegistry;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -14,27 +14,25 @@ use tracing::info;
 /// The high-level ReAct strategy interface.
 ///
 /// Users interact with this, not CycleSkeleton directly.
-pub struct ReActStrategy<P, M>
+pub struct ReActStrategy<M>
 where
-    P: ModelProvider,
     M: agentverse::Memory,
 {
-    skeleton: CycleSkeleton<P, M>,
+    skeleton: CycleSkeleton<M>,
     /// Thought saved when we issued the nudge. If the model responds with
     /// another Continue instead of Answer/Action, we return this thought
     /// directly — it was already a complete answer, just missing the label.
     pending_answer: Option<String>,
 }
 
-impl<P, M> ReActStrategy<P, M>
+impl<M> ReActStrategy<M>
 where
-    P: ModelProvider,
     M: agentverse::Memory,
 {
     /// Create a new ReAct strategy.
     pub fn new(
         prompt_registry: Arc<PromptRegistry>,
-        model: Arc<P>,
+        model: Arc<ProviderWrapper>,
         tools: ToolRegistry,
         memory: Arc<Mutex<M>>,
         max_iterations: usize,
@@ -177,15 +175,14 @@ where
     }
 
     /// Return a reference to the underlying cycle skeleton.
-    pub fn skeleton(&self) -> &CycleSkeleton<P, M> {
+    pub fn skeleton(&self) -> &CycleSkeleton<M> {
         &self.skeleton
     }
 }
 
 #[async_trait::async_trait]
-impl<P, M> agentverse::RunStrategy for ReActStrategy<P, M>
+impl<M> agentverse::RunStrategy for ReActStrategy<M>
 where
-    P: agentverse::ModelProvider + Send + Sync + 'static,
     M: agentverse::Memory + Send + 'static,
 {
     async fn process(&mut self, input: String) -> Result<String, agentverse::AgentError> {

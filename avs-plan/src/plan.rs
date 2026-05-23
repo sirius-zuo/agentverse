@@ -5,7 +5,7 @@
 
 use super::planner::generate_plan;
 use agentverse::memory::{Message, MessageRole};
-use agentverse::{AgentError, GenerateRequest, ModelProvider, PromptRegistry};
+use agentverse::{AgentError, GenerateRequest, PromptRegistry, ProviderWrapper};
 use agentverse_guardrails::check_output;
 use agentverse_tools::ToolRegistry;
 use std::sync::Arc;
@@ -16,26 +16,24 @@ use tokio::sync::Mutex;
 /// 1. Generate a plan from the user's request
 /// 2. Execute each step sequentially (tools or reasoning)
 /// 3. Ask the model to synthesize a final answer from all results
-pub struct PlanStrategy<P, M>
+pub struct PlanStrategy<M>
 where
-    P: ModelProvider,
     M: agentverse::Memory,
 {
-    model: Arc<P>,
+    model: Arc<ProviderWrapper>,
     registry: Arc<PromptRegistry>,
     tools: ToolRegistry,
     memory: Arc<Mutex<M>>,
     max_iterations: usize,
 }
 
-impl<P, M> PlanStrategy<P, M>
+impl<M> PlanStrategy<M>
 where
-    P: ModelProvider,
     M: agentverse::Memory,
 {
     /// Create a new Plan-and-Execute strategy.
     pub fn new(
-        model: Arc<P>,
+        model: Arc<ProviderWrapper>,
         registry: Arc<PromptRegistry>,
         tools: ToolRegistry,
         memory: Arc<Mutex<M>>,
@@ -212,9 +210,8 @@ where
 }
 
 #[async_trait::async_trait]
-impl<P, M> agentverse::RunStrategy for PlanStrategy<P, M>
+impl<M> agentverse::RunStrategy for PlanStrategy<M>
 where
-    P: agentverse::ModelProvider + Send + Sync + 'static,
     M: agentverse::Memory + Send + 'static,
 {
     async fn process(&mut self, input: String) -> Result<String, agentverse::AgentError> {

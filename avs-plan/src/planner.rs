@@ -1,5 +1,5 @@
 use agentverse::memory::{Message, MessageRole};
-use agentverse::{AgentError, GenerateRequest, ModelProvider, PromptRegistry};
+use agentverse::{AgentError, GenerateRequest, PromptRegistry, ProviderWrapper};
 use agentverse_guardrails::check_prompt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -84,7 +84,7 @@ impl Plan {
 
 /// Generate a plan from the LLM using the templated prompt.
 pub async fn generate_plan(
-    model: &dyn ModelProvider,
+    model: &ProviderWrapper,
     registry: &PromptRegistry,
     request: &str,
     tools: &str,
@@ -162,7 +162,7 @@ pub async fn generate_plan(
 
 /// Decompose a complex request into sub-goals.
 pub async fn decompose_request(
-    model: &dyn ModelProvider,
+    model: &ProviderWrapper,
     registry: &PromptRegistry,
     request: &str,
 ) -> Result<Vec<String>, AgentError> {

@@ -3,7 +3,7 @@
 //! At runtime, the router asks the LLM which strategy to use for a given request.
 
 use agentverse::memory::{Message, MessageRole};
-use agentverse::{AgentError, GenerateRequest, ModelProvider, PromptRegistry};
+use agentverse::{AgentError, GenerateRequest, PromptRegistry, ProviderWrapper};
 use agentverse_guardrails::check_prompt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -29,21 +29,15 @@ impl std::fmt::Display for StrategyName {
 /// StrategyRouter: LLM-based dynamic routing.
 ///
 /// At runtime, the router asks the LLM which strategy to use for a given request.
-pub struct StrategyRouter<P>
-where
-    P: ModelProvider,
-{
-    model: P,
+pub struct StrategyRouter {
+    model: ProviderWrapper,
     strategies: Vec<StrategyName>,
     registry: Option<std::sync::Arc<PromptRegistry>>,
 }
 
-impl<P> StrategyRouter<P>
-where
-    P: ModelProvider,
-{
+impl StrategyRouter {
     /// Create a new StrategyRouter with the given model and available strategies.
-    pub fn new(model: P, strategies: Vec<StrategyName>) -> Self {
+    pub fn new(model: ProviderWrapper, strategies: Vec<StrategyName>) -> Self {
         Self {
             model,
             strategies,
@@ -53,7 +47,7 @@ where
 
     /// Create a router with prompt registry for templated prompts.
     pub fn with_registry(
-        model: P,
+        model: ProviderWrapper,
         strategies: Vec<StrategyName>,
         registry: std::sync::Arc<PromptRegistry>,
     ) -> Self {

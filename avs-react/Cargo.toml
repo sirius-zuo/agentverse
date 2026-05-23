@@ -21,3 +21,4 @@ tempfile = "3"
 tracing-subscriber = { workspace = true }
 agentverse-memory = { path = "../avs-memory" }
 agentverse-tools = { path = "../avs-tools" }
+reqwest = { workspace = true }
