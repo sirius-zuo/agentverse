@@ -1,20 +1,13 @@
-use async_trait::async_trait;
-use reqwest::Client;
+use reqwest::header::HeaderMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::ModelProvider;
-use crate::config::ProviderConfig;
 use crate::error::ModelError;
 use crate::model::{GenerateRequest, GenerateResponse, UsageStats};
 
-#[derive(Debug, Clone)]
-pub struct GeminiProvider {
-    client: Client,
-    api_base: String,
-    model_name: String,
-    api_key: String,
-}
+#[derive(Debug, Clone, Default)]
+pub struct GeminiProvider;
 
 #[derive(Debug, Clone, Serialize)]
 struct GeminiSystemInstruction {
@@ -65,47 +58,21 @@ struct GeminiCandidate {
 }
 
 impl GeminiProvider {
-    pub fn new(api_base: &str, model_name: &str, api_key: &str) -> Self {
-        Self {
-            client: Client::new(),
-            api_base: api_base.to_string(),
-            model_name: model_name.to_string(),
-            api_key: api_key.to_string(),
-        }
-    }
-
-    pub fn from_config(config: ProviderConfig) -> Result<Self, ModelError> {
-        match config {
-            ProviderConfig::Gemini {
-                model_name,
-                api_key,
-            } => Ok(Self {
-                client: Client::new(),
-                api_base: "https://generativelanguage.googleapis.com".to_string(),
-                model_name,
-                api_key,
-            }),
-            _ => Err(ModelError::ApiError(
-                "ProviderConfig is not Gemini".to_string(),
-            )),
-        }
-    }
-
-    fn generate_content_url(&self) -> String {
-        format!(
-            "{}/v1beta/models/{}:generateContent",
-            self.api_base, self.model_name
-        )
+    pub fn new() -> Self {
+        Self
     }
 }
 
-#[async_trait]
 impl ModelProvider for GeminiProvider {
     fn name(&self) -> &str {
-        &self.model_name
+        "gemini"
     }
 
-    async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, ModelError> {
+    fn build_request(
+        &self,
+        _model: &str,
+        request: GenerateRequest,
+    ) -> Result<serde_json::Value, ModelError> {
         use crate::memory::MessageRole;
 
         let system_instruction = request.system.map(|s| GeminiSystemInstruction {
@@ -147,35 +114,13 @@ impl ModelProvider for GeminiProvider {
             contents,
             tools: gemini_tools,
         };
-        let url = format!("{}?key={}", self.generate_content_url(), self.api_key);
 
-        let response = self
-            .client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .json(&req)
-            .send()
-            .await
-            .map_err(|e| ModelError::ApiError(e.to_string()))?;
+        serde_json::to_value(req).map_err(|e| ModelError::InvalidResponse(e.to_string()))
+    }
 
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .map_err(|e| ModelError::ApiError(e.to_string()))?;
-
-        if status == 429 {
-            return Err(ModelError::RateLimited(format!(
-                "Gemini rate limited: {}",
-                body
-            )));
-        }
-        if !status.is_success() {
-            return Err(ModelError::ApiError(format!("HTTP {}: {}", status, body)));
-        }
-
+    fn parse_response(&self, body: &str) -> Result<GenerateResponse, ModelError> {
         let resp: GeminiResponse =
-            serde_json::from_str(&body).map_err(|e| ModelError::InvalidResponse(e.to_string()))?;
+            serde_json::from_str(body).map_err(|e| ModelError::InvalidResponse(e.to_string()))?;
 
         let content = resp
             .candidates
@@ -192,5 +137,14 @@ impl ModelProvider for GeminiProvider {
             content,
             usage: UsageStats::default(), // Gemini context caching is a separate API
         })
+    }
+
+    fn request_headers(&self, _api_key: &str) -> HeaderMap {
+        // Gemini auth uses ?key=... query param, not headers
+        HeaderMap::new()
+    }
+
+    fn endpoint_path(&self, model: &str) -> String {
+        format!("/v1beta/models/{}:generateContent", model)
     }
 }

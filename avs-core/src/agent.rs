@@ -6,7 +6,7 @@ use tracing::info;
 use crate::config::Config;
 use crate::error::AgentError;
 use crate::memory::{Memory, Message, ShortTermMemory};
-use crate::model::{ModelProvider, ProviderWrapper};
+use crate::model::ProviderWrapper;
 use crate::prompt::{PromptConfig, PromptRegistry};
 use crate::tracing::{DefaultTracer, Tracer};
 

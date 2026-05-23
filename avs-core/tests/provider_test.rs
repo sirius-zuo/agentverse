@@ -1,315 +1,171 @@
 use agentverse::memory::{Message, MessageRole};
 use agentverse::{
     AnthropicProvider, GeminiProvider, GenerateRequest, ModelProvider, OpenAICompatible,
-    ProviderConfig, ProviderWrapper,
+    ProviderConfig, ProviderWrapper, ToolDefinition,
 };
-use httpmock::prelude::*;
 use serde_json::json;
 
-fn hello_request() -> GenerateRequest {
-    GenerateRequest {
-        system: None,
+// ── ProviderWrapper tests ─────────────────────────────────────────────────────
+
+#[test]
+fn test_provider_wrapper_new_wraps_provider() {
+    let provider = OpenAICompatible::new();
+    let wrapper = ProviderWrapper::new(provider);
+    // ProviderWrapper should store the provider; no panic on construction
+    let _ = wrapper;
+}
+
+#[test]
+fn test_provider_wrapper_from_config_openai() {
+    let config = ProviderConfig::OpenAI {
+        model_name: "gpt-4o".to_string(),
+        api_key: "sk-test".to_string(),
+        base_url: None,
+    };
+    assert!(ProviderWrapper::from_config(config).is_ok());
+}
+
+#[test]
+fn test_provider_wrapper_from_config_anthropic() {
+    let config = ProviderConfig::Anthropic {
+        model_name: "claude-3-5-sonnet-20241022".to_string(),
+        api_key: "key".to_string(),
+    };
+    assert!(ProviderWrapper::from_config(config).is_ok());
+}
+
+#[test]
+fn test_provider_wrapper_from_config_gemini() {
+    let config = ProviderConfig::Gemini {
+        model_name: "gemini-pro".to_string(),
+        api_key: "key".to_string(),
+    };
+    assert!(ProviderWrapper::from_config(config).is_ok());
+}
+
+// ── AnthropicProvider tests ───────────────────────────────────────────────────
+
+#[test]
+fn test_anthropic_provider_name() {
+    let provider = AnthropicProvider::new();
+    assert_eq!(provider.name(), "anthropic");
+}
+
+#[test]
+fn test_anthropic_build_request_system_prompt() {
+    let provider = AnthropicProvider::new();
+    let req = GenerateRequest {
+        system: Some("Be helpful.".to_string()),
         messages: vec![Message {
             role: MessageRole::User,
             content: "hello".to_string(),
         }],
         tools: None,
-    }
+    };
+    let body = provider
+        .build_request("claude-3-5-sonnet-20241022", req)
+        .unwrap();
+    let system = body["system"].as_array().unwrap();
+    assert_eq!(system[0]["text"], "Be helpful.");
+    assert_eq!(system[0]["cache_control"]["type"], "ephemeral");
 }
 
-#[tokio::test]
-async fn test_provider_wrapper_retry_on_429() {
-    let server = MockServer::start();
-
-    server.mock(|when, then| {
-        when.method("POST").path("/chat/completions");
-        then.status(429).json_body(serde_json::json!({
-            "error": { "message": "Rate limit exceeded" }
-        }));
-    });
-
-    let provider = OpenAICompatible::new(&server.base_url(), "test-model", "test-key");
-    let wrapper = ProviderWrapper::new(provider);
-
-    // Should retry 3 times (default) then fail with RateLimited
-    let result = wrapper.generate(hello_request()).await;
-    match &result {
-        Ok(_) => panic!("Expected Err, got Ok"),
-        Err(e) => {
-            let err_str = e.to_string();
-            assert!(
-                err_str.contains("Rate limited"),
-                "Expected 'Rate limited' in error, got: {}",
-                err_str
-            );
-        }
-    }
+#[test]
+fn test_anthropic_request_headers_contains_required_headers() {
+    let provider = AnthropicProvider::new();
+    let headers = provider.request_headers("my-api-key");
+    assert!(headers.contains_key("x-api-key"));
+    assert!(headers.contains_key("anthropic-version"));
+    assert!(headers.contains_key("anthropic-beta"));
+    let key_val = headers["x-api-key"].to_str().unwrap();
+    assert_eq!(key_val, "my-api-key");
 }
 
-#[tokio::test]
-async fn test_provider_wrapper_success_after_retry() {
-    let server = MockServer::start();
-
-    // Mock returns 429 first, then 200 on retry
-    // Note: httpmock doesn't support different responses for different calls,
-    // so we use a single mock that returns 200 to verify success path works
-    server.mock(|when, then| {
-        when.method("POST").path("/chat/completions");
-        then.status(200).json_body(serde_json::json!({
-            "choices": [{
-                "message": { "content": "Hello after retry!" }
-            }]
-        }));
-    });
-
-    let provider = OpenAICompatible::new(&server.base_url(), "test-model", "test-key");
-    let wrapper = ProviderWrapper::new(provider);
-
-    // Should succeed on first call (no retry needed)
-    let result = wrapper.generate(hello_request()).await;
-    assert!(result.is_ok());
-    assert_eq!(result.unwrap().content, "Hello after retry!");
+#[test]
+fn test_anthropic_endpoint_path() {
+    let provider = AnthropicProvider::new();
+    assert_eq!(provider.endpoint_path("any"), "/v1/messages");
 }
 
-#[tokio::test]
-async fn test_provider_wrapper_circuit_breaker_opens() {
-    let server = MockServer::start();
-
-    server.mock(|when, then| {
-        when.method("POST").path("/chat/completions");
-        then.status(500).json_body(serde_json::json!({
-            "error": "Internal server error"
-        }));
-    });
-
-    let provider = OpenAICompatible::new(&server.base_url(), "test-model", "test-key");
-    let wrapper = ProviderWrapper::new(provider).with_circuit_breaker(2, 30); // Open after 2 failures
-
-    // First call fails
-    let result = wrapper.generate(hello_request()).await;
-    assert!(result.is_err());
-
-    // Second call fails
-    let result = wrapper.generate(hello_request()).await;
-    assert!(result.is_err());
-
-    // Third call: circuit is open (no HTTP call)
-    let result = wrapper.generate(hello_request()).await;
-    assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("Circuit breaker"));
-}
-
-#[tokio::test]
-async fn test_anthropic_provider_basic() {
-    let server = MockServer::start();
-
-    let mock = server.mock(|when, then| {
-        when.method("POST")
-            .path("/v1/messages")
-            .header("x-api-key", "test-key")
-            .header("anthropic-version", "2023-06-01");
-        then.status(200).json_body(serde_json::json!({
-            "content": [{"type": "text", "text": "Hello from Anthropic!"}]
-        }));
-    });
-
-    let provider = AnthropicProvider::new(&server.base_url(), "claude-3", "test-key");
-
-    let result = provider.generate(hello_request()).await;
-    match &result {
-        Ok(r) => assert_eq!(r.content, "Hello from Anthropic!"),
-        Err(e) => panic!("Expected Ok, got Err: {}", e),
-    }
-
-    mock.assert();
-}
-
-#[tokio::test]
-async fn test_gemini_provider_basic() {
-    let server = MockServer::start();
-
-    let mock = server.mock(|when, then| {
-        when.method("POST")
-            .path("/v1beta/models/test-model:generateContent")
-            .query_param("key", "test-key");
-        then.status(200).json_body(serde_json::json!({
-            "candidates": [{
-                "content": {
-                    "role": "model",
-                    "parts": [{"text": "Hello from Gemini!"}]
-                }
-            }]
-        }));
-    });
-
-    let provider = GeminiProvider::new(&server.base_url(), "test-model", "test-key");
-
-    let result = provider.generate(hello_request()).await;
-    assert!(result.is_ok());
-    assert_eq!(result.unwrap().content, "Hello from Gemini!");
-
-    mock.assert();
-}
-
-// ── Anthropic HTTP-level tests ────────────────────────────────────────────────
-
-fn anthropic_ok_response() -> serde_json::Value {
-    json!({
-        "content": [{"type": "text", "text": "ok"}],
+#[test]
+fn test_anthropic_parse_response_usage_maps_cache_tokens() {
+    let provider = AnthropicProvider::new();
+    let body = json!({
+        "content": [{"type": "text", "text": "done"}],
         "usage": {
-            "input_tokens": 50,
-            "output_tokens": 10,
-            "cache_creation_input_tokens": 0,
-            "cache_read_input_tokens": 0
+            "input_tokens": 100,
+            "output_tokens": 20,
+            "cache_creation_input_tokens": 80,
+            "cache_read_input_tokens": 60
         }
     })
-}
-
-#[tokio::test]
-async fn test_anthropic_sends_caching_beta_header() {
-    let server = MockServer::start();
-    let mock = server.mock(|when, then| {
-        when.method("POST")
-            .path("/v1/messages")
-            .header("anthropic-beta", "prompt-caching-2024-07-31");
-        then.status(200).json_body(anthropic_ok_response());
-    });
-
-    let provider = AnthropicProvider::new(&server.base_url(), "claude-haiku-4-5", "key");
-    provider.generate(hello_request()).await.unwrap();
-    mock.assert();
-}
-
-#[tokio::test]
-async fn test_anthropic_usage_maps_cache_tokens() {
-    let server = MockServer::start();
-    server.mock(|when, then| {
-        when.method("POST").path("/v1/messages");
-        then.status(200).json_body(json!({
-            "content": [{"type": "text", "text": "done"}],
-            "usage": {
-                "input_tokens": 100,
-                "output_tokens": 20,
-                "cache_creation_input_tokens": 80,
-                "cache_read_input_tokens": 60
-            }
-        }));
-    });
-
-    let provider = AnthropicProvider::new(&server.base_url(), "claude-haiku-4-5", "key");
-    let result = provider.generate(hello_request()).await.unwrap();
-
+    .to_string();
+    let result = provider.parse_response(&body).unwrap();
     assert_eq!(result.usage.input_tokens, 100);
     assert_eq!(result.usage.output_tokens, 20);
     assert_eq!(result.usage.cache_write_tokens, 80);
     assert_eq!(result.usage.cache_read_tokens, 60);
 }
 
-#[tokio::test]
-async fn test_anthropic_rate_limited_returns_rate_limited_error() {
-    let server = MockServer::start();
-    server.mock(|when, then| {
-        when.method("POST").path("/v1/messages");
-        then.status(429)
-            .json_body(json!({"error": {"message": "rate limit"}}));
-    });
-
-    let provider = AnthropicProvider::new(&server.base_url(), "claude-haiku-4-5", "key");
-    let err = provider.generate(hello_request()).await.unwrap_err();
-    assert!(
-        err.to_string().contains("Rate limited") || err.to_string().contains("rate"),
-        "429 should produce a rate-limit error, got: {}",
-        err
-    );
+#[test]
+fn test_anthropic_parse_response_no_text_content_is_error() {
+    let provider = AnthropicProvider::new();
+    let body = json!({
+        "content": [{"type": "tool_use", "id": "x", "name": "fn"}],
+        "usage": {"input_tokens": 10, "output_tokens": 5,
+                  "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+    })
+    .to_string();
+    let err = provider.parse_response(&body).unwrap_err();
+    assert!(err.to_string().contains("No text content"));
 }
 
 // ── GeminiProvider tests ──────────────────────────────────────────────────────
 
-fn gemini_ok_body() -> serde_json::Value {
-    json!({
-        "candidates": [{
-            "content": {
-                "role": "model",
-                "parts": [{"text": "Hello from Gemini!"}]
-            }
-        }]
-    })
+#[test]
+fn test_gemini_provider_name() {
+    let provider = GeminiProvider::new();
+    assert_eq!(provider.name(), "gemini");
 }
 
 #[test]
-fn test_gemini_from_config_success() {
-    let config = ProviderConfig::Gemini {
-        model_name: "gemini-pro".to_string(),
-        api_key: "key".to_string(),
-    };
-    let provider = GeminiProvider::from_config(config);
-    assert!(provider.is_ok());
-    assert_eq!(provider.unwrap().name(), "gemini-pro");
+fn test_gemini_endpoint_path_includes_model() {
+    let provider = GeminiProvider::new();
+    assert_eq!(
+        provider.endpoint_path("gemini-1.5-pro"),
+        "/v1beta/models/gemini-1.5-pro:generateContent"
+    );
 }
 
 #[test]
-fn test_gemini_from_config_wrong_variant() {
-    let config = ProviderConfig::OpenAI {
-        model_name: "gpt-4".to_string(),
-        api_key: "key".to_string(),
-        base_url: None,
+fn test_gemini_request_headers_is_empty() {
+    let provider = GeminiProvider::new();
+    let headers = provider.request_headers("my-api-key");
+    // Gemini uses query param auth, not headers
+    assert!(headers.is_empty());
+}
+
+#[test]
+fn test_gemini_build_request_system_instruction() {
+    let provider = GeminiProvider::new();
+    let req = GenerateRequest {
+        system: Some("System instruction".to_string()),
+        messages: vec![Message {
+            role: MessageRole::User,
+            content: "hello".to_string(),
+        }],
+        tools: None,
     };
-    let err = GeminiProvider::from_config(config).unwrap_err();
-    assert!(err.to_string().contains("not Gemini"));
+    let body = provider.build_request("gemini-pro", req).unwrap();
+    assert_eq!(
+        body["system_instruction"]["parts"][0]["text"],
+        "System instruction"
+    );
 }
 
-#[tokio::test]
-async fn test_gemini_generate_rate_limited() {
-    let server = MockServer::start();
-    server.mock(|when, then| {
-        when.method("POST")
-            .path("/v1beta/models/test-model:generateContent");
-        then.status(429).body("rate limited");
-    });
-
-    let provider = GeminiProvider::new(&server.base_url(), "test-model", "test-key");
-    let err = provider.generate(hello_request()).await.unwrap_err();
-    assert!(err.to_string().contains("rate limit") || err.to_string().contains("Rate limit"));
-}
-
-#[tokio::test]
-async fn test_gemini_generate_api_error() {
-    let server = MockServer::start();
-    server.mock(|when, then| {
-        when.method("POST")
-            .path("/v1beta/models/test-model:generateContent");
-        then.status(500).body("internal error");
-    });
-
-    let provider = GeminiProvider::new(&server.base_url(), "test-model", "test-key");
-    let err = provider.generate(hello_request()).await.unwrap_err();
-    assert!(err.to_string().contains("500") || err.to_string().contains("HTTP"));
-}
-
-#[tokio::test]
-async fn test_gemini_generate_empty_candidates() {
-    let server = MockServer::start();
-    server.mock(|when, then| {
-        when.method("POST")
-            .path("/v1beta/models/test-model:generateContent");
-        then.status(200).json_body(json!({"candidates": []}));
-    });
-
-    let provider = GeminiProvider::new(&server.base_url(), "test-model", "test-key");
-    let err = provider.generate(hello_request()).await.unwrap_err();
-    assert!(err.to_string().contains("No content"));
-}
-
-#[tokio::test]
-async fn test_gemini_generate_system_message_filtered() {
-    let server = MockServer::start();
-    server.mock(|when, then| {
-        when.method("POST")
-            .path("/v1beta/models/test-model:generateContent");
-        then.status(200).json_body(gemini_ok_body());
-    });
-
-    let provider = GeminiProvider::new(&server.base_url(), "test-model", "test-key");
+#[test]
+fn test_gemini_build_request_system_role_messages_filtered() {
+    let provider = GeminiProvider::new();
     let req = GenerateRequest {
         system: Some("System instruction".to_string()),
         messages: vec![
@@ -324,21 +180,15 @@ async fn test_gemini_generate_system_message_filtered() {
         ],
         tools: None,
     };
-    let result = provider.generate(req).await.unwrap();
-    assert_eq!(result.content, "Hello from Gemini!");
+    let body = provider.build_request("gemini-pro", req).unwrap();
+    let contents = body["contents"].as_array().unwrap();
+    assert_eq!(contents.len(), 1);
+    assert_eq!(contents[0]["role"], "user");
 }
 
-#[tokio::test]
-async fn test_gemini_generate_with_tools() {
-    let server = MockServer::start();
-    server.mock(|when, then| {
-        when.method("POST")
-            .path("/v1beta/models/test-model:generateContent");
-        then.status(200).json_body(gemini_ok_body());
-    });
-
-    use agentverse::ToolDefinition;
-    let provider = GeminiProvider::new(&server.base_url(), "test-model", "test-key");
+#[test]
+fn test_gemini_build_request_with_tools() {
+    let provider = GeminiProvider::new();
     let req = GenerateRequest {
         system: None,
         messages: vec![Message {
@@ -351,9 +201,36 @@ async fn test_gemini_generate_with_tools() {
             parameters: json!({"type": "object", "properties": {}}),
         }]),
     };
-    let result = provider.generate(req).await.unwrap();
+    let body = provider.build_request("gemini-pro", req).unwrap();
+    let tools = body["tools"].as_array().unwrap();
+    assert_eq!(tools[0]["functions"][0]["name"], "calc");
+}
+
+#[test]
+fn test_gemini_parse_response_ok() {
+    let provider = GeminiProvider::new();
+    let body = json!({
+        "candidates": [{
+            "content": {
+                "role": "model",
+                "parts": [{"text": "Hello from Gemini!"}]
+            }
+        }]
+    })
+    .to_string();
+    let result = provider.parse_response(&body).unwrap();
     assert_eq!(result.content, "Hello from Gemini!");
 }
+
+#[test]
+fn test_gemini_parse_response_empty_candidates_is_error() {
+    let provider = GeminiProvider::new();
+    let body = json!({"candidates": []}).to_string();
+    let err = provider.parse_response(&body).unwrap_err();
+    assert!(err.to_string().contains("No content"));
+}
+
+// ── ProviderConfig serialization ──────────────────────────────────────────────
 
 #[test]
 fn test_provider_config_serialization() {

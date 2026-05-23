@@ -1,5 +1,3 @@
-use async_trait::async_trait;
-
 use crate::error::ModelError;
 
 mod anthropic_provider;
@@ -60,11 +58,16 @@ pub struct CycleResult {
     pub total_usage: UsageStats,
 }
 
-#[async_trait]
 pub trait ModelProvider: Send + Sync {
     fn name(&self) -> &str;
-
-    async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, ModelError>;
+    fn build_request(
+        &self,
+        model: &str,
+        request: GenerateRequest,
+    ) -> Result<serde_json::Value, ModelError>;
+    fn parse_response(&self, body: &str) -> Result<GenerateResponse, ModelError>;
+    fn request_headers(&self, api_key: &str) -> reqwest::header::HeaderMap;
+    fn endpoint_path(&self, model: &str) -> String;
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

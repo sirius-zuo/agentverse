@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use async_trait::async_trait;
 use tokio::sync::RwLock;
 
 use tracing::{error, info, warn};
@@ -12,8 +11,10 @@ use crate::error::{AgentError, ModelError};
 use crate::model::{GenerateRequest, GenerateResponse};
 
 /// Wrapper around a ModelProvider that adds retry and circuit breaker logic.
+/// NOTE: This struct is being phased out in the multi-user session refactor (Task 2).
 pub struct ProviderWrapper {
-    inner: Arc<dyn ModelProvider>,
+    #[allow(dead_code)]
+    pub(crate) inner: Arc<dyn ModelProvider>,
     max_retries: usize,
     retry_delay_ms: u64,
     circuit_breaker: Arc<RwLock<CircuitBreaker>>,
@@ -87,23 +88,23 @@ impl ProviderWrapper {
         }
     }
 
-    pub fn openai(api_base: &str, model_name: &str, api_key: &str) -> Self {
-        Self::new(OpenAICompatible::new(api_base, model_name, api_key))
+    pub fn openai() -> Self {
+        Self::new(OpenAICompatible::new())
     }
 
-    pub fn anthropic(api_base: &str, model_name: &str, api_key: &str) -> Self {
-        Self::new(AnthropicProvider::new(api_base, model_name, api_key))
+    pub fn anthropic() -> Self {
+        Self::new(AnthropicProvider::new())
     }
 
-    pub fn gemini(api_base: &str, model_name: &str, api_key: &str) -> Self {
-        Self::new(GeminiProvider::new(api_base, model_name, api_key))
+    pub fn gemini() -> Self {
+        Self::new(GeminiProvider::new())
     }
 
     pub fn from_config(config: ProviderConfig) -> Result<Self, AgentError> {
         let inner: Arc<dyn ModelProvider> = match config {
-            ProviderConfig::OpenAI { .. } => Arc::new(OpenAICompatible::from_config(config)?),
-            ProviderConfig::Anthropic { .. } => Arc::new(AnthropicProvider::from_config(config)?),
-            ProviderConfig::Gemini { .. } => Arc::new(GeminiProvider::from_config(config)?),
+            ProviderConfig::OpenAI { .. } => Arc::new(OpenAICompatible::new()),
+            ProviderConfig::Anthropic { .. } => Arc::new(AnthropicProvider::new()),
+            ProviderConfig::Gemini { .. } => Arc::new(GeminiProvider::new()),
         };
         Ok(Self {
             inner,
@@ -136,27 +137,14 @@ impl ProviderWrapper {
             _ => error,
         }
     }
-}
 
-#[async_trait]
-impl ModelProvider for ProviderWrapper {
-    fn name(&self) -> &str {
-        self.inner.name()
-    }
-
-    async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, ModelError> {
-        tracing::debug!(">>>>>>>>>> LLM PROMPT BEGIN <<<<<<<<<<");
-        if let Some(sys) = &request.system {
-            tracing::debug!(content = %sys, "SYSTEM");
-        }
-        for (i, msg) in request.messages.iter().enumerate() {
-            tracing::debug!(index = i, role = ?msg.role, content = %msg.content, "MSG");
-        }
-        if let Some(tools) = &request.tools {
-            tracing::debug!(tool_count = tools.len(), "TOOLS");
-        }
-        tracing::debug!(">>>>>>>>>> LLM PROMPT END <<<<<<<<<<");
-
+    /// Execute an HTTP call with retry and circuit breaker logic.
+    /// Takes a future factory so it can be retried.
+    pub async fn execute<F, Fut, T>(&self, f: F) -> Result<T, ModelError>
+    where
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = Result<T, ModelError>>,
+    {
         let mut cb = self.circuit_breaker.write().await;
         if !cb.can_execute() {
             return Err(ModelError::CircuitOpen(
@@ -167,22 +155,12 @@ impl ModelProvider for ProviderWrapper {
 
         let mut last_error = None;
         for attempt in 0..=self.max_retries {
-            let result = self.inner.generate(request.clone()).await;
+            let result = f().await;
 
             match result {
                 Ok(response) => {
                     let mut cb = self.circuit_breaker.write().await;
                     cb.record_success();
-                    info!(
-                        input_tokens = response.usage.input_tokens,
-                        output_tokens = response.usage.output_tokens,
-                        cache_read_tokens = response.usage.cache_read_tokens,
-                        cache_write_tokens = response.usage.cache_write_tokens,
-                        "LLM call complete"
-                    );
-                    tracing::debug!(">>>>>>>>>> LLM RESPONSE BEGIN <<<<<<<<<<");
-                    tracing::debug!(content = %response.content, "RESPONSE");
-                    tracing::debug!(">>>>>>>>>> LLM RESPONSE END <<<<<<<<<<");
                     return Ok(response);
                 }
                 Err(e) => {
@@ -205,51 +183,23 @@ impl ModelProvider for ProviderWrapper {
             ModelError::ApiError("Unexpected: no error after retries".to_string())
         }))
     }
-}
 
-#[cfg(test)]
-mod logging_tests {
-    use super::*;
-    use crate::error::ModelError;
-    use crate::model::{GenerateResponse, UsageStats};
-
-    struct FakeProvider;
-
-    #[async_trait::async_trait]
-    impl ModelProvider for FakeProvider {
-        fn name(&self) -> &str {
-            "fake"
-        }
-        async fn generate(
-            &self,
-            _request: GenerateRequest,
-        ) -> Result<GenerateResponse, ModelError> {
-            Ok(GenerateResponse {
-                content: "ok".to_string(),
-                usage: UsageStats {
-                    input_tokens: 10,
-                    output_tokens: 5,
-                    cache_read_tokens: 2,
-                    cache_write_tokens: 0,
-                },
-            })
-        }
+    /// Stub: will be replaced by ConnectionManager in Task 2.
+    /// Returns an error indicating the method is not yet implemented.
+    pub async fn generate(&self, _request: GenerateRequest) -> Result<GenerateResponse, ModelError> {
+        Err(ModelError::ApiError(
+            "ProviderWrapper.generate() is not implemented; use ConnectionManager".to_string(),
+        ))
     }
 
-    #[tokio::test]
-    async fn generate_logs_usage_without_panic() {
-        let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-
-        let wrapper = ProviderWrapper::new(FakeProvider);
-        let result = wrapper
-            .generate(GenerateRequest {
-                system: Some("sys".to_string()),
-                messages: vec![],
-                tools: None,
-            })
-            .await;
-        assert!(result.is_ok());
-        let resp = result.unwrap();
-        assert_eq!(resp.usage.input_tokens, 10);
+    /// Log usage statistics after a successful LLM call.
+    pub fn log_usage(usage: &crate::model::UsageStats) {
+        info!(
+            input_tokens = usage.input_tokens,
+            output_tokens = usage.output_tokens,
+            cache_read_tokens = usage.cache_read_tokens,
+            cache_write_tokens = usage.cache_write_tokens,
+            "LLM call complete"
+        );
     }
 }
