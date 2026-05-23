@@ -15,6 +15,12 @@ use crate::model::{GenerateRequest, GenerateResponse};
 pub struct ProviderWrapper {
     #[allow(dead_code)]
     pub(crate) inner: Arc<dyn ModelProvider>,
+    #[allow(dead_code)]
+    api_base: String,
+    #[allow(dead_code)]
+    api_key: String,
+    #[allow(dead_code)]
+    model_name: String,
     max_retries: usize,
     retry_delay_ms: u64,
     circuit_breaker: Arc<RwLock<CircuitBreaker>>,
@@ -79,35 +85,65 @@ impl CircuitBreaker {
 }
 
 impl ProviderWrapper {
-    pub fn new(inner: impl ModelProvider + 'static) -> Self {
+    pub fn new_with_config(
+        inner: impl ModelProvider + 'static,
+        api_base: &str,
+        api_key: &str,
+        model_name: &str,
+    ) -> Self {
         Self {
             inner: Arc::new(inner),
+            api_base: api_base.to_string(),
+            api_key: api_key.to_string(),
+            model_name: model_name.to_string(),
             max_retries: 3,
             retry_delay_ms: 500,
             circuit_breaker: Arc::new(RwLock::new(CircuitBreaker::new(5, 30))),
         }
     }
 
-    pub fn openai() -> Self {
-        Self::new(OpenAICompatible::new())
+    pub fn new(inner: impl ModelProvider + 'static) -> Self {
+        Self::new_with_config(inner, "", "", "")
     }
 
-    pub fn anthropic() -> Self {
-        Self::new(AnthropicProvider::new())
+    pub fn openai(api_base: &str, model_name: &str, api_key: &str) -> Self {
+        Self::new_with_config(OpenAICompatible::new(), api_base, api_key, model_name)
     }
 
-    pub fn gemini() -> Self {
-        Self::new(GeminiProvider::new())
+    pub fn anthropic(api_base: &str, model_name: &str, api_key: &str) -> Self {
+        Self::new_with_config(AnthropicProvider::new(), api_base, api_key, model_name)
+    }
+
+    pub fn gemini(api_base: &str, model_name: &str, api_key: &str) -> Self {
+        Self::new_with_config(GeminiProvider::new(), api_base, api_key, model_name)
     }
 
     pub fn from_config(config: ProviderConfig) -> Result<Self, AgentError> {
-        let inner: Arc<dyn ModelProvider> = match config {
-            ProviderConfig::OpenAI { .. } => Arc::new(OpenAICompatible::new()),
-            ProviderConfig::Anthropic { .. } => Arc::new(AnthropicProvider::new()),
-            ProviderConfig::Gemini { .. } => Arc::new(GeminiProvider::new()),
+        let (inner, api_base, api_key, model_name): (Arc<dyn ModelProvider>, String, String, String) = match config {
+            ProviderConfig::OpenAI { model_name, api_key, base_url } => (
+                Arc::new(OpenAICompatible::new()),
+                base_url.unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
+                api_key,
+                model_name,
+            ),
+            ProviderConfig::Anthropic { model_name, api_key } => (
+                Arc::new(AnthropicProvider::new()),
+                "https://api.anthropic.com".to_string(),
+                api_key,
+                model_name,
+            ),
+            ProviderConfig::Gemini { model_name, api_key } => (
+                Arc::new(GeminiProvider::new()),
+                "https://generativelanguage.googleapis.com".to_string(),
+                api_key,
+                model_name,
+            ),
         };
         Ok(Self {
             inner,
+            api_base,
+            api_key,
+            model_name,
             max_retries: 3,
             retry_delay_ms: 500,
             circuit_breaker: Arc::new(RwLock::new(CircuitBreaker::new(5, 30))),

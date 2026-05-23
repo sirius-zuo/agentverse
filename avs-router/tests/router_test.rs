@@ -8,7 +8,7 @@ use agentverse_router::{StrategyName, StrategyRouter};
 
 fn make_router(response: &str) -> StrategyRouter {
     let _ = response; // unused until ConnectionManager replaces the stub
-    let model = agentverse::ProviderWrapper::openai();
+    let model = agentverse::ProviderWrapper::openai("https://api.openai.com/v1", "gpt-4o", "test-key");
     StrategyRouter::new(
         model,
         vec![
