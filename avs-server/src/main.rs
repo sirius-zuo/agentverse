@@ -4,18 +4,21 @@ mod auth;
 mod config;
 mod envelope;
 mod routes;
+mod session_routes;
 
-use agentverse::{LlmRunner, Config};
+use agentverse::{Config, LlmRunner};
 use agentverse_guardrails::RateLimiter;
 use agentverse_logging as avs_logging;
+use agentverse_session::{Agent as SessionAgent, SqliteSessionStore};
 use agentverse_tools::{Calculator, DateTimeTool, FileSearch, HttpClient, ToolRegistry};
 use axum::{
     middleware,
-    routing::{get, post},
+    routing::{delete, get, post},
     Router,
 };
 use config::ServerConfig;
 use routes::{aether_invoke, health, invoke, ready, AppState};
+use session_routes::{create_session, end_session, get_session, send_message, SessionState};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
@@ -69,6 +72,33 @@ async fn main() {
         eprintln!("Failed to build agent: {}", e);
         std::process::exit(1);
     });
+
+    // Initialize session store (SQLite by default; override with SESSION_DB_URL env var)
+    let session_db_url = std::env::var("SESSION_DB_URL")
+        .unwrap_or_else(|_| "sqlite:sessions.db".to_string());
+    let session_store = Arc::new(
+        SqliteSessionStore::new(&session_db_url).await.unwrap_or_else(|e| {
+            eprintln!("Failed to initialize session store: {}", e);
+            std::process::exit(1);
+        }),
+    );
+    let session_agent = Arc::new(SessionAgent::new(
+        Arc::new(
+            LlmRunner::from_config(Config {
+                provider: server_config.agent.provider.clone(),
+                max_messages: 100,
+                tools: vec![],
+                prompts_dir: None,
+                system_prompt: None,
+            })
+            .unwrap_or_else(|e| {
+                eprintln!("Failed to build session agent: {}", e);
+                std::process::exit(1);
+            }),
+        ),
+        session_store,
+    ));
+    let session_state = SessionState { agent: session_agent };
 
     // Build tool registry — wired for future tool use
     let mut tool_registry = ToolRegistry::new();
@@ -142,12 +172,20 @@ async fn main() {
     }
 
     // Build routes
+    let session_router = Router::new()
+        .route("/", post(create_session))
+        .route("/:session_id/messages", post(send_message))
+        .route("/:session_id", get(get_session))
+        .route("/:session_id", delete(end_session))
+        .with_state(session_state);
+
     let cors = CorsLayer::permissive();
     let app = Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
         .route("/invoke", post(invoke))
         .route("/aether/invoke", post(aether_invoke))
+        .nest("/sessions", session_router)
         .layer(cors)
         .layer(middleware::from_fn(auth::auth_middleware))
         .with_state(state);
