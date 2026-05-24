@@ -48,11 +48,10 @@ impl LlmRunner {
 
     /// Stateless LLM invocation. Caller supplies the full message history.
     pub async fn invoke(&self, messages: Vec<Message>) -> Result<GenerateResponse, AgentError> {
-        let mut context = std::collections::HashMap::new();
-        if let Some(last) = messages.last() {
-            context.insert("conversation".to_string(), serde_json::Value::String(last.content.clone()));
-        }
-        let system = self.prompt_registry.render("system", context).ok().filter(|s| !s.is_empty());
+        let system = self.prompt_registry
+            .render("system", std::collections::HashMap::new())
+            .ok()
+            .filter(|s| !s.is_empty());
 
         self.connection_manager.generate(GenerateRequest {
             system,
