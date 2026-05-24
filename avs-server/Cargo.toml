@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 agentverse = { path = "../avs-core" }
+agentverse-session = { path = "../avs-session" }
 agentverse-react = { path = "../avs-react" }
 agentverse-plan = { path = "../avs-plan" }
 agentverse-guardrails = { path = "../avs-guardrails" }

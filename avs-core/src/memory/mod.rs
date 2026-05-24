@@ -37,4 +37,3 @@ pub trait Memory: Send + Sync {
 }
 
 mod short_term;
-pub(crate) use short_term::ShortTermMemory;

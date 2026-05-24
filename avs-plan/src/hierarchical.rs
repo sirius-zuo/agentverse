@@ -5,19 +5,18 @@
 
 use super::planner::{decompose_request, generate_plan};
 use agentverse::memory::{Message, MessageRole};
-use agentverse::{AgentError, GenerateRequest, ModelProvider, PromptRegistry};
+use agentverse::{AgentError, ConnectionManager, GenerateRequest, PromptRegistry};
 use agentverse_guardrails::check_output;
 use agentverse_tools::ToolRegistry;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 /// Hierarchical Planning strategy.
-pub struct HierarchicalStrategy<P, M>
+pub struct HierarchicalStrategy<M>
 where
-    P: ModelProvider,
     M: agentverse::Memory,
 {
-    model: Arc<P>,
+    model: Arc<ConnectionManager>,
     registry: Arc<PromptRegistry>,
     tools: ToolRegistry,
     memory: Arc<Mutex<M>>,
@@ -25,14 +24,13 @@ where
     max_decompose_depth: usize,
 }
 
-impl<P, M> HierarchicalStrategy<P, M>
+impl<M> HierarchicalStrategy<M>
 where
-    P: ModelProvider,
     M: agentverse::Memory,
 {
     /// Create a new Hierarchical Planning strategy.
     pub fn new(
-        model: Arc<P>,
+        model: Arc<ConnectionManager>,
         registry: Arc<PromptRegistry>,
         tools: ToolRegistry,
         memory: Arc<Mutex<M>>,
@@ -56,7 +54,7 @@ where
             content: input.clone(),
         });
 
-        let sub_goals = decompose_request(&*self.model, &self.registry, &input).await?;
+        let sub_goals = decompose_request(&self.model, &self.registry, &input).await?;
 
         self.memory.lock().await.append(agentverse::Message {
             role: agentverse::memory::MessageRole::System,
@@ -101,7 +99,7 @@ where
                 .join("\n");
 
             let sub_plan = match generate_plan(
-                &*self.model,
+                &self.model,
                 &self.registry,
                 sub_goal,
                 &tool_summaries,
@@ -232,9 +230,8 @@ where
 }
 
 #[async_trait::async_trait]
-impl<P, M> agentverse::RunStrategy for HierarchicalStrategy<P, M>
+impl<M> agentverse::RunStrategy for HierarchicalStrategy<M>
 where
-    P: agentverse::ModelProvider + Send + Sync + 'static,
     M: agentverse::Memory + Send + 'static,
 {
     async fn process(&mut self, input: String) -> Result<String, agentverse::AgentError> {

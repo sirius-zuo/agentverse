@@ -1,19 +1,13 @@
-use async_trait::async_trait;
-use reqwest::Client;
+use reqwest::header::{HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::ModelProvider;
-use crate::config::ProviderConfig;
 use crate::error::ModelError;
 use crate::model::{GenerateRequest, GenerateResponse, UsageStats};
 
 #[derive(Debug, Clone)]
 pub struct OpenAICompatible {
-    client: Client,
-    api_base: String,
-    model_name: String,
-    api_key: String,
     /// When true, sends `chat_template_kwargs: {"enable_thinking": false}`.
     /// Defaults to true — thinking is disabled unless `LLAMA_DISABLE_THINKING=0` is set.
     /// Keeping thinking off makes structured-output formats (ReAct) more reliable.
@@ -90,47 +84,29 @@ fn read_disable_thinking() -> bool {
 }
 
 impl OpenAICompatible {
-    pub fn new(api_base: &str, model_name: &str, api_key: &str) -> Self {
+    pub fn new() -> Self {
         Self {
-            client: Client::new(),
-            api_base: api_base.to_string(),
-            model_name: model_name.to_string(),
-            api_key: api_key.to_string(),
             disable_thinking: read_disable_thinking(),
         }
     }
+}
 
-    pub fn from_config(config: ProviderConfig) -> Result<Self, ModelError> {
-        match config {
-            ProviderConfig::OpenAI {
-                model_name,
-                api_key,
-                base_url,
-            } => Ok(Self {
-                client: Client::new(),
-                api_base: base_url.unwrap_or_else(|| "http://localhost:9090/v1".to_string()),
-                model_name,
-                api_key,
-                disable_thinking: read_disable_thinking(),
-            }),
-            _ => Err(ModelError::ApiError(
-                "ProviderConfig is not OpenAI".to_string(),
-            )),
-        }
-    }
-
-    fn chat_url(&self) -> String {
-        format!("{}/chat/completions", self.api_base)
+impl Default for OpenAICompatible {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
-#[async_trait]
 impl ModelProvider for OpenAICompatible {
     fn name(&self) -> &str {
-        &self.model_name
+        "openai"
     }
 
-    async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, ModelError> {
+    fn build_request(
+        &self,
+        model: &str,
+        request: GenerateRequest,
+    ) -> Result<serde_json::Value, ModelError> {
         use crate::memory::MessageRole;
 
         let mut messages = Vec::new();
@@ -177,34 +153,18 @@ impl ModelProvider for OpenAICompatible {
         };
 
         let req = ChatRequest {
-            model: self.model_name.clone(),
+            model: model.to_string(),
             messages,
             tools: chat_tools,
             chat_template_kwargs,
         };
 
-        let response = self
-            .client
-            .post(self.chat_url())
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/json")
-            .json(&req)
-            .send()
-            .await
-            .map_err(|e| ModelError::ApiError(e.to_string()))?;
+        serde_json::to_value(req).map_err(|e| ModelError::InvalidResponse(e.to_string()))
+    }
 
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .map_err(|e| ModelError::ApiError(e.to_string()))?;
-
-        if !status.is_success() {
-            return Err(ModelError::ApiError(format!("HTTP {}: {}", status, body)));
-        }
-
+    fn parse_response(&self, body: &str) -> Result<GenerateResponse, ModelError> {
         let chat_response: ChatResponse =
-            serde_json::from_str(&body).map_err(|e| ModelError::InvalidResponse(e.to_string()))?;
+            serde_json::from_str(body).map_err(|e| ModelError::InvalidResponse(e.to_string()))?;
 
         let content = chat_response
             .choices
@@ -222,5 +182,18 @@ impl ModelProvider for OpenAICompatible {
                 cache_read_tokens: chat_response.usage.prompt_tokens_details.cached_tokens,
             },
         })
+    }
+
+    fn request_headers(&self, api_key: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        let auth_value = format!("Bearer {}", api_key);
+        if let Ok(val) = HeaderValue::from_str(&auth_value) {
+            headers.insert("Authorization", val);
+        }
+        headers
+    }
+
+    fn endpoint_path(&self, _model: &str) -> String {
+        "/chat/completions".to_string()
     }
 }

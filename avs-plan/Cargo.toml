@@ -19,3 +19,4 @@ tokio = { workspace = true, features = ["rt", "macros"] }
 async-trait = { workspace = true }
 agentverse-memory = { path = "../avs-memory" }
 agentverse-tools = { path = "../avs-tools" }
+reqwest = { workspace = true }

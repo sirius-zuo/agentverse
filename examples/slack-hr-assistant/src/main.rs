@@ -9,7 +9,7 @@
 //   MODEL_BASE_URL=http://localhost:9090/v1 \
 //   MODEL_NAME=your-model \
 //   cargo run -p example-slack-hr-assistant
-use agentverse::{PromptConfig, PromptRegistry, ProviderWrapper, RunStrategy};
+use agentverse::{ConnectionManager, PromptConfig, PromptRegistry, RunStrategy};
 use agentverse_integration::{Event, IntegrationRuntime};
 use agentverse_logging as avs_logging;
 use agentverse_memory::SimpleMemory;
@@ -27,7 +27,7 @@ async fn main() {
     let model_name = std::env::var("MODEL_NAME").unwrap_or_else(|_| "gpt-4".into());
     let api_key = std::env::var("MODEL_API_KEY").unwrap_or_default();
 
-    let model = Arc::new(ProviderWrapper::openai(&base_url, &model_name, &api_key));
+    let model = Arc::new(ConnectionManager::openai(&base_url, &model_name, &api_key));
     let registry = Arc::new(
         PromptRegistry::from_config(&PromptConfig {
             prompts_dir: Some(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string()),

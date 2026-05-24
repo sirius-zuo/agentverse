@@ -1,21 +1,14 @@
-use async_trait::async_trait;
-use reqwest::Client;
+use reqwest::header::{HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::ModelProvider;
-use crate::config::ProviderConfig;
 use crate::error::ModelError;
 use crate::memory::MessageRole;
 use crate::model::{GenerateRequest, GenerateResponse, ToolDefinition, UsageStats};
 
-#[derive(Debug, Clone)]
-pub struct AnthropicProvider {
-    client: Client,
-    api_base: String,
-    model_name: String,
-    api_key: String,
-}
+#[derive(Debug, Clone, Default)]
+pub struct AnthropicProvider;
 
 // ── Wire types ────────────────────────────────────────────────────────────────
 
@@ -142,7 +135,7 @@ fn build_wire_request(model_name: &str, request: GenerateRequest) -> AnthropicRe
         .messages
         .into_iter()
         .filter_map(|m| {
-            AnthropicProvider::map_role(m.role).map(|role| AnthropicMessage {
+            map_role(m.role).map(|role| AnthropicMessage {
                 role,
                 content: vec![AnthropicContentBlock::text(m.content)],
             })
@@ -167,87 +160,43 @@ fn build_wire_request(model_name: &str, request: GenerateRequest) -> AnthropicRe
     }
 }
 
+/// Map MessageRole to Anthropic role string. Returns None for System (filtered out).
+fn map_role(role: MessageRole) -> Option<&'static str> {
+    match role {
+        MessageRole::User => Some("user"),
+        MessageRole::Assistant => Some("assistant"),
+        MessageRole::Tool => Some("user"), // tool results are user-turn content
+        MessageRole::System => None,       // filtered: system goes in the system field
+    }
+}
+
 // ── Constructor ───────────────────────────────────────────────────────────────
 
 impl AnthropicProvider {
-    pub fn new(api_base: &str, model_name: &str, api_key: &str) -> Self {
-        Self {
-            client: Client::new(),
-            api_base: api_base.to_string(),
-            model_name: model_name.to_string(),
-            api_key: api_key.to_string(),
-        }
-    }
-
-    pub fn from_config(config: ProviderConfig) -> Result<Self, ModelError> {
-        match config {
-            ProviderConfig::Anthropic {
-                model_name,
-                api_key,
-            } => Ok(Self {
-                client: Client::new(),
-                api_base: "https://api.anthropic.com".to_string(),
-                model_name,
-                api_key,
-            }),
-            _ => Err(ModelError::ApiError(
-                "ProviderConfig is not Anthropic".to_string(),
-            )),
-        }
-    }
-
-    /// Map MessageRole to Anthropic role string. Returns None for System (filtered out).
-    fn map_role(role: MessageRole) -> Option<&'static str> {
-        match role {
-            MessageRole::User => Some("user"),
-            MessageRole::Assistant => Some("assistant"),
-            MessageRole::Tool => Some("user"), // tool results are user-turn content
-            MessageRole::System => None,       // filtered: system goes in the system field
-        }
+    pub fn new() -> Self {
+        Self
     }
 }
 
 // ── ModelProvider impl ────────────────────────────────────────────────────────
 
-#[async_trait]
 impl ModelProvider for AnthropicProvider {
     fn name(&self) -> &str {
-        &self.model_name
+        "anthropic"
     }
 
-    async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, ModelError> {
-        let wire_request = build_wire_request(&self.model_name, request);
+    fn build_request(
+        &self,
+        model: &str,
+        request: GenerateRequest,
+    ) -> Result<serde_json::Value, ModelError> {
+        let wire = build_wire_request(model, request);
+        serde_json::to_value(wire).map_err(|e| ModelError::InvalidResponse(e.to_string()))
+    }
 
-        let response = self
-            .client
-            .post(format!("{}/v1/messages", self.api_base))
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", "2023-06-01")
-            .header("anthropic-beta", "prompt-caching-2024-07-31")
-            .header("Content-Type", "application/json")
-            .json(&wire_request)
-            .send()
-            .await
-            .map_err(|e| ModelError::ApiError(e.to_string()))?;
-
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .map_err(|e| ModelError::ApiError(e.to_string()))?;
-
-        if status == 429 {
-            return Err(ModelError::RateLimited(format!(
-                "Anthropic rate limited: {}",
-                body
-            )));
-        }
-        if !status.is_success() {
-            return Err(ModelError::ApiError(format!("HTTP {}: {}", status, body)));
-        }
-
+    fn parse_response(&self, body: &str) -> Result<GenerateResponse, ModelError> {
         let resp: AnthropicResponse =
-            serde_json::from_str(&body).map_err(|e| ModelError::InvalidResponse(e.to_string()))?;
+            serde_json::from_str(body).map_err(|e| ModelError::InvalidResponse(e.to_string()))?;
 
         let content = resp
             .content
@@ -267,6 +216,24 @@ impl ModelProvider for AnthropicProvider {
                 cache_read_tokens: resp.usage.cache_read_input_tokens,
             },
         })
+    }
+
+    fn request_headers(&self, api_key: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-api-key",
+            HeaderValue::from_str(api_key).unwrap_or_else(|_| HeaderValue::from_static("")),
+        );
+        headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
+        headers.insert(
+            "anthropic-beta",
+            HeaderValue::from_static("prompt-caching-2024-07-31"),
+        );
+        headers
+    }
+
+    fn endpoint_path(&self, _model: &str) -> String {
+        "/v1/messages".to_string()
     }
 }
 
@@ -445,5 +412,50 @@ mod tests {
             "System-role message must be filtered"
         );
         assert_eq!(wire.messages[0].content[0].text, "hi");
+    }
+
+    #[test]
+    fn build_request_serializes_system_prompt() {
+        let provider = AnthropicProvider::new();
+        let req = GenerateRequest {
+            system: Some("You are helpful.".to_string()),
+            messages: vec![Message {
+                role: MessageRole::User,
+                content: "hi".into(),
+            }],
+            tools: None,
+        };
+        let body = provider
+            .build_request("claude-3-5-sonnet-20241022", req)
+            .unwrap();
+        let system = body["system"].as_array().unwrap();
+        assert_eq!(system[0]["text"], "You are helpful.");
+    }
+
+    #[test]
+    fn request_headers_contains_api_key() {
+        let provider = AnthropicProvider::new();
+        let headers = provider.request_headers("test-key");
+        assert!(headers.contains_key("x-api-key"));
+        assert!(headers.contains_key("anthropic-version"));
+    }
+
+    #[test]
+    fn endpoint_path_is_messages() {
+        let provider = AnthropicProvider::new();
+        assert_eq!(provider.endpoint_path("any-model"), "/v1/messages");
+    }
+
+    #[test]
+    fn parse_response_extracts_text_content() {
+        let provider = AnthropicProvider::new();
+        let body = r#"{
+            "content": [{"type": "text", "text": "Hello!"}],
+            "usage": {"input_tokens": 10, "output_tokens": 5,
+                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+        }"#;
+        let resp = provider.parse_response(body).unwrap();
+        assert_eq!(resp.content, "Hello!");
+        assert_eq!(resp.usage.input_tokens, 10);
     }
 }

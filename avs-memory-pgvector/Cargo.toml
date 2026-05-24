@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 agentverse = { path = "../avs-core" }
 agentverse-memory = { path = "../avs-memory" }
+agentverse-session = { path = "../avs-session" }
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono"] }
 serde.workspace = true
 serde_json.workspace = true

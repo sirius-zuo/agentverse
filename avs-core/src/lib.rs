@@ -2,17 +2,17 @@
 //!
 //! ## Quick Start
 //! ```
-//! use agentverse::{Agent, AgentBuilder};
+//! use agentverse::{LlmRunner, LlmRunnerBuilder};
 //!
-//! // Build an agent programmatically
-//! let agent = Agent::builder();
+//! // Build a runner programmatically
+//! let runner = LlmRunnerBuilder::new();
 //! ```
 
-pub mod agent;
 pub mod builder;
 pub mod config;
 pub mod error;
 pub mod example;
+pub mod llm_runner;
 pub mod memory;
 pub mod model;
 pub mod prompt;
@@ -21,15 +21,15 @@ pub mod tool;
 pub mod tracing;
 
 // Public re-exports
-pub use agent::Agent;
-pub use builder::AgentBuilder;
+pub use builder::LlmRunnerBuilder;
 pub use config::{Config, ProviderConfig};
 pub use error::{AgentError, ConfigError, GuardrailError, ModelError, ToolError};
 pub use example::Example;
+pub use llm_runner::LlmRunner;
 pub use memory::{Memory, MemoryError, Message, MessageRole};
 pub use model::{
-    AnthropicProvider, CycleResult, GeminiProvider, GenerateRequest, GenerateResponse,
-    ModelProvider, OpenAICompatible, ProviderWrapper, ToolDefinition, UsageStats,
+    AnthropicProvider, ConnectionManager, CycleResult, GeminiProvider, GenerateRequest,
+    GenerateResponse, ModelProvider, OpenAICompatible, ToolDefinition, UsageStats,
 };
 pub use prompt::PromptConfig;
 pub use prompt::PromptRegistry;

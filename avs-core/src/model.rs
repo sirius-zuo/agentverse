@@ -1,16 +1,14 @@
-use async_trait::async_trait;
-
 use crate::error::ModelError;
 
 mod anthropic_provider;
+mod connection_manager;
 mod gemini_provider;
 mod openai_compatible;
-mod provider_wrapper;
 
 pub use anthropic_provider::AnthropicProvider;
+pub use connection_manager::ConnectionManager;
 pub use gemini_provider::GeminiProvider;
 pub use openai_compatible::OpenAICompatible;
-pub use provider_wrapper::ProviderWrapper;
 
 /// Per-call LLM usage statistics. Zero-filled for providers that do not report a field.
 #[derive(Debug, Default, Clone, Copy)]
@@ -60,11 +58,16 @@ pub struct CycleResult {
     pub total_usage: UsageStats,
 }
 
-#[async_trait]
 pub trait ModelProvider: Send + Sync {
     fn name(&self) -> &str;
-
-    async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, ModelError>;
+    fn build_request(
+        &self,
+        model: &str,
+        request: GenerateRequest,
+    ) -> Result<serde_json::Value, ModelError>;
+    fn parse_response(&self, body: &str) -> Result<GenerateResponse, ModelError>;
+    fn request_headers(&self, api_key: &str) -> reqwest::header::HeaderMap;
+    fn endpoint_path(&self, model: &str) -> String;
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
