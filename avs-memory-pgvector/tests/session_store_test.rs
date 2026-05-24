@@ -19,9 +19,17 @@ async fn postgres_create_and_get_session() {
 async fn postgres_append_and_load_messages() {
     let store = PostgresSessionStore::new(TEST_DB).await.unwrap();
     let session = store.create("pg-user-2").await.unwrap();
-    store.append_message("pg-user-2", session.id, Message {
-        role: MessageRole::User, content: "postgres test".to_string(),
-    }).await.unwrap();
+    store
+        .append_message(
+            "pg-user-2",
+            session.id,
+            Message {
+                role: MessageRole::User,
+                content: "postgres test".to_string(),
+            },
+        )
+        .await
+        .unwrap();
     let messages = store.load_messages("pg-user-2", session.id).await.unwrap();
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].content, "postgres test");

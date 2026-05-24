@@ -3,11 +3,13 @@ use async_trait::async_trait;
 
 // Internal default used by Agent. Not re-exported from avs-core.
 // External code should use agentverse_memory::SimpleMemory instead.
+#[allow(dead_code)]
 pub struct ShortTermMemory {
     messages: Vec<Message>,
     max_messages: usize,
 }
 
+#[allow(dead_code)]
 impl ShortTermMemory {
     pub fn new(max_messages: usize) -> Self {
         Self {

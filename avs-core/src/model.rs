@@ -1,9 +1,9 @@
 use crate::error::ModelError;
 
 mod anthropic_provider;
+mod connection_manager;
 mod gemini_provider;
 mod openai_compatible;
-mod connection_manager;
 
 pub use anthropic_provider::AnthropicProvider;
 pub use connection_manager::ConnectionManager;

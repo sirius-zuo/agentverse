@@ -52,7 +52,12 @@ impl ModelProvider for MockModel {
 }
 
 fn make_wrapper() -> ConnectionManager {
-    ConnectionManager::new(MockModel { responses: vec![] }, "http://localhost", "test-key", "mock-model")
+    ConnectionManager::new(
+        MockModel { responses: vec![] },
+        "http://localhost",
+        "test-key",
+        "mock-model",
+    )
 }
 
 /// A mock async tool.
@@ -265,9 +270,10 @@ fn test_plan_step_complex_args() {
 async fn test_generate_plan_success() {
     let wrapper = make_wrapper();
     let registry = PromptRegistry::default();
-    let _plan = agentverse_plan::planner::generate_plan(&wrapper, &registry, "do something", "", "")
-        .await
-        .unwrap();
+    let _plan =
+        agentverse_plan::planner::generate_plan(&wrapper, &registry, "do something", "", "")
+            .await
+            .unwrap();
 }
 
 #[tokio::test]
@@ -275,10 +281,9 @@ async fn test_generate_plan_success() {
 async fn test_generate_plan_invalid_json() {
     let wrapper = make_wrapper();
     let registry = PromptRegistry::default();
-    let err =
-        agentverse_plan::planner::generate_plan(&wrapper, &registry, "do something", "", "")
-            .await
-            .unwrap_err();
+    let err = agentverse_plan::planner::generate_plan(&wrapper, &registry, "do something", "", "")
+        .await
+        .unwrap_err();
     assert!(err.to_string().contains("Failed to parse plan JSON"));
 }
 

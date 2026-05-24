@@ -122,15 +122,27 @@ impl ConnectionManager {
 
     pub fn from_config(config: ProviderConfig) -> Result<Self, ModelError> {
         match config {
-            ProviderConfig::Anthropic { model_name, api_key } => {
-                Ok(Self::anthropic("https://api.anthropic.com", &model_name, &api_key))
-            }
-            ProviderConfig::OpenAI { model_name, api_key, base_url } => Ok(Self::openai(
+            ProviderConfig::Anthropic {
+                model_name,
+                api_key,
+            } => Ok(Self::anthropic(
+                "https://api.anthropic.com",
+                &model_name,
+                &api_key,
+            )),
+            ProviderConfig::OpenAI {
+                model_name,
+                api_key,
+                base_url,
+            } => Ok(Self::openai(
                 base_url.as_deref().unwrap_or("https://api.openai.com/v1"),
                 &model_name,
                 &api_key,
             )),
-            ProviderConfig::Gemini { model_name, api_key } => Ok(Self::gemini(
+            ProviderConfig::Gemini {
+                model_name,
+                api_key,
+            } => Ok(Self::gemini(
                 "https://generativelanguage.googleapis.com",
                 &model_name,
                 &api_key,
@@ -164,12 +176,16 @@ impl ConnectionManager {
         {
             let mut cb = self.circuit_breaker.lock().await;
             if !cb.can_execute() {
-                return Err(ModelError::CircuitOpen("Circuit breaker is open".to_string()));
+                return Err(ModelError::CircuitOpen(
+                    "Circuit breaker is open".to_string(),
+                ));
             }
         }
 
         // 3. Build request body
-        let body = self.provider.build_request(&self.model_name, request.clone())?;
+        let body = self
+            .provider
+            .build_request(&self.model_name, request.clone())?;
 
         // 4. Build URL
         let path = self.provider.endpoint_path(&self.model_name);
@@ -227,8 +243,7 @@ impl ConnectionManager {
                             continue;
                         }
                     } else if !status.is_success() {
-                        let err =
-                            ModelError::ApiError(format!("HTTP {}: {}", status, body_text));
+                        let err = ModelError::ApiError(format!("HTTP {}: {}", status, body_text));
                         error!(attempt, error = %err, "LLM call failed");
                         self.circuit_breaker.lock().await.record_failure();
                         return Err(err);
@@ -260,7 +275,6 @@ impl ConnectionManager {
         }
 
         // Exhausted retries (failures already recorded per-attempt)
-        Err(last_error
-            .unwrap_or_else(|| ModelError::ApiError("No response".to_string())))
+        Err(last_error.unwrap_or_else(|| ModelError::ApiError("No response".to_string())))
     }
 }

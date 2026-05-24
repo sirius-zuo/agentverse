@@ -74,13 +74,15 @@ async fn main() {
     });
 
     // Initialize session store (SQLite by default; override with SESSION_DB_URL env var)
-    let session_db_url = std::env::var("SESSION_DB_URL")
-        .unwrap_or_else(|_| "sqlite:sessions.db".to_string());
+    let session_db_url =
+        std::env::var("SESSION_DB_URL").unwrap_or_else(|_| "sqlite:sessions.db".to_string());
     let session_store = Arc::new(
-        SqliteSessionStore::new(&session_db_url).await.unwrap_or_else(|e| {
-            eprintln!("Failed to initialize session store: {}", e);
-            std::process::exit(1);
-        }),
+        SqliteSessionStore::new(&session_db_url)
+            .await
+            .unwrap_or_else(|e| {
+                eprintln!("Failed to initialize session store: {}", e);
+                std::process::exit(1);
+            }),
     );
     let session_agent = Arc::new(SessionAgent::new(
         Arc::new(
@@ -98,7 +100,9 @@ async fn main() {
         ),
         session_store,
     ));
-    let session_state = SessionState { agent: session_agent };
+    let session_state = SessionState {
+        agent: session_agent,
+    };
 
     // Build tool registry — wired for future tool use
     let mut tool_registry = ToolRegistry::new();

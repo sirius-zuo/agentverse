@@ -91,6 +91,12 @@ impl OpenAICompatible {
     }
 }
 
+impl Default for OpenAICompatible {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ModelProvider for OpenAICompatible {
     fn name(&self) -> &str {
         "openai"

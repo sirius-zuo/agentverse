@@ -54,7 +54,7 @@ where
             content: input.clone(),
         });
 
-        let sub_goals = decompose_request(&*self.model, &self.registry, &input).await?;
+        let sub_goals = decompose_request(&self.model, &self.registry, &input).await?;
 
         self.memory.lock().await.append(agentverse::Message {
             role: agentverse::memory::MessageRole::System,
@@ -99,7 +99,7 @@ where
                 .join("\n");
 
             let sub_plan = match generate_plan(
-                &*self.model,
+                &self.model,
                 &self.registry,
                 sub_goal,
                 &tool_summaries,

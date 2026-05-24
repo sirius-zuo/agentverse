@@ -80,7 +80,10 @@ pub async fn invoke(
         }
     }
 
-    let messages = vec![Message { role: MessageRole::User, content: request.message.clone() }];
+    let messages = vec![Message {
+        role: MessageRole::User,
+        content: request.message.clone(),
+    }];
     let result = state.agent.invoke(messages).await;
 
     match result {
@@ -179,7 +182,10 @@ pub async fn aether_invoke(
         "Processing aether request"
     );
 
-    let messages = vec![Message { role: MessageRole::User, content: input.clone() }];
+    let messages = vec![Message {
+        role: MessageRole::User,
+        content: input.clone(),
+    }];
     let result = state.agent.invoke(messages).await;
 
     match result {

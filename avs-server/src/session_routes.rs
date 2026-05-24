@@ -3,7 +3,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::sync::Arc;
 use tracing::{error, info};
 use uuid::Uuid;
@@ -28,11 +28,6 @@ pub struct CreateSessionRequest {
     pub user_id: String,
 }
 
-#[derive(Serialize)]
-pub struct CreateSessionResponse {
-    pub session_id: Uuid,
-}
-
 pub async fn create_session(
     State(state): State<SessionState>,
     Json(req): Json<CreateSessionRequest>,
@@ -46,11 +41,17 @@ pub async fn create_session(
     match state.agent.create_session(&req.user_id).await {
         Ok(session_id) => {
             info!(user_id = %req.user_id, %session_id, "Session created");
-            (StatusCode::CREATED, Json(serde_json::json!({ "session_id": session_id })))
+            (
+                StatusCode::CREATED,
+                Json(serde_json::json!({ "session_id": session_id })),
+            )
         }
         Err(e) => {
             error!(error = %e, "Failed to create session");
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() })))
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
         }
     }
 }
@@ -74,10 +75,17 @@ pub async fn send_message(
             Json(serde_json::json!({ "error": "message must not be empty" })),
         );
     }
-    match state.agent.invoke(&req.user_id, session_id, &req.message).await {
+    match state
+        .agent
+        .invoke(&req.user_id, session_id, &req.message)
+        .await
+    {
         Ok(reply) => {
             info!(user_id = %req.user_id, %session_id, "Message sent");
-            (StatusCode::OK, Json(serde_json::json!({ "session_id": session_id, "reply": reply })))
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "session_id": session_id, "reply": reply })),
+            )
         }
         Err(e) => {
             let status = match &e {
@@ -117,7 +125,10 @@ pub async fn get_session(
         ),
         Err(e) => {
             error!(error = %e, "Failed to get session");
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() })))
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
         }
     }
 }
@@ -160,9 +171,7 @@ mod tests {
     use tower::ServiceExt;
 
     async fn make_session_state() -> SessionState {
-        let store = Arc::new(
-            SqliteSessionStore::new("sqlite::memory:").await.unwrap(),
-        );
+        let store = Arc::new(SqliteSessionStore::new("sqlite::memory:").await.unwrap());
         let runner = Arc::new(
             LlmRunner::from_config(Config {
                 provider: ProviderConfig::OpenAI {
@@ -191,7 +200,11 @@ mod tests {
             .with_state(state)
     }
 
-    async fn post_json(app: Router, path: &str, body: serde_json::Value) -> axum::http::Response<Body> {
+    async fn post_json(
+        app: Router,
+        path: &str,
+        body: serde_json::Value,
+    ) -> axum::http::Response<Body> {
         let req = Request::post(path)
             .header("content-type", "application/json")
             .body(Body::from(serde_json::to_string(&body).unwrap()))
@@ -259,7 +272,8 @@ mod tests {
             app,
             &format!("/sessions/{}/messages", session_id),
             serde_json::json!({ "user_id": "alice", "message": "" }),
-        ).await;
+        )
+        .await;
         assert_eq!(res.status(), StatusCode::BAD_REQUEST);
     }
 
@@ -270,7 +284,9 @@ mod tests {
         let app = make_app(state);
         let req = Request::delete(format!("/sessions/{}", session_id))
             .header("content-type", "application/json")
-            .body(Body::from(serde_json::json!({ "user_id": "alice" }).to_string()))
+            .body(Body::from(
+                serde_json::json!({ "user_id": "alice" }).to_string(),
+            ))
             .unwrap();
         let res = app.oneshot(req).await.unwrap();
         assert_eq!(res.status(), StatusCode::NO_CONTENT);
@@ -286,7 +302,8 @@ mod tests {
             app,
             &format!("/sessions/{}/messages", session_id),
             serde_json::json!({ "user_id": "bob", "message": "hi" }),
-        ).await;
+        )
+        .await;
         assert_eq!(res.status(), StatusCode::NOT_FOUND);
     }
 }

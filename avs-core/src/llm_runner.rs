@@ -23,13 +23,22 @@ impl LlmRunner {
         Self::from_config_with_prompts(config, &prompt_config)
     }
 
-    pub fn from_config_with_prompts(config: Config, prompt_config: &PromptConfig) -> Result<Self, AgentError> {
+    pub fn from_config_with_prompts(
+        config: Config,
+        prompt_config: &PromptConfig,
+    ) -> Result<Self, AgentError> {
         config.validate()?;
 
         let (model_name, provider_name) = match &config.provider {
-            crate::config::ProviderConfig::OpenAI { model_name, .. } => (model_name.as_str(), "openai"),
-            crate::config::ProviderConfig::Anthropic { model_name, .. } => (model_name.as_str(), "anthropic"),
-            crate::config::ProviderConfig::Gemini { model_name, .. } => (model_name.as_str(), "gemini"),
+            crate::config::ProviderConfig::OpenAI { model_name, .. } => {
+                (model_name.as_str(), "openai")
+            }
+            crate::config::ProviderConfig::Anthropic { model_name, .. } => {
+                (model_name.as_str(), "anthropic")
+            }
+            crate::config::ProviderConfig::Gemini { model_name, .. } => {
+                (model_name.as_str(), "gemini")
+            }
         };
         info!(model = %model_name, provider = %provider_name, "LlmRunner initialized");
 
@@ -48,15 +57,19 @@ impl LlmRunner {
 
     /// Stateless LLM invocation. Caller supplies the full message history.
     pub async fn invoke(&self, messages: Vec<Message>) -> Result<GenerateResponse, AgentError> {
-        let system = self.prompt_registry
+        let system = self
+            .prompt_registry
             .render("system", std::collections::HashMap::new())
             .ok()
             .filter(|s| !s.is_empty());
 
-        self.connection_manager.generate(GenerateRequest {
-            system,
-            messages,
-            tools: None,
-        }).await.map_err(AgentError::Model)
+        self.connection_manager
+            .generate(GenerateRequest {
+                system,
+                messages,
+                tools: None,
+            })
+            .await
+            .map_err(AgentError::Model)
     }
 }

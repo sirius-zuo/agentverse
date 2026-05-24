@@ -1,5 +1,5 @@
-use agentverse::{Config, LlmRunner, LlmRunnerBuilder, ProviderConfig};
 use agentverse::memory::{Message, MessageRole};
+use agentverse::{Config, LlmRunner, LlmRunnerBuilder, ProviderConfig};
 
 fn closed_port_config() -> Config {
     Config {
@@ -24,7 +24,10 @@ fn llm_runner_from_config_builds_successfully() {
 #[tokio::test]
 async fn llm_runner_invoke_takes_messages_and_returns_error_on_bad_port() {
     let runner = LlmRunner::from_config(closed_port_config()).unwrap();
-    let messages = vec![Message { role: MessageRole::User, content: "hello".to_string() }];
+    let messages = vec![Message {
+        role: MessageRole::User,
+        content: "hello".to_string(),
+    }];
     let result = runner.invoke(messages).await;
     assert!(result.is_err(), "expected network error on closed port");
 }

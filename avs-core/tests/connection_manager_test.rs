@@ -26,11 +26,8 @@ async fn generate_succeeds_on_200() {
         when.method("POST").path("/v1/messages");
         then.status(200).json_body(anthropic_ok_body());
     });
-    let cm = ConnectionManager::anthropic(
-        &server.base_url(),
-        "claude-3-5-sonnet-20241022",
-        "test-key",
-    );
+    let cm =
+        ConnectionManager::anthropic(&server.base_url(), "claude-3-5-sonnet-20241022", "test-key");
     let result = cm
         .generate(GenerateRequest {
             system: None,
@@ -79,8 +76,11 @@ async fn circuit_breaker_opens_after_failures() {
         ConnectionManager::anthropic(&server.base_url(), "claude-3-5-sonnet-20241022", "test-key")
             .with_circuit_breaker(2, 30)
             .with_retries(0, 1); // no retries, instant failures
-    let req =
-        || GenerateRequest { system: None, messages: vec![user_msg("hi")], tools: None };
+    let req = || GenerateRequest {
+        system: None,
+        messages: vec![user_msg("hi")],
+        tools: None,
+    };
     let _ = cm.generate(req()).await;
     let _ = cm.generate(req()).await;
     let result = cm.generate(req()).await;
@@ -101,11 +101,8 @@ async fn generate_sends_anthropic_headers() {
             .header("anthropic-version", "2023-06-01");
         then.status(200).json_body(anthropic_ok_body());
     });
-    let cm = ConnectionManager::anthropic(
-        &server.base_url(),
-        "claude-3-5-sonnet-20241022",
-        "test-key",
-    );
+    let cm =
+        ConnectionManager::anthropic(&server.base_url(), "claude-3-5-sonnet-20241022", "test-key");
     let _ = cm
         .generate(GenerateRequest {
             system: None,

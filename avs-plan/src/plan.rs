@@ -78,7 +78,7 @@ where
             .join("\n");
 
         let plan = generate_plan(
-            &*self.model,
+            &self.model,
             &self.registry,
             &input,
             &tool_summaries,

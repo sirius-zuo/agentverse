@@ -94,11 +94,7 @@ impl ModelProvider for MockModel {
 
     fn parse_response(&self, _body: &str) -> Result<GenerateResponse, ModelError> {
         let idx = self.index.fetch_add(1, Ordering::SeqCst) % self.responses.len().max(1);
-        let content = self
-            .responses
-            .get(idx)
-            .cloned()
-            .unwrap_or_default();
+        let content = self.responses.get(idx).cloned().unwrap_or_default();
         Ok(GenerateResponse {
             content,
             usage: UsageStats::default(),

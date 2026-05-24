@@ -23,7 +23,9 @@ async fn make_agent() -> Agent {
     let dir = tempdir().unwrap();
     let db_path = dir.into_path().join("test.db");
     let store = Arc::new(
-        SqliteSessionStore::new(db_path.to_str().unwrap()).await.unwrap()
+        SqliteSessionStore::new(db_path.to_str().unwrap())
+            .await
+            .unwrap(),
     );
     let runner = Arc::new(LlmRunner::from_config(closed_port_config()).unwrap());
     Agent::new(runner, store)
@@ -46,7 +48,10 @@ async fn agent_invoke_does_not_persist_on_llm_failure() {
     assert!(result.is_err(), "expected error from closed port");
     // No messages should be persisted when the LLM fails
     let messages = agent.load_messages("alice", id).await.unwrap();
-    assert!(messages.is_empty(), "no messages should be persisted on LLM failure");
+    assert!(
+        messages.is_empty(),
+        "no messages should be persisted on LLM failure"
+    );
 }
 
 #[tokio::test]
