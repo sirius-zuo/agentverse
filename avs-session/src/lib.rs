@@ -8,4 +8,4 @@ pub use session::{Session, SessionId, SessionStatus};
 pub use store::{SessionStore, SessionStoreError};
 pub use sqlite::SqliteSessionStore;
 pub use manager::SessionManager;
-pub use agent::{Agent, AgentError};
+pub use agent::{Agent, SessionAgentError};

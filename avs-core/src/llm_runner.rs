@@ -6,15 +6,10 @@ use crate::error::AgentError;
 use crate::memory::Message;
 use crate::model::{ConnectionManager, GenerateRequest, GenerateResponse};
 use crate::prompt::{PromptConfig, PromptRegistry};
-use crate::tracing::{DefaultTracer, Tracer};
 
 pub struct LlmRunner {
     connection_manager: Arc<ConnectionManager>,
     prompt_registry: PromptRegistry,
-    #[allow(dead_code)]
-    tracer: Box<dyn Tracer>,
-    #[allow(dead_code)]
-    config: Config,
 }
 
 impl LlmRunner {
@@ -44,8 +39,6 @@ impl LlmRunner {
         Ok(Self {
             connection_manager: Arc::new(cm),
             prompt_registry,
-            tracer: Box::new(DefaultTracer::default()),
-            config,
         })
     }
 

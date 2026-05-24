@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use reqwest::header::{HeaderValue, CONTENT_TYPE};
 use reqwest::Client;
-use tokio::sync::RwLock;
+use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
 use super::anthropic_provider::AnthropicProvider;
@@ -84,7 +84,7 @@ pub struct ConnectionManager {
     api_key: String,
     model_name: String,
     provider: Box<dyn ModelProvider>,
-    circuit_breaker: Arc<RwLock<CircuitBreaker>>,
+    circuit_breaker: Arc<Mutex<CircuitBreaker>>,
     max_retries: usize,
     retry_delay_ms: u64,
 }
@@ -102,7 +102,7 @@ impl ConnectionManager {
             api_key: api_key.to_string(),
             model_name: model_name.to_string(),
             provider: Box::new(provider),
-            circuit_breaker: Arc::new(RwLock::new(CircuitBreaker::new(5, 30))),
+            circuit_breaker: Arc::new(Mutex::new(CircuitBreaker::new(5, 30))),
             max_retries: 3,
             retry_delay_ms: 500,
         }
@@ -145,7 +145,7 @@ impl ConnectionManager {
     }
 
     pub fn with_circuit_breaker(mut self, threshold: usize, timeout_secs: u64) -> Self {
-        self.circuit_breaker = Arc::new(RwLock::new(CircuitBreaker::new(threshold, timeout_secs)));
+        self.circuit_breaker = Arc::new(Mutex::new(CircuitBreaker::new(threshold, timeout_secs)));
         self
     }
 
@@ -162,7 +162,7 @@ impl ConnectionManager {
 
         // 2. Circuit breaker check
         {
-            let mut cb = self.circuit_breaker.write().await;
+            let mut cb = self.circuit_breaker.lock().await;
             if !cb.can_execute() {
                 return Err(ModelError::CircuitOpen("Circuit breaker is open".to_string()));
             }
@@ -197,6 +197,7 @@ impl ConnectionManager {
                 Err(e) => {
                     let err = ModelError::ApiError(e.to_string());
                     warn!(attempt, error = %err, "HTTP send failed");
+                    self.circuit_breaker.lock().await.record_failure();
                     last_error = Some(err);
                     if attempt < self.max_retries {
                         tokio::time::sleep(Duration::from_millis(
@@ -216,6 +217,7 @@ impl ConnectionManager {
                     if status == 429 {
                         let err = ModelError::RateLimited(body_text);
                         warn!(attempt, error = %err, "Rate limited");
+                        self.circuit_breaker.lock().await.record_failure();
                         last_error = Some(err);
                         if attempt < self.max_retries {
                             tokio::time::sleep(Duration::from_millis(
@@ -228,14 +230,12 @@ impl ConnectionManager {
                         let err =
                             ModelError::ApiError(format!("HTTP {}: {}", status, body_text));
                         error!(attempt, error = %err, "LLM call failed");
-                        let mut cb = self.circuit_breaker.write().await;
-                        cb.record_failure();
+                        self.circuit_breaker.lock().await.record_failure();
                         return Err(err);
                     } else {
                         match self.provider.parse_response(&body_text) {
                             Ok(response) => {
-                                let mut cb = self.circuit_breaker.write().await;
-                                cb.record_success();
+                                self.circuit_breaker.lock().await.record_success();
                                 info!(
                                     input_tokens = response.usage.input_tokens,
                                     output_tokens = response.usage.output_tokens,
@@ -249,8 +249,7 @@ impl ConnectionManager {
                                 return Ok(response);
                             }
                             Err(e) => {
-                                let mut cb = self.circuit_breaker.write().await;
-                                cb.record_failure();
+                                self.circuit_breaker.lock().await.record_failure();
                                 error!(error = %e, "Failed to parse LLM response");
                                 return Err(e);
                             }
@@ -260,9 +259,7 @@ impl ConnectionManager {
             }
         }
 
-        // Exhausted retries
-        let mut cb = self.circuit_breaker.write().await;
-        cb.record_failure();
+        // Exhausted retries (failures already recorded per-attempt)
         Err(last_error
             .unwrap_or_else(|| ModelError::ApiError("No response".to_string())))
     }

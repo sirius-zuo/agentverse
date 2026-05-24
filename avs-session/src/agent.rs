@@ -8,7 +8,7 @@ use crate::session::{Session, SessionId};
 use crate::store::{SessionStore, SessionStoreError};
 
 #[derive(Debug, thiserror::Error)]
-pub enum AgentError {
+pub enum SessionAgentError {
     #[error("session error: {0}")]
     Session(#[from] SessionStoreError),
     #[error("llm error: {0}")]
@@ -28,27 +28,27 @@ impl Agent {
         }
     }
 
-    pub async fn create_session(&self, user_id: &str) -> Result<SessionId, AgentError> {
+    pub async fn create_session(&self, user_id: &str) -> Result<SessionId, SessionAgentError> {
         Ok(self.sessions.create_session(user_id).await?)
     }
 
-    pub async fn get_session(&self, session_id: SessionId) -> Result<Option<Session>, AgentError> {
+    pub async fn get_session(&self, session_id: SessionId) -> Result<Option<Session>, SessionAgentError> {
         Ok(self.sessions.get_session(session_id).await?)
     }
 
-    pub async fn end_session(&self, session_id: SessionId) -> Result<(), AgentError> {
+    pub async fn end_session(&self, session_id: SessionId) -> Result<(), SessionAgentError> {
         Ok(self.sessions.end_session(session_id).await?)
     }
 
-    pub async fn list_sessions(&self, user_id: &str) -> Result<Vec<Session>, AgentError> {
+    pub async fn list_sessions(&self, user_id: &str) -> Result<Vec<Session>, SessionAgentError> {
         Ok(self.sessions.list_sessions(user_id).await?)
     }
 
-    pub async fn load_messages(&self, session_id: SessionId) -> Result<Vec<Message>, AgentError> {
+    pub async fn load_messages(&self, session_id: SessionId) -> Result<Vec<Message>, SessionAgentError> {
         Ok(self.sessions.load_messages(session_id).await?)
     }
 
-    pub async fn invoke(&self, session_id: SessionId, input: &str) -> Result<String, AgentError> {
+    pub async fn invoke(&self, session_id: SessionId, input: &str) -> Result<String, SessionAgentError> {
         // Load existing history
         let mut messages = self.sessions.load_messages(session_id).await?;
 
