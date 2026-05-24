@@ -1,14 +1,10 @@
 //! Integration tests for StrategyRouter.
-//!
-//! NOTE: These tests are partially disabled because ProviderWrapper::generate()
-//! is a stub that always returns an error (will be replaced by ConnectionManager in Task 2).
-//! Structural and non-routing tests remain active.
 
 use agentverse_router::{StrategyName, StrategyRouter};
 
-fn make_router(response: &str) -> StrategyRouter {
-    let _ = response; // unused until ConnectionManager replaces the stub
-    let model = agentverse::ProviderWrapper::openai("https://api.openai.com/v1", "gpt-4o", "test-key");
+fn make_router() -> StrategyRouter {
+    let model =
+        agentverse::ConnectionManager::openai("https://api.openai.com/v1", "gpt-4o", "test-key");
     StrategyRouter::new(
         model,
         vec![
@@ -19,19 +15,19 @@ fn make_router(response: &str) -> StrategyRouter {
     )
 }
 
-/// Routing tests are disabled until ProviderWrapper::generate() is implemented
-/// by ConnectionManager (Task 2). Until then, every call returns ApiError.
+/// Routing test: a real HTTP call would be needed for success.
+/// Verify that the router wires up correctly and fails gracefully without a real server.
 #[tokio::test]
-async fn test_route_returns_error_until_connection_manager() {
-    let router = make_router("react");
+async fn test_route_fails_without_server() {
+    let router = make_router();
     let result = router.route("What is 2+2?").await;
-    // ProviderWrapper::generate() is a stub — expect an error for now.
+    // No real server — expect an error (network or API error).
     assert!(result.is_err());
 }
 
 #[tokio::test]
 async fn test_available_strategies() {
-    let router = make_router("react");
+    let router = make_router();
     let strategies = router.available_strategies();
     assert_eq!(strategies.len(), 3);
     assert!(strategies.contains(&StrategyName::ReAct));

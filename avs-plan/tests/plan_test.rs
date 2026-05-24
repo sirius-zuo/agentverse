@@ -1,13 +1,9 @@
 //! Tests for the agentverse-plan crate.
 //!
 //! Tests the PlanStep, Plan, and strategy structures.
-//!
-//! NOTE: Tests that call generate_plan(), decompose_request(), or strategy.run()
-//! are marked #[ignore] because ProviderWrapper::generate() is a stub returning
-//! an error until ConnectionManager is implemented in Task 2.
 
 use agentverse::{
-    AsyncTool, GenerateRequest, ModelError, ModelProvider, PromptRegistry, ProviderWrapper,
+    AsyncTool, ConnectionManager, GenerateRequest, ModelError, ModelProvider, PromptRegistry,
 };
 use agentverse_memory::SimpleMemory;
 use agentverse_plan::{HierarchicalStrategy, Plan, PlanStep, PlanStrategy};
@@ -55,8 +51,8 @@ impl ModelProvider for MockModel {
     }
 }
 
-fn make_wrapper() -> ProviderWrapper {
-    ProviderWrapper::new(MockModel { responses: vec![] })
+fn make_wrapper() -> ConnectionManager {
+    ConnectionManager::new(MockModel { responses: vec![] }, "http://localhost", "test-key", "mock-model")
 }
 
 /// A mock async tool.
@@ -262,10 +258,10 @@ fn test_plan_step_complex_args() {
     assert_eq!(deserialized.args, Some(args));
 }
 
-// ─── Planner function tests — disabled pending ConnectionManager (Task 2) ──────
+// ─── Planner function tests — disabled (require HTTP mock server wiring) ──────
 
 #[tokio::test]
-#[ignore = "ProviderWrapper::generate() is a stub; re-enable after ConnectionManager (Task 2)"]
+#[ignore = "requires HTTP mock server wiring; ConnectionManager now owns HTTP"]
 async fn test_generate_plan_success() {
     let wrapper = make_wrapper();
     let registry = PromptRegistry::default();
@@ -275,7 +271,7 @@ async fn test_generate_plan_success() {
 }
 
 #[tokio::test]
-#[ignore = "ProviderWrapper::generate() is a stub; re-enable after ConnectionManager (Task 2)"]
+#[ignore = "requires HTTP mock server wiring; ConnectionManager now owns HTTP"]
 async fn test_generate_plan_invalid_json() {
     let wrapper = make_wrapper();
     let registry = PromptRegistry::default();
@@ -287,7 +283,7 @@ async fn test_generate_plan_invalid_json() {
 }
 
 #[tokio::test]
-#[ignore = "ProviderWrapper::generate() is a stub; re-enable after ConnectionManager (Task 2)"]
+#[ignore = "requires HTTP mock server wiring; ConnectionManager now owns HTTP"]
 async fn test_generate_plan_with_tools() {
     let wrapper = make_wrapper();
     let registry = PromptRegistry::default();
@@ -303,7 +299,7 @@ async fn test_generate_plan_with_tools() {
 }
 
 #[tokio::test]
-#[ignore = "ProviderWrapper::generate() is a stub; re-enable after ConnectionManager (Task 2)"]
+#[ignore = "requires HTTP mock server wiring; ConnectionManager now owns HTTP"]
 async fn test_decompose_request_success() {
     let wrapper = make_wrapper();
     let registry = PromptRegistry::default();
@@ -314,7 +310,7 @@ async fn test_decompose_request_success() {
 }
 
 #[tokio::test]
-#[ignore = "ProviderWrapper::generate() is a stub; re-enable after ConnectionManager (Task 2)"]
+#[ignore = "requires HTTP mock server wiring; ConnectionManager now owns HTTP"]
 async fn test_decompose_request_invalid_json() {
     let wrapper = make_wrapper();
     let registry = PromptRegistry::default();
@@ -350,7 +346,7 @@ fn test_hierarchical_strategy_construction() {
 }
 
 #[tokio::test]
-#[ignore = "ProviderWrapper::generate() is a stub; re-enable after ConnectionManager (Task 2)"]
+#[ignore = "requires HTTP mock server wiring; ConnectionManager now owns HTTP"]
 async fn test_plan_strategy_reasoning_steps() {
     let mut strategy = PlanStrategy::new(
         Arc::new(make_wrapper()),
@@ -363,7 +359,7 @@ async fn test_plan_strategy_reasoning_steps() {
 }
 
 #[tokio::test]
-#[ignore = "ProviderWrapper::generate() is a stub; re-enable after ConnectionManager (Task 2)"]
+#[ignore = "requires HTTP mock server wiring; ConnectionManager now owns HTTP"]
 async fn test_plan_strategy_tool_steps() {
     let mut registry = ToolRegistry::new();
     registry.register(MockTool::new("echo", "Echo tool"));
@@ -378,7 +374,7 @@ async fn test_plan_strategy_tool_steps() {
 }
 
 #[tokio::test]
-#[ignore = "ProviderWrapper::generate() is a stub; re-enable after ConnectionManager (Task 2)"]
+#[ignore = "requires HTTP mock server wiring; ConnectionManager now owns HTTP"]
 async fn test_hierarchical_strategy_run() {
     let mut strategy = HierarchicalStrategy::new(
         Arc::new(make_wrapper()),

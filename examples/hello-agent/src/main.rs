@@ -6,7 +6,7 @@
 //   MODEL_NAME=Qwen3.6-35B-A3B-GGUF \
 //   cargo run -p example-hello-agent
 
-use agentverse::{PromptConfig, PromptRegistry, ProviderWrapper};
+use agentverse::{ConnectionManager, PromptConfig, PromptRegistry};
 use agentverse_logging as avs_logging;
 use agentverse_memory::SimpleMemory;
 use agentverse_react::ReActStrategy;
@@ -29,7 +29,7 @@ async fn main() {
     tracing::info!(model = %model_name, base_url = %base_url, "Hello Agent");
     println!("Type your question and press Enter. Type \"exit\" or press Ctrl+C to quit.\n");
 
-    let model = Arc::new(ProviderWrapper::openai(&base_url, &model_name, &api_key));
+    let model = Arc::new(ConnectionManager::openai(&base_url, &model_name, &api_key));
     let registry = Arc::new(
         PromptRegistry::from_config(&PromptConfig {
             prompts_dir: Some(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string()),

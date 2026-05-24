@@ -3,7 +3,7 @@
 //! Provides the fixed loop structure; each strategy only implements
 //! its own `step()` logic via a closure.
 
-use agentverse::{AgentError, PromptRegistry, ProviderWrapper};
+use agentverse::{AgentError, ConnectionManager, PromptRegistry};
 use agentverse_guardrails::{check_output, check_prompt};
 use agentverse_tools::ToolRegistry;
 use serde_json::Value;
@@ -19,7 +19,7 @@ where
     M: agentverse::Memory,
 {
     prompt_registry: Arc<PromptRegistry>,
-    model: Arc<ProviderWrapper>,
+    model: Arc<ConnectionManager>,
     tools: ToolRegistry,
     memory: Arc<Mutex<M>>,
     max_iterations: usize,
@@ -51,7 +51,7 @@ where
     /// Create a new cycle skeleton.
     pub fn new(
         prompt_registry: Arc<PromptRegistry>,
-        model: Arc<ProviderWrapper>,
+        model: Arc<ConnectionManager>,
         tools: ToolRegistry,
         memory: Arc<Mutex<M>>,
         max_iterations: usize,
@@ -256,7 +256,7 @@ where
     }
 
     /// Return a reference to the model.
-    pub fn model(&self) -> &ProviderWrapper {
+    pub fn model(&self) -> &ConnectionManager {
         &self.model
     }
 

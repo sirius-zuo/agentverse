@@ -5,7 +5,7 @@
 
 use super::cycle::{CycleAction, CycleSkeleton};
 use super::parse::parse_response;
-use agentverse::{AgentError, PromptRegistry, ProviderWrapper};
+use agentverse::{AgentError, ConnectionManager, PromptRegistry};
 use agentverse_tools::ToolRegistry;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -32,7 +32,7 @@ where
     /// Create a new ReAct strategy.
     pub fn new(
         prompt_registry: Arc<PromptRegistry>,
-        model: Arc<ProviderWrapper>,
+        model: Arc<ConnectionManager>,
         tools: ToolRegistry,
         memory: Arc<Mutex<M>>,
         max_iterations: usize,

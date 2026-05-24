@@ -28,8 +28,8 @@ pub use error::{AgentError, ConfigError, GuardrailError, ModelError, ToolError};
 pub use example::Example;
 pub use memory::{Memory, MemoryError, Message, MessageRole};
 pub use model::{
-    AnthropicProvider, CycleResult, GeminiProvider, GenerateRequest, GenerateResponse,
-    ModelProvider, OpenAICompatible, ProviderWrapper, ToolDefinition, UsageStats,
+    AnthropicProvider, ConnectionManager, CycleResult, GeminiProvider, GenerateRequest,
+    GenerateResponse, ModelProvider, OpenAICompatible, ToolDefinition, UsageStats,
 };
 pub use prompt::PromptConfig;
 pub use prompt::PromptRegistry;

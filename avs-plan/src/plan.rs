@@ -5,7 +5,7 @@
 
 use super::planner::generate_plan;
 use agentverse::memory::{Message, MessageRole};
-use agentverse::{AgentError, GenerateRequest, PromptRegistry, ProviderWrapper};
+use agentverse::{AgentError, ConnectionManager, GenerateRequest, PromptRegistry};
 use agentverse_guardrails::check_output;
 use agentverse_tools::ToolRegistry;
 use std::sync::Arc;
@@ -20,7 +20,7 @@ pub struct PlanStrategy<M>
 where
     M: agentverse::Memory,
 {
-    model: Arc<ProviderWrapper>,
+    model: Arc<ConnectionManager>,
     registry: Arc<PromptRegistry>,
     tools: ToolRegistry,
     memory: Arc<Mutex<M>>,
@@ -33,7 +33,7 @@ where
 {
     /// Create a new Plan-and-Execute strategy.
     pub fn new(
-        model: Arc<ProviderWrapper>,
+        model: Arc<ConnectionManager>,
         registry: Arc<PromptRegistry>,
         tools: ToolRegistry,
         memory: Arc<Mutex<M>>,

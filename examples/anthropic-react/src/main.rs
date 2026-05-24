@@ -13,7 +13,7 @@
 //   ANTHROPIC_API_KEY=sk-ant-... \
 //   cargo run -p example-anthropic-react
 
-use agentverse::{PromptConfig, PromptRegistry, ProviderWrapper};
+use agentverse::{ConnectionManager, PromptConfig, PromptRegistry};
 use agentverse_logging as avs_logging;
 use agentverse_memory::SimpleMemory;
 use agentverse_react::ReActStrategy;
@@ -36,7 +36,7 @@ async fn main() {
     tracing::info!("Tool: Calculator");
     tracing::info!("Prompt caching: enabled (system prompt + penultimate message)");
 
-    let model = Arc::new(ProviderWrapper::anthropic(
+    let model = Arc::new(ConnectionManager::anthropic(
         "https://api.anthropic.com",
         &model_name,
         &api_key,

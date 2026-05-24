@@ -1,12 +1,8 @@
 //! Tests for the agentverse-react crate.
-//!
-//! NOTE: Tests that call strategy.run() are marked #[ignore] because
-//! ProviderWrapper::generate() is a stub returning an error until
-//! ConnectionManager is implemented in Task 2.
 
 use agentverse::{
-    AsyncTool, GenerateRequest, GenerateResponse, Memory, MemoryError, Message, ModelProvider,
-    ModelError, PromptConfig, PromptRegistry, ProviderWrapper, UsageStats,
+    AsyncTool, ConnectionManager, GenerateRequest, GenerateResponse, Memory, MemoryError, Message,
+    ModelError, ModelProvider, PromptConfig, PromptRegistry, UsageStats,
 };
 use agentverse_react::{parse::parse_response, CycleAction, CycleSkeleton, ReActStrategy};
 use agentverse_tools::{Calculator, ToolRegistry};
@@ -75,9 +71,7 @@ impl Memory for TestMemory {
     }
 }
 
-/// A mock model that implements the new 4-method ModelProvider trait.
-/// The responses field is unused at the ProviderWrapper level (generate() is stubbed),
-/// but is kept for future use when ConnectionManager replaces the stub.
+/// A mock model that implements the 4-method ModelProvider trait.
 struct MockModel {
     #[allow(dead_code)]
     responses: Vec<String>,
@@ -120,11 +114,16 @@ impl ModelProvider for MockModel {
     }
 }
 
-fn make_wrapper(responses: Vec<String>) -> ProviderWrapper {
-    ProviderWrapper::new(MockModel {
-        responses,
-        index: AtomicUsize::new(0),
-    })
+fn make_wrapper(responses: Vec<String>) -> ConnectionManager {
+    ConnectionManager::new(
+        MockModel {
+            responses,
+            index: AtomicUsize::new(0),
+        },
+        "http://localhost",
+        "test-key",
+        "mock-model",
+    )
 }
 
 /// A mock async tool for testing.
@@ -286,10 +285,10 @@ async fn test_cycle_skeleton_build_request() {
     assert!(request.messages.iter().any(|m| m.content.contains("Hello")));
 }
 
-// ─── ReActStrategy::run() tests — disabled pending ConnectionManager (Task 2) ──
+// ─── ReActStrategy::run() tests — disabled (require HTTP mock wiring) ────────
 
 #[tokio::test]
-#[ignore = "ProviderWrapper::generate() is a stub; re-enable after ConnectionManager (Task 2)"]
+#[ignore = "requires mock HTTP server wiring; ConnectionManager now owns HTTP"]
 async fn test_react_strategy_direct_answer() {
     let mut strategy = mock_strategy(vec!["Answer: 42".to_string()], empty_registry(), 10);
     let result = strategy.run("What is 6*7?".to_string()).await.unwrap();
@@ -297,7 +296,7 @@ async fn test_react_strategy_direct_answer() {
 }
 
 #[tokio::test]
-#[ignore = "ProviderWrapper::generate() is a stub; re-enable after ConnectionManager (Task 2)"]
+#[ignore = "requires mock HTTP server wiring; ConnectionManager now owns HTTP"]
 async fn test_react_strategy_thought_then_answer() {
     let mut strategy = mock_strategy(
         vec![
@@ -312,7 +311,7 @@ async fn test_react_strategy_thought_then_answer() {
 }
 
 #[tokio::test]
-#[ignore = "ProviderWrapper::generate() is a stub; re-enable after ConnectionManager (Task 2)"]
+#[ignore = "requires mock HTTP server wiring; ConnectionManager now owns HTTP"]
 async fn test_react_strategy_tool_call_then_answer() {
     let mut registry = ToolRegistry::new();
     registry.register(MockTool::new("echo", "Echo back input"));
@@ -329,7 +328,7 @@ async fn test_react_strategy_tool_call_then_answer() {
 }
 
 #[tokio::test]
-#[ignore = "ProviderWrapper::generate() is a stub; re-enable after ConnectionManager (Task 2)"]
+#[ignore = "requires mock HTTP server wiring; ConnectionManager now owns HTTP"]
 async fn test_react_strategy_max_iterations() {
     let mut strategy = mock_strategy(
         vec!["Thought: still thinking.".to_string()],
@@ -341,7 +340,7 @@ async fn test_react_strategy_max_iterations() {
 }
 
 #[tokio::test]
-#[ignore = "ProviderWrapper::generate() is a stub; re-enable after ConnectionManager (Task 2)"]
+#[ignore = "requires mock HTTP server wiring; ConnectionManager now owns HTTP"]
 async fn test_react_strategy_empty_response_is_error() {
     let mut strategy = mock_strategy(vec!["".to_string()], empty_registry(), 5);
     let err = strategy.run("test".to_string()).await.unwrap_err();
@@ -349,7 +348,7 @@ async fn test_react_strategy_empty_response_is_error() {
 }
 
 #[tokio::test]
-#[ignore = "ProviderWrapper::generate() is a stub; re-enable after ConnectionManager (Task 2)"]
+#[ignore = "requires mock HTTP server wiring; ConnectionManager now owns HTTP"]
 async fn test_react_strategy_usage_accumulates() {
     let mut strategy = mock_strategy(vec!["Answer: done".to_string()], empty_registry(), 5);
     let result = strategy.run("test".to_string()).await.unwrap();

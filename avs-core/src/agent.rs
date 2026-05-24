@@ -6,14 +6,14 @@ use tracing::info;
 use crate::config::Config;
 use crate::error::AgentError;
 use crate::memory::{Memory, Message, ShortTermMemory};
-use crate::model::ProviderWrapper;
+use crate::model::ConnectionManager;
 use crate::prompt::{PromptConfig, PromptRegistry};
 use crate::tracing::{DefaultTracer, Tracer};
 
 #[allow(dead_code)]
 pub struct Agent {
     config: Config,
-    provider: Option<ProviderWrapper>,
+    provider: Option<ConnectionManager>,
     memory: Arc<RwLock<dyn Memory>>,
     prompt_registry: PromptRegistry,
     tracer: Box<dyn Tracer>,
@@ -46,7 +46,7 @@ impl Agent {
 
         let prompt_registry = PromptRegistry::from_config(prompt_config)?;
 
-        let provider = Some(ProviderWrapper::from_config(config.provider.clone())?);
+        let provider = Some(ConnectionManager::from_config(config.provider.clone())?);
 
         Ok(Self {
             config,

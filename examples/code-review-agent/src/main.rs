@@ -12,7 +12,7 @@
 //   PROJECT_DIR=/path/to/AgentVerse \
 //   cargo run -p example-code-review-agent
 
-use agentverse::{PromptConfig, PromptRegistry, ProviderWrapper};
+use agentverse::{ConnectionManager, PromptConfig, PromptRegistry};
 use agentverse_logging as avs_logging;
 use agentverse_memory::SimpleMemory;
 use agentverse_plan::HierarchicalStrategy;
@@ -37,7 +37,7 @@ async fn main() {
     tracing::info!("Strategy: Hierarchical Planning");
     tracing::info!("Tools: FileSearch + ShellTool");
 
-    let model = Arc::new(ProviderWrapper::openai(&base_url, &model_name, &api_key));
+    let model = Arc::new(ConnectionManager::openai(&base_url, &model_name, &api_key));
     let registry = Arc::new(
         PromptRegistry::from_config(&PromptConfig {
             prompts_dir: Some(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string()),

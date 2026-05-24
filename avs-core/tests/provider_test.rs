@@ -1,46 +1,38 @@
 use agentverse::memory::{Message, MessageRole};
 use agentverse::{
-    AnthropicProvider, GeminiProvider, GenerateRequest, ModelProvider, OpenAICompatible,
-    ProviderConfig, ProviderWrapper, ToolDefinition,
+    AnthropicProvider, ConnectionManager, GeminiProvider, GenerateRequest, ModelProvider,
+    ProviderConfig, ToolDefinition,
 };
 use serde_json::json;
 
-// ── ProviderWrapper tests ─────────────────────────────────────────────────────
+// ── ConnectionManager construction tests ──────────────────────────────────────
 
 #[test]
-fn test_provider_wrapper_new_wraps_provider() {
-    let provider = OpenAICompatible::new();
-    let wrapper = ProviderWrapper::new(provider);
-    // ProviderWrapper should store the provider; no panic on construction
-    let _ = wrapper;
-}
-
-#[test]
-fn test_provider_wrapper_from_config_openai() {
+fn test_connection_manager_from_config_openai() {
     let config = ProviderConfig::OpenAI {
         model_name: "gpt-4o".to_string(),
         api_key: "sk-test".to_string(),
         base_url: None,
     };
-    assert!(ProviderWrapper::from_config(config).is_ok());
+    assert!(ConnectionManager::from_config(config).is_ok());
 }
 
 #[test]
-fn test_provider_wrapper_from_config_anthropic() {
+fn test_connection_manager_from_config_anthropic() {
     let config = ProviderConfig::Anthropic {
         model_name: "claude-3-5-sonnet-20241022".to_string(),
         api_key: "key".to_string(),
     };
-    assert!(ProviderWrapper::from_config(config).is_ok());
+    assert!(ConnectionManager::from_config(config).is_ok());
 }
 
 #[test]
-fn test_provider_wrapper_from_config_gemini() {
+fn test_connection_manager_from_config_gemini() {
     let config = ProviderConfig::Gemini {
         model_name: "gemini-pro".to_string(),
         api_key: "key".to_string(),
     };
-    assert!(ProviderWrapper::from_config(config).is_ok());
+    assert!(ConnectionManager::from_config(config).is_ok());
 }
 
 // ── AnthropicProvider tests ───────────────────────────────────────────────────

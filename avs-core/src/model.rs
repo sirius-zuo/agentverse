@@ -3,12 +3,12 @@ use crate::error::ModelError;
 mod anthropic_provider;
 mod gemini_provider;
 mod openai_compatible;
-mod provider_wrapper;
+mod connection_manager;
 
 pub use anthropic_provider::AnthropicProvider;
+pub use connection_manager::ConnectionManager;
 pub use gemini_provider::GeminiProvider;
 pub use openai_compatible::OpenAICompatible;
-pub use provider_wrapper::ProviderWrapper;
 
 /// Per-call LLM usage statistics. Zero-filled for providers that do not report a field.
 #[derive(Debug, Default, Clone, Copy)]
