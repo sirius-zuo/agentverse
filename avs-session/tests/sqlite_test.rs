@@ -63,3 +63,36 @@ async fn load_messages_empty_for_new_session() {
     let messages = store.load_messages(session.id).await.unwrap();
     assert!(messages.is_empty());
 }
+
+// --- SessionManager tests ---
+use agentverse_session::manager::SessionManager;
+use std::sync::Arc;
+
+#[tokio::test]
+async fn session_manager_create_returns_id() {
+    let store = Arc::new(make_store().await);
+    let manager = SessionManager::new(store);
+    let id = manager.create_session("alice").await.unwrap();
+    let session = manager.get_session(id).await.unwrap().unwrap();
+    assert_eq!(session.user_id, "alice");
+}
+
+#[tokio::test]
+async fn session_manager_end_session_marks_completed() {
+    let store = Arc::new(make_store().await);
+    let manager = SessionManager::new(store);
+    let id = manager.create_session("bob").await.unwrap();
+    manager.end_session(id).await.unwrap();
+    let session = manager.get_session(id).await.unwrap().unwrap();
+    assert!(matches!(session.status, SessionStatus::Completed));
+}
+
+#[tokio::test]
+async fn session_manager_list_sessions_for_user() {
+    let store = Arc::new(make_store().await);
+    let manager = SessionManager::new(store);
+    manager.create_session("carol").await.unwrap();
+    manager.create_session("carol").await.unwrap();
+    let sessions = manager.list_sessions("carol").await.unwrap();
+    assert_eq!(sessions.len(), 2);
+}
