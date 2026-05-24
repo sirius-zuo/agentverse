@@ -38,15 +38,15 @@ async fn agent_create_session_returns_id() {
 }
 
 #[tokio::test]
-async fn agent_invoke_persists_user_message_before_llm_call() {
+async fn agent_invoke_does_not_persist_on_llm_failure() {
     let agent = make_agent().await;
     let id = agent.create_session("alice").await.unwrap();
-    // Network error expected (closed port)
-    let _ = agent.invoke("alice", id, "hello").await;
-    // User message should have been appended before the LLM call attempted
+    // Network error expected (closed port) — LLM call will fail
+    let result = agent.invoke("alice", id, "hello").await;
+    assert!(result.is_err(), "expected error from closed port");
+    // No messages should be persisted when the LLM fails
     let messages = agent.load_messages("alice", id).await.unwrap();
-    assert!(!messages.is_empty());
-    assert_eq!(messages[0].content, "hello");
+    assert!(messages.is_empty(), "no messages should be persisted on LLM failure");
 }
 
 #[tokio::test]

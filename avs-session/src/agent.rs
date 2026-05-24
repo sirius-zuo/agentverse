@@ -52,15 +52,15 @@ impl Agent {
         // Load existing history
         let mut messages = self.sessions.load_messages(user_id, session_id).await?;
 
-        // Append and persist user message
+        // Build in-memory user message (do not persist yet)
         let user_msg = Message { role: MessageRole::User, content: input.to_string() };
         messages.push(user_msg.clone());
-        self.sessions.append_message(user_id, session_id, user_msg).await?;
 
-        // Call LLM (stateless)
+        // Call LLM — if this fails, nothing has been persisted, caller can safely retry
         let response = self.runner.invoke(messages).await?;
 
-        // Persist assistant response
+        // Persist both messages only after a successful LLM response
+        self.sessions.append_message(user_id, session_id, user_msg).await?;
         let asst_msg = Message { role: MessageRole::Assistant, content: response.content.clone() };
         self.sessions.append_message(user_id, session_id, asst_msg).await?;
 
