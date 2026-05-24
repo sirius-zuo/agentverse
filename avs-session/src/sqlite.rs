@@ -31,6 +31,23 @@ impl SqliteSessionStore {
         Ok(store)
     }
 
+    async fn verify_ownership(&self, user_id: &str, session_id: SessionId) -> Result<(), SessionStoreError> {
+        let id_str = session_id.to_string();
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sessions WHERE id = ? AND user_id = ?"
+        )
+        .bind(&id_str)
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| SessionStoreError::Database(e.to_string()))?;
+        if count == 0 {
+            Err(SessionStoreError::NotFound(session_id))
+        } else {
+            Ok(())
+        }
+    }
+
     async fn migrate(&self) -> Result<(), SessionStoreError> {
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS sessions (
@@ -79,12 +96,12 @@ impl SessionStore for SqliteSessionStore {
         Ok(session)
     }
 
-    async fn get(&self, session_id: SessionId) -> Result<Option<Session>, SessionStoreError> {
+    async fn get(&self, user_id: &str, session_id: SessionId) -> Result<Option<Session>, SessionStoreError> {
         let id_str = session_id.to_string();
         let row = sqlx::query_as::<_, (String, String, String, i64, i64)>(
-            "SELECT id, user_id, status, created_at, updated_at FROM sessions WHERE id = ?"
+            "SELECT id, user_id, status, created_at, updated_at FROM sessions WHERE id = ? AND user_id = ?"
         )
-        .bind(&id_str).fetch_optional(&self.pool).await
+        .bind(&id_str).bind(user_id).fetch_optional(&self.pool).await
         .map_err(|e| SessionStoreError::Database(e.to_string()))?;
 
         row.map(|(id, user_id, status, created_at, updated_at)| -> Result<Session, SessionStoreError> {
@@ -98,11 +115,14 @@ impl SessionStore for SqliteSessionStore {
         }).transpose()
     }
 
-    async fn update_status(&self, session_id: SessionId, status: SessionStatus) -> Result<(), SessionStoreError> {
+    async fn update_status(&self, user_id: &str, session_id: SessionId, status: SessionStatus) -> Result<(), SessionStoreError> {
         let now = chrono::Utc::now().timestamp();
-        sqlx::query("UPDATE sessions SET status = ?, updated_at = ? WHERE id = ?")
-            .bind(status.to_string()).bind(now).bind(session_id.to_string())
+        let result = sqlx::query("UPDATE sessions SET status = ?, updated_at = ? WHERE id = ? AND user_id = ?")
+            .bind(status.to_string()).bind(now).bind(session_id.to_string()).bind(user_id)
             .execute(&self.pool).await.map_err(|e| SessionStoreError::Database(e.to_string()))?;
+        if result.rows_affected() == 0 {
+            return Err(SessionStoreError::NotFound(session_id));
+        }
         Ok(())
     }
 
@@ -124,7 +144,8 @@ impl SessionStore for SqliteSessionStore {
         }).collect::<Result<Vec<_>, _>>()
     }
 
-    async fn append_message(&self, session_id: SessionId, message: Message) -> Result<(), SessionStoreError> {
+    async fn append_message(&self, user_id: &str, session_id: SessionId, message: Message) -> Result<(), SessionStoreError> {
+        self.verify_ownership(user_id, session_id).await?;
         let id_str = session_id.to_string();
         let role = match message.role {
             MessageRole::User => "user",
@@ -143,7 +164,8 @@ impl SessionStore for SqliteSessionStore {
         Ok(())
     }
 
-    async fn load_messages(&self, session_id: SessionId) -> Result<Vec<Message>, SessionStoreError> {
+    async fn load_messages(&self, user_id: &str, session_id: SessionId) -> Result<Vec<Message>, SessionStoreError> {
+        self.verify_ownership(user_id, session_id).await?;
         let rows = sqlx::query_as::<_, (String, String)>(
             "SELECT role, content FROM messages WHERE session_id = ? ORDER BY id ASC"
         )

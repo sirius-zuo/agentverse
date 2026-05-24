@@ -13,9 +13,9 @@ pub enum SessionStoreError {
 #[async_trait]
 pub trait SessionStore: Send + Sync {
     async fn create(&self, user_id: &str) -> Result<Session, SessionStoreError>;
-    async fn get(&self, session_id: SessionId) -> Result<Option<Session>, SessionStoreError>;
-    async fn update_status(&self, session_id: SessionId, status: SessionStatus) -> Result<(), SessionStoreError>;
+    async fn get(&self, user_id: &str, session_id: SessionId) -> Result<Option<Session>, SessionStoreError>;
+    async fn update_status(&self, user_id: &str, session_id: SessionId, status: SessionStatus) -> Result<(), SessionStoreError>;
     async fn list_by_user(&self, user_id: &str) -> Result<Vec<Session>, SessionStoreError>;
-    async fn append_message(&self, session_id: SessionId, message: Message) -> Result<(), SessionStoreError>;
-    async fn load_messages(&self, session_id: SessionId) -> Result<Vec<Message>, SessionStoreError>;
+    async fn append_message(&self, user_id: &str, session_id: SessionId, message: Message) -> Result<(), SessionStoreError>;
+    async fn load_messages(&self, user_id: &str, session_id: SessionId) -> Result<Vec<Message>, SessionStoreError>;
 }

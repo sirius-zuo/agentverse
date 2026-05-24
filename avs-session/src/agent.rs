@@ -32,37 +32,37 @@ impl Agent {
         Ok(self.sessions.create_session(user_id).await?)
     }
 
-    pub async fn get_session(&self, session_id: SessionId) -> Result<Option<Session>, SessionAgentError> {
-        Ok(self.sessions.get_session(session_id).await?)
+    pub async fn get_session(&self, user_id: &str, session_id: SessionId) -> Result<Option<Session>, SessionAgentError> {
+        Ok(self.sessions.get_session(user_id, session_id).await?)
     }
 
-    pub async fn end_session(&self, session_id: SessionId) -> Result<(), SessionAgentError> {
-        Ok(self.sessions.end_session(session_id).await?)
+    pub async fn end_session(&self, user_id: &str, session_id: SessionId) -> Result<(), SessionAgentError> {
+        Ok(self.sessions.end_session(user_id, session_id).await?)
     }
 
     pub async fn list_sessions(&self, user_id: &str) -> Result<Vec<Session>, SessionAgentError> {
         Ok(self.sessions.list_sessions(user_id).await?)
     }
 
-    pub async fn load_messages(&self, session_id: SessionId) -> Result<Vec<Message>, SessionAgentError> {
-        Ok(self.sessions.load_messages(session_id).await?)
+    pub async fn load_messages(&self, user_id: &str, session_id: SessionId) -> Result<Vec<Message>, SessionAgentError> {
+        Ok(self.sessions.load_messages(user_id, session_id).await?)
     }
 
-    pub async fn invoke(&self, session_id: SessionId, input: &str) -> Result<String, SessionAgentError> {
+    pub async fn invoke(&self, user_id: &str, session_id: SessionId, input: &str) -> Result<String, SessionAgentError> {
         // Load existing history
-        let mut messages = self.sessions.load_messages(session_id).await?;
+        let mut messages = self.sessions.load_messages(user_id, session_id).await?;
 
         // Append and persist user message
         let user_msg = Message { role: MessageRole::User, content: input.to_string() };
         messages.push(user_msg.clone());
-        self.sessions.append_message(session_id, user_msg).await?;
+        self.sessions.append_message(user_id, session_id, user_msg).await?;
 
         // Call LLM (stateless)
         let response = self.runner.invoke(messages).await?;
 
         // Persist assistant response
         let asst_msg = Message { role: MessageRole::Assistant, content: response.content.clone() };
-        self.sessions.append_message(session_id, asst_msg).await?;
+        self.sessions.append_message(user_id, session_id, asst_msg).await?;
 
         Ok(response.content)
     }
