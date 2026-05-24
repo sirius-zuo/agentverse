@@ -38,14 +38,12 @@ impl PostgresSessionStore {
                 session_id   TEXT    NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
                 role         TEXT    NOT NULL,
                 content      TEXT    NOT NULL,
-                sequence_num INTEGER NOT NULL,
-                created_at   BIGINT  NOT NULL,
-                UNIQUE(session_id, sequence_num)
+                created_at   BIGINT  NOT NULL
             )"
         ).execute(&self.pool).await.map_err(|e| SessionStoreError::Database(e.to_string()))?;
 
         sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, sequence_num)"
+            "CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id)"
         ).execute(&self.pool).await.map_err(|e| SessionStoreError::Database(e.to_string()))?;
 
         Ok(())
@@ -77,13 +75,15 @@ impl SessionStore for PostgresSessionStore {
         .bind(&id_str).fetch_optional(&self.pool).await
         .map_err(|e| SessionStoreError::Database(e.to_string()))?;
 
-        Ok(row.map(|(id, user_id, status, created_at, updated_at)| Session {
-            id: id.parse().unwrap(),
-            user_id,
-            status: status.parse().unwrap_or(SessionStatus::Active),
-            created_at: chrono::DateTime::from_timestamp(created_at, 0).unwrap_or_default(),
-            updated_at: chrono::DateTime::from_timestamp(updated_at, 0).unwrap_or_default(),
-        }))
+        row.map(|(id, user_id, status, created_at, updated_at)| -> Result<Session, SessionStoreError> {
+            Ok(Session {
+                id: id.parse().map_err(|_| SessionStoreError::Database(format!("invalid UUID: {}", id)))?,
+                user_id,
+                status: status.parse().unwrap_or(SessionStatus::Active),
+                created_at: chrono::DateTime::from_timestamp(created_at, 0).unwrap_or_default(),
+                updated_at: chrono::DateTime::from_timestamp(updated_at, 0).unwrap_or_default(),
+            })
+        }).transpose()
     }
 
     async fn update_status(&self, session_id: SessionId, status: SessionStatus) -> Result<(), SessionStoreError> {
@@ -101,13 +101,15 @@ impl SessionStore for PostgresSessionStore {
         .bind(user_id).fetch_all(&self.pool).await
         .map_err(|e| SessionStoreError::Database(e.to_string()))?;
 
-        Ok(rows.into_iter().map(|(id, user_id, status, created_at, updated_at)| Session {
-            id: id.parse().unwrap(),
-            user_id,
-            status: status.parse().unwrap_or(SessionStatus::Active),
-            created_at: chrono::DateTime::from_timestamp(created_at, 0).unwrap_or_default(),
-            updated_at: chrono::DateTime::from_timestamp(updated_at, 0).unwrap_or_default(),
-        }).collect())
+        rows.into_iter().map(|(id, user_id, status, created_at, updated_at)| -> Result<Session, SessionStoreError> {
+            Ok(Session {
+                id: id.parse().map_err(|_| SessionStoreError::Database(format!("invalid UUID: {}", id)))?,
+                user_id,
+                status: status.parse().unwrap_or(SessionStatus::Active),
+                created_at: chrono::DateTime::from_timestamp(created_at, 0).unwrap_or_default(),
+                updated_at: chrono::DateTime::from_timestamp(updated_at, 0).unwrap_or_default(),
+            })
+        }).collect::<Result<Vec<_>, _>>()
     }
 
     async fn append_message(&self, session_id: SessionId, message: Message) -> Result<(), SessionStoreError> {
@@ -120,14 +122,10 @@ impl SessionStore for PostgresSessionStore {
         };
         let now = chrono::Utc::now().timestamp();
 
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM messages WHERE session_id = $1")
-            .bind(&id_str).fetch_one(&self.pool).await
-            .map_err(|e| SessionStoreError::Database(e.to_string()))?;
-
         sqlx::query(
-            "INSERT INTO messages (session_id, role, content, sequence_num, created_at) VALUES ($1, $2, $3, $4, $5)"
+            "INSERT INTO messages (session_id, role, content, created_at) VALUES ($1, $2, $3, $4)"
         )
-        .bind(&id_str).bind(role).bind(&message.content).bind(count + 1).bind(now)
+        .bind(&id_str).bind(role).bind(&message.content).bind(now)
         .execute(&self.pool).await.map_err(|e| SessionStoreError::Database(e.to_string()))?;
 
         Ok(())
@@ -135,7 +133,7 @@ impl SessionStore for PostgresSessionStore {
 
     async fn load_messages(&self, session_id: SessionId) -> Result<Vec<Message>, SessionStoreError> {
         let rows = sqlx::query_as::<_, (String, String)>(
-            "SELECT role, content FROM messages WHERE session_id = $1 ORDER BY sequence_num ASC"
+            "SELECT role, content FROM messages WHERE session_id = $1 ORDER BY id ASC"
         )
         .bind(session_id.to_string()).fetch_all(&self.pool).await
         .map_err(|e| SessionStoreError::Database(e.to_string()))?;
