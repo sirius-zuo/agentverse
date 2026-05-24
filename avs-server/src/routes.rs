@@ -1,6 +1,7 @@
 // avs-server/src/routes.rs
 use crate::envelope::{Envelope, EnvelopeKind};
-use agentverse::Agent;
+use agentverse::memory::{Message, MessageRole};
+use agentverse::LlmRunner;
 use agentverse_guardrails::{check_output, check_prompt, RateLimiter};
 use agentverse_tools::ToolRegistry;
 use axum::extract::State;
@@ -20,12 +21,12 @@ pub struct InvokeRequest {
 
 #[derive(Clone)]
 pub struct AppState {
-    pub agent: Arc<Mutex<Agent>>,
+    pub agent: Arc<LlmRunner>,
     pub rate_limiter: Arc<RateLimiter>,
     pub guardrails_enabled: bool,
     pub model_name: String,
     /// Tool registry — wired but not yet consumed by invoke().
-    /// To activate: pass tools to Agent::invoke() or execute via ToolRegistry.
+    /// To activate: pass tools to LlmRunner::invoke() or execute via ToolRegistry.
     #[allow(dead_code)]
     pub tools: Arc<Mutex<ToolRegistry>>,
 }
@@ -79,14 +80,13 @@ pub async fn invoke(
         }
     }
 
-    let agent = state.agent.lock().await;
-    let result = agent.invoke(&request.user_id, &request.message).await;
-    drop(agent);
+    let messages = vec![Message { role: MessageRole::User, content: request.message.clone() }];
+    let result = state.agent.invoke(messages).await;
 
     match result {
         Ok(response) => {
             if state.guardrails_enabled {
-                if let Err(e) = check_output(&response) {
+                if let Err(e) = check_output(&response.content) {
                     error!(
                         request_id = %request_id,
                         error = %e,
@@ -112,7 +112,7 @@ pub async fn invoke(
             (
                 StatusCode::OK,
                 Json(serde_json::json!({
-                    "message": response,
+                    "message": response.content,
                     "user_id": request.user_id,
                 })),
             )
@@ -179,12 +179,11 @@ pub async fn aether_invoke(
         "Processing aether request"
     );
 
-    let agent = state.agent.lock().await;
-    let result = agent.invoke("aether", &input).await;
-    drop(agent);
+    let messages = vec![Message { role: MessageRole::User, content: input.clone() }];
+    let result = state.agent.invoke(messages).await;
 
     match result {
-        Ok(output) => {
+        Ok(response) => {
             info!(
                 request_id = %request_id,
                 envelope_id = %env.id,
@@ -192,15 +191,15 @@ pub async fn aether_invoke(
                 latency_ms = start.elapsed().as_millis(),
                 "Aether request completed"
             );
-            let response = Envelope {
+            let envelope_response = Envelope {
                 id: env.id,
                 kind: EnvelopeKind::Result,
-                payload: serde_json::json!({ "output": output }),
+                payload: serde_json::json!({ "output": response.content }),
                 metadata: env.metadata,
             };
             (
                 StatusCode::OK,
-                Json(serde_json::to_value(response).unwrap()),
+                Json(serde_json::to_value(envelope_response).unwrap()),
             )
         }
         Err(e) => {
@@ -212,7 +211,7 @@ pub async fn aether_invoke(
                 error = %e,
                 "Aether request failed"
             );
-            let response = Envelope {
+            let envelope_response = Envelope {
                 id: env.id,
                 kind: EnvelopeKind::Error,
                 payload: serde_json::json!({ "error": e.to_string() }),
@@ -220,7 +219,7 @@ pub async fn aether_invoke(
             };
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::to_value(response).unwrap()),
+                Json(serde_json::to_value(envelope_response).unwrap()),
             )
         }
     }
@@ -240,8 +239,8 @@ mod tests {
 
     fn make_state() -> AppState {
         AppState {
-            agent: Arc::new(Mutex::new(
-                Agent::from_config(Config {
+            agent: Arc::new(
+                LlmRunner::from_config(Config {
                     provider: agentverse::ProviderConfig::OpenAI {
                         model_name: "test-model".to_string(),
                         api_key: "test-key".to_string(),
@@ -253,7 +252,7 @@ mod tests {
                     system_prompt: None,
                 })
                 .unwrap(),
-            )),
+            ),
             rate_limiter: Arc::new(RateLimiter::new(1000, 60)),
             guardrails_enabled: false,
             model_name: "test-model".to_string(),

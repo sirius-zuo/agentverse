@@ -2,13 +2,13 @@ use crate::config::{Config, ProviderConfig};
 use crate::error::AgentError;
 use crate::prompt::PromptConfig;
 
-pub struct AgentBuilder {
+pub struct LlmRunnerBuilder {
     config: Option<Config>,
     system_prompt: Option<String>,
     prompts_dir: Option<String>,
 }
 
-impl AgentBuilder {
+impl LlmRunnerBuilder {
     pub fn new() -> Self {
         Self {
             config: None,
@@ -35,7 +35,7 @@ impl AgentBuilder {
         self
     }
 
-    pub fn build(self) -> Result<crate::agent::Agent, AgentError> {
+    pub fn build(self) -> Result<crate::llm_runner::LlmRunner, AgentError> {
         let config = self.config.unwrap_or_else(|| Config {
             provider: ProviderConfig::OpenAI {
                 model_name: String::new(),
@@ -55,11 +55,11 @@ impl AgentBuilder {
             examples: std::collections::HashMap::new(),
         };
 
-        crate::agent::Agent::from_config_with_prompts(config, &prompt_config)
+        crate::llm_runner::LlmRunner::from_config_with_prompts(config, &prompt_config)
     }
 }
 
-impl Default for AgentBuilder {
+impl Default for LlmRunnerBuilder {
     fn default() -> Self {
         Self::new()
     }

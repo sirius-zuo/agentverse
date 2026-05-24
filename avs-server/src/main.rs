@@ -5,7 +5,7 @@ mod config;
 mod envelope;
 mod routes;
 
-use agentverse::{Agent, Config};
+use agentverse::{LlmRunner, Config};
 use agentverse_guardrails::RateLimiter;
 use agentverse_logging as avs_logging;
 use agentverse_tools::{Calculator, DateTimeTool, FileSearch, HttpClient, ToolRegistry};
@@ -65,7 +65,7 @@ async fn main() {
         system_prompt: None,
     };
 
-    let agent = Agent::from_config(agent_config).unwrap_or_else(|e| {
+    let agent = LlmRunner::from_config(agent_config).unwrap_or_else(|e| {
         eprintln!("Failed to build agent: {}", e);
         std::process::exit(1);
     });
@@ -85,7 +85,7 @@ async fn main() {
 
     // Build app state
     let state = AppState {
-        agent: Arc::new(Mutex::new(agent)),
+        agent: Arc::new(agent),
         rate_limiter,
         guardrails_enabled: server_config.guardrails.enabled,
         model_name,
