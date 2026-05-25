@@ -166,11 +166,15 @@ pub async fn end_session(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentverse::{Config, LlmRunner, ProviderConfig};
+    use agentverse::{Config, LlmRunner, PromptRegistry, ProviderConfig};
     use agentverse_agent::Agent;
+    use agentverse_memory::SimpleMemory;
     use agentverse_session::SqliteSessionStore;
+    use agentverse_strategy::{build as build_strategy, StrategyKind};
+    use agentverse_tools::ToolRegistry;
     use axum::routing::{delete, get, post};
     use axum::{body::Body, http::Request, Router};
+    use tokio::sync::Mutex;
     use tower::ServiceExt;
 
     async fn make_session_state() -> SessionState {
@@ -189,8 +193,20 @@ mod tests {
             })
             .unwrap(),
         );
+        let tools = Arc::new(ToolRegistry::new());
+        let prompts = Arc::new(PromptRegistry::new());
+        let memory: Arc<Mutex<dyn agentverse::Memory>> =
+            Arc::new(Mutex::new(SimpleMemory::new(50)));
+        let strategy = build_strategy(
+            StrategyKind::React,
+            Arc::clone(&runner),
+            Arc::clone(&prompts),
+            Arc::clone(&tools),
+            Arc::clone(&memory),
+            5,
+        );
         SessionState {
-            agent: Arc::new(Agent::new(runner, store)),
+            agent: Agent::new(runner, tools, prompts, memory, store, strategy, false),
         }
     }
 

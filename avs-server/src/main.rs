@@ -6,12 +6,14 @@ mod envelope;
 mod routes;
 mod session_routes;
 
-use agentverse::{Config, LlmRunner};
+use agentverse::{Config, LlmRunner, PromptRegistry};
 use agentverse_agent::Agent;
 use agentverse_guardrails::RateLimiter;
 use agentverse_logging as avs_logging;
+use agentverse_memory::SimpleMemory;
 use agentverse_memory_pgvector::PostgresSessionStore;
 use agentverse_session::{SessionStore, SqliteSessionStore};
+use agentverse_strategy::{build as build_strategy, StrategyKind};
 use agentverse_tools::{Calculator, DateTimeTool, FileSearch, HttpClient, ToolRegistry};
 use axum::{
     middleware,
@@ -101,22 +103,40 @@ async fn main() {
             std::process::exit(1);
         }
     };
-    let session_agent = Arc::new(Agent::new(
-        Arc::new(
-            LlmRunner::from_config(Config {
-                provider: server_config.agent.provider.clone(),
-                max_messages: 100,
-                tools: vec![],
-                prompts_dir: None,
-                system_prompt: None,
-            })
-            .unwrap_or_else(|e| {
-                eprintln!("Failed to build top-level agent runner: {}", e);
-                std::process::exit(1);
-            }),
-        ),
+    let session_runner = Arc::new(
+        LlmRunner::from_config(Config {
+            provider: server_config.agent.provider.clone(),
+            max_messages: 100,
+            tools: vec![],
+            prompts_dir: None,
+            system_prompt: None,
+        })
+        .unwrap_or_else(|e| {
+            eprintln!("Failed to build top-level agent runner: {}", e);
+            std::process::exit(1);
+        }),
+    );
+    let session_tools = Arc::new(ToolRegistry::new());
+    let session_prompts = Arc::new(PromptRegistry::new());
+    let session_memory: Arc<tokio::sync::Mutex<dyn agentverse::Memory>> =
+        Arc::new(tokio::sync::Mutex::new(SimpleMemory::new(100)));
+    let session_strategy = build_strategy(
+        StrategyKind::React,
+        Arc::clone(&session_runner),
+        Arc::clone(&session_prompts),
+        Arc::clone(&session_tools),
+        Arc::clone(&session_memory),
+        10,
+    );
+    let session_agent = Agent::new(
+        session_runner,
+        session_tools,
+        session_prompts,
+        session_memory,
         session_store,
-    ));
+        session_strategy,
+        false,
+    );
     let session_state = SessionState {
         agent: session_agent,
     };

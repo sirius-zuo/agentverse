@@ -17,6 +17,7 @@ agentverse-session = { path = "../avs-session" }
 agentverse-memory-pgvector = { path = "../avs-memory-pgvector" }
 agentverse-react = { path = "../avs-react" }
 agentverse-plan = { path = "../avs-plan" }
+agentverse-strategy = { path = "../avs-strategy" }
 agentverse-guardrails = { path = "../avs-guardrails" }
 agentverse-integration = { path = "../avs-integration" }
 agentverse-tools = { path = "../avs-tools" }
