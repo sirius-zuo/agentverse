@@ -94,7 +94,10 @@ async fn main() {
                 }),
         ),
         other => {
-            eprintln!("Unsupported session store '{}'. Use 'sqlite' or 'postgres'.", other);
+            eprintln!(
+                "Unsupported session store '{}'. Use 'sqlite' or 'postgres'.",
+                other
+            );
             std::process::exit(1);
         }
     };

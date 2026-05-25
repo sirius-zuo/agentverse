@@ -188,7 +188,10 @@ async fn user_cannot_access_other_users_session() {
 
     // bob tries to assert ownership — should fail
     let manager = SessionManager::new(Arc::clone(&store));
-    let err = manager.assert_owner("bob", alice_session.id).await.unwrap_err();
+    let err = manager
+        .assert_owner("bob", alice_session.id)
+        .await
+        .unwrap_err();
     assert!(
         matches!(err, agentverse_session::SessionStoreError::NotFound(id) if id == alice_session.id),
         "bob should not own alice's session"

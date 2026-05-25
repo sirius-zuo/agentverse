@@ -170,15 +170,13 @@ impl SessionStore for SqliteSessionStore {
         status: SessionStatus,
     ) -> Result<(), SessionStoreError> {
         let now = chrono::Utc::now().timestamp();
-        let result = sqlx::query(
-            "UPDATE sessions SET status = ?, updated_at = ? WHERE id = ?",
-        )
-        .bind(status.to_string())
-        .bind(now)
-        .bind(session_id.to_string())
-        .execute(&self.pool)
-        .await
-        .map_err(|e| SessionStoreError::Database(e.to_string()))?;
+        let result = sqlx::query("UPDATE sessions SET status = ?, updated_at = ? WHERE id = ?")
+            .bind(status.to_string())
+            .bind(now)
+            .bind(session_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| SessionStoreError::Database(e.to_string()))?;
         if result.rows_affected() == 0 {
             return Err(SessionStoreError::NotFound(session_id));
         }
@@ -297,7 +295,10 @@ impl SessionStore for SqliteSessionStore {
         Ok(())
     }
 
-    async fn load_messages(&self, session_id: SessionId) -> Result<Vec<Message>, SessionStoreError> {
+    async fn load_messages(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Vec<Message>, SessionStoreError> {
         let rows = sqlx::query_as::<_, (String, String)>(
             "SELECT role, content FROM messages WHERE session_id = ? ORDER BY sequence_num ASC",
         )

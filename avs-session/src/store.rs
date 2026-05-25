@@ -31,5 +31,6 @@ pub trait SessionStore: Send + Sync {
         user_message: Message,
         assistant_message: Message,
     ) -> Result<(), SessionStoreError>;
-    async fn load_messages(&self, session_id: SessionId) -> Result<Vec<Message>, SessionStoreError>;
+    async fn load_messages(&self, session_id: SessionId)
+        -> Result<Vec<Message>, SessionStoreError>;
 }

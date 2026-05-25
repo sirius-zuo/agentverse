@@ -15,7 +15,10 @@ struct FakeStore {
 impl SessionStore for FakeStore {
     async fn create(&self, user_id: &str) -> Result<Session, SessionStoreError> {
         let session = Session::new(user_id);
-        self.sessions.lock().unwrap().insert(session.id, session.clone());
+        self.sessions
+            .lock()
+            .unwrap()
+            .insert(session.id, session.clone());
         Ok(session)
     }
 
@@ -74,7 +77,10 @@ impl SessionStore for FakeStore {
         self.append_message(session_id, assistant_message).await
     }
 
-    async fn load_messages(&self, session_id: SessionId) -> Result<Vec<Message>, SessionStoreError> {
+    async fn load_messages(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Vec<Message>, SessionStoreError> {
         if !self.sessions.lock().unwrap().contains_key(&session_id) {
             return Err(SessionStoreError::NotFound(session_id));
         }
