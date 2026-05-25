@@ -12,7 +12,7 @@
 //   PROJECT_DIR=/path/to/AgentVerse \
 //   cargo run -p example-code-review-agent
 
-use agentverse::{ConnectionManager, PromptConfig, PromptRegistry};
+use agentverse::{ConnectionManager, LlmRunner, PromptConfig, PromptRegistry};
 use agentverse_logging as avs_logging;
 use agentverse_memory::SimpleMemory;
 use agentverse_plan::HierarchicalStrategy;
@@ -37,7 +37,11 @@ async fn main() {
     tracing::info!("Strategy: Hierarchical Planning");
     tracing::info!("Tools: FileSearch + ShellTool");
 
-    let model = Arc::new(ConnectionManager::openai(&base_url, &model_name, &api_key));
+    let model = Arc::new(LlmRunner::new(Arc::new(ConnectionManager::openai(
+        &base_url,
+        &model_name,
+        &api_key,
+    ))));
     let registry = Arc::new(
         PromptRegistry::from_config(&PromptConfig {
             prompts_dir: Some(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string()),
@@ -72,8 +76,12 @@ async fn main() {
         "filesystem",
     );
 
-    let mut agent = HierarchicalStrategy::new(
-        model, registry, tools, memory, 10, // max_iterations per sub-goal plan
+    let agent = HierarchicalStrategy::new(
+        model,
+        registry,
+        Arc::new(tools),
+        memory,
+        10, // max_iterations per sub-goal plan
         5,  // max_decompose_depth
     );
 
@@ -86,7 +94,12 @@ async fn main() {
     println!("> {}", question);
     println!();
 
-    match agent.run(question).await {
+    use agentverse::{Message, MessageRole, RunStrategy};
+    let messages = vec![Message {
+        role: MessageRole::User,
+        content: question,
+    }];
+    match agent.run(messages).await {
         Ok(answer) => println!("Agent:\n{}", answer),
         Err(e) => eprintln!("Error: {}", e),
     }

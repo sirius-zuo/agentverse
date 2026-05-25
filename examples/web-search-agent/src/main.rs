@@ -8,7 +8,9 @@
 //   MODEL_NAME=Qwen3.6-35B-A3B-GGUF \
 //   cargo run -p example-web-search-agent -- "rust async programming" 3
 
-use agentverse::{ConnectionManager, PromptConfig, PromptRegistry};
+use agentverse::{
+    ConnectionManager, LlmRunner, Message, MessageRole, PromptConfig, PromptRegistry, RunStrategy,
+};
 use agentverse_logging as avs_logging;
 use agentverse_memory::SimpleMemory;
 use agentverse_plan::PlanStrategy;
@@ -44,7 +46,11 @@ async fn main() {
 
     tracing::info!(model = %model_name, base_url = %base_url, topic = %topic, n = %n, "Web Search Agent");
 
-    let model = Arc::new(ConnectionManager::openai(&base_url, &model_name, &api_key));
+    let model = Arc::new(LlmRunner::new(Arc::new(ConnectionManager::openai(
+        &base_url,
+        &model_name,
+        &api_key,
+    ))));
     let registry = Arc::new(
         PromptRegistry::from_config(&PromptConfig {
             prompts_dir: Some(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string()),
@@ -55,7 +61,7 @@ async fn main() {
     let memory = Arc::new(Mutex::new(SimpleMemory::new(50)));
     let mut tools = ToolRegistry::new();
     tools.register(WebSearch);
-    let mut agent = PlanStrategy::new(model, registry, tools, memory, 5);
+    let agent = PlanStrategy::new(model, registry, Arc::new(tools), memory, 5);
 
     let question = format!(
         "Search for '{}' and summarize the top {} results.",
@@ -63,7 +69,11 @@ async fn main() {
     );
     println!("> {}", question);
 
-    match agent.run(question).await {
+    let messages = vec![Message {
+        role: MessageRole::User,
+        content: question,
+    }];
+    match agent.run(messages).await {
         Ok(answer) => println!("\nAgent: {}", answer),
         Err(e) => eprintln!("Error: {}", e),
     }

@@ -10,7 +10,7 @@
 //   MODEL_NAME=your-model \
 //   cargo run -p example-slack-hr-assistant
 use agentverse::{
-    ConnectionManager, Message, MessageRole, PromptConfig, PromptRegistry, RunStrategy,
+    ConnectionManager, LlmRunner, Message, MessageRole, PromptConfig, PromptRegistry, RunStrategy,
 };
 use agentverse_integration::{Event, IntegrationRuntime};
 use agentverse_logging as avs_logging;
@@ -29,7 +29,11 @@ async fn main() {
     let model_name = std::env::var("MODEL_NAME").unwrap_or_else(|_| "gpt-4".into());
     let api_key = std::env::var("MODEL_API_KEY").unwrap_or_default();
 
-    let model = Arc::new(ConnectionManager::openai(&base_url, &model_name, &api_key));
+    let model = Arc::new(LlmRunner::new(Arc::new(ConnectionManager::openai(
+        &base_url,
+        &model_name,
+        &api_key,
+    ))));
     let registry = Arc::new(
         PromptRegistry::from_config(&PromptConfig {
             prompts_dir: Some(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string()),
@@ -38,10 +42,8 @@ async fn main() {
         .expect("prompt config"),
     );
     let memory = Arc::new(Mutex::new(SimpleMemory::new(50)));
-    let tools = ToolRegistry::new();
-    let strategy = Arc::new(Mutex::new(PlanStrategy::new(
-        model, registry, tools, memory, 10,
-    )));
+    let tools = Arc::new(ToolRegistry::new());
+    let strategy = Arc::new(PlanStrategy::new(model, registry, tools, memory, 10));
 
     let config_path = concat!(env!("CARGO_MANIFEST_DIR"), "/agent.toml");
     let runtime = IntegrationRuntime::from_config(config_path)
@@ -54,8 +56,6 @@ async fn main() {
             let strategy = Arc::clone(&strategy);
             async move {
                 let answer = strategy
-                    .lock()
-                    .await
                     .run(vec![Message {
                         role: MessageRole::User,
                         content: event.text.clone(),
