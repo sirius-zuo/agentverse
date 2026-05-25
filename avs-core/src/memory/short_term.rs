@@ -39,14 +39,6 @@ impl Memory for ShortTermMemory {
         // ShortTermMemory has no pinned concept; used only by Agent placeholder.
     }
 
-    async fn prime_from_long_term(
-        &mut self,
-        _query: &str,
-        _top_k: usize,
-    ) -> Result<(), MemoryError> {
-        Ok(())
-    }
-
     async fn flush(&mut self) -> Result<(), MemoryError> {
         Ok(())
     }

@@ -94,18 +94,6 @@ impl<S: Summarizer + Send + Sync, B: LongTermBackend + Send + Sync> Memory for A
         self.pinned = messages;
     }
 
-    async fn prime_from_long_term(
-        &mut self,
-        _query: &str,
-        top_k: usize,
-    ) -> Result<(), MemoryError> {
-        let results = self.backend.search(vec![], top_k).await?;
-        for msg in results {
-            self.window.push_back(msg);
-        }
-        Ok(())
-    }
-
     async fn flush(&mut self) -> Result<(), MemoryError> {
         for msg in self.window.iter() {
             let _ = self.backend.store(msg.clone(), vec![]).await;

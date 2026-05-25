@@ -31,7 +31,6 @@ pub trait Memory: Send + Sync {
     fn append(&mut self, message: Message);
     async fn last_n(&mut self, n: usize) -> Result<Vec<Message>, MemoryError>;
     fn pin(&mut self, messages: Vec<Message>);
-    async fn prime_from_long_term(&mut self, query: &str, top_k: usize) -> Result<(), MemoryError>;
     async fn flush(&mut self) -> Result<(), MemoryError>;
     fn clear(&mut self);
 }

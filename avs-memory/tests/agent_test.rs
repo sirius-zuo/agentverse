@@ -87,15 +87,6 @@ async fn test_agent_memory_clear() {
 }
 
 #[tokio::test]
-async fn test_agent_memory_prime_from_long_term() {
-    let mut m = make_agent_memory(10, 100);
-    // NoopBackend returns empty — just verify no error
-    m.prime_from_long_term("query", 5).await.unwrap();
-    let result = m.last_n(10).await.unwrap();
-    assert!(result.is_empty());
-}
-
-#[tokio::test]
 async fn test_agent_memory_flush() {
     let mut m = make_agent_memory(10, 100);
     m.append(user_msg("msg"));
