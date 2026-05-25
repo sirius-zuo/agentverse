@@ -1,27 +1,27 @@
 // examples/anthropic-react/src/main.rs
 //
-// ReAct agent using AnthropicProvider with prompt caching.
+// ReAct agent using Anthropic provider with prompt caching.
 //
 // The system prompt lives in prompts/system.j2 — a substantial block that
-// intentionally exceeds Anthropic's 1 024-token cache minimum.  It is tagged
+// intentionally exceeds Anthropic's 1024-token cache minimum.  It is tagged
 // with cache_control: ephemeral on every request.  The first call writes it
 // to the cache (cache_write_tokens > 0); subsequent iterations read it back
-// at ~10 % of normal input token cost (cache_read_tokens > 0).
-// The [tokens] line at the end shows the cumulative split.
+// at ~10% of normal input token cost (cache_read_tokens > 0).
 //
 // Run:
 //   ANTHROPIC_API_KEY=sk-ant-... \
 //   cargo run -p example-anthropic-react
-//
-// TODO(Task 4): Restore full run loop once ReActStrategy::run() is
-// re-implemented against the new CycleSkeleton API.
 
-use agentverse::{Config, LlmRunner, Message, MessageRole, PromptConfig, PromptRegistry};
+use agentverse::{Config, LlmRunner, PromptConfig, PromptRegistry, ProviderConfig};
+use agentverse_agent::Agent;
 use agentverse_logging as avs_logging;
 use agentverse_memory::SimpleMemory;
-use agentverse_react::ReActStrategy;
+use agentverse_session::SqliteSessionStore;
+use agentverse_strategy::{build, StrategyKind};
 use agentverse_tools::{Calculator, ToolRegistry};
+use std::io::Write;
 use std::sync::Arc;
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::Mutex;
 
 #[tokio::main]
@@ -36,12 +36,11 @@ async fn main() {
         .unwrap_or_else(|_| "claude-haiku-4-5-20251001".to_string());
 
     tracing::info!(model = %model_name, "Anthropic ReAct Agent");
-    tracing::info!("Tool: Calculator");
-    tracing::info!("Prompt caching: enabled (system prompt + penultimate message)");
+    println!("Type an arithmetic question. Type \"exit\" or press Ctrl+C to quit.\n");
 
     let runner = Arc::new(
         LlmRunner::from_config(Config {
-            provider: agentverse::ProviderConfig::Anthropic {
+            provider: ProviderConfig::Anthropic {
                 model_name: model_name.clone(),
                 api_key,
             },
@@ -53,33 +52,61 @@ async fn main() {
         .expect("runner config"),
     );
 
-    let registry = Arc::new(
+    let mut tool_registry = ToolRegistry::new();
+    tool_registry.register(Calculator);
+    let tools = Arc::new(tool_registry);
+
+    let prompts = Arc::new(
         PromptRegistry::from_config(&PromptConfig {
-            prompts_dir: Some("examples/anthropic-react/prompts".to_string()),
+            prompts_dir: Some(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string()),
             ..Default::default()
         })
         .expect("prompt config"),
     );
 
-    let mut tools = ToolRegistry::new();
-    tools.register(Calculator);
-
-    let _agent = ReActStrategy::new(
-        runner,
-        registry,
-        Arc::new(tools),
-        Arc::new(Mutex::new(SimpleMemory::new(0))),
+    let memory: Arc<Mutex<dyn agentverse::Memory>> = Arc::new(Mutex::new(SimpleMemory::new(50)));
+    let strategy = build(
+        StrategyKind::React,
+        Arc::clone(&runner),
+        Arc::clone(&prompts),
+        Arc::clone(&tools),
+        Arc::clone(&memory),
         15,
     );
+    let store = Arc::new(
+        SqliteSessionStore::new("sqlite::memory:")
+            .await
+            .expect("session store"),
+    );
 
-    // TODO(Task 4): Implement run loop using RunStrategy::run(messages)
-    // For now, demonstrate that the agent is constructed successfully.
-    let question = "What is (137 * 48) + (256 / 4) - 19?";
-    println!("> {}", question);
-    println!("Anthropic ReAct agent created (Task 4 will wire the run loop).");
+    let agent = Agent::new(runner, tools, prompts, memory, store, strategy, false);
 
-    let _example_messages = [Message {
-        role: MessageRole::User,
-        content: question.to_string(),
-    }];
+    let mut lines = BufReader::new(tokio::io::stdin()).lines();
+
+    loop {
+        print!("You: ");
+        std::io::stdout().flush().ok();
+
+        let input = match lines.next_line().await {
+            Ok(Some(line)) => line,
+            _ => {
+                println!("\nGoodbye!");
+                break;
+            }
+        };
+
+        let input = input.trim().to_string();
+        if input.is_empty() {
+            continue;
+        }
+        if input.eq_ignore_ascii_case("exit") {
+            println!("Goodbye!");
+            break;
+        }
+
+        match agent.invoke_stateless(&input).await {
+            Ok(answer) => println!("\nAgent: {}\n", answer),
+            Err(e) => eprintln!("Error: {}\n", e),
+        }
+    }
 }

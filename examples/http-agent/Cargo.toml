@@ -1,16 +1,20 @@
 [package]
-name = "example-code-review-agent"
+name = "example-http-agent"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
+[[bin]]
+name = "example-http-agent"
+path = "src/main.rs"
+
 [dependencies]
 agentverse = { path = "../../avs-core" }
-agentverse-agent = { path = "../../avs-agent" }
+agentverse-agent = { path = "../../avs-agent", features = ["http"] }
 agentverse-logging = { path = "../../avs-logging" }
 agentverse-memory = { path = "../../avs-memory" }
 agentverse-session = { path = "../../avs-session" }
 agentverse-strategy = { path = "../../avs-strategy" }
 agentverse-tools = { path = "../../avs-tools" }
-tokio.workspace = true
+tokio = { workspace = true, features = ["signal"] }
 tracing.workspace = true

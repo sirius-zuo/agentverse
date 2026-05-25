@@ -12,10 +12,12 @@
 //   PROJECT_DIR=/path/to/AgentVerse \
 //   cargo run -p example-code-review-agent
 
-use agentverse::{ConnectionManager, LlmRunner, PromptConfig, PromptRegistry};
+use agentverse::{Config, LlmRunner, PromptConfig, PromptRegistry, ProviderConfig};
+use agentverse_agent::Agent;
 use agentverse_logging as avs_logging;
 use agentverse_memory::SimpleMemory;
-use agentverse_plan::HierarchicalStrategy;
+use agentverse_session::SqliteSessionStore;
+use agentverse_strategy::{build, StrategyKind};
 use agentverse_tools::{FileSearch, ShellTool, ToolRegistry};
 use std::sync::Arc;
 use std::time::Duration;
@@ -34,24 +36,24 @@ async fn main() {
         .unwrap_or_else(|_| "/Users/jinzuo/projects/AgentVerse".to_string());
 
     tracing::info!(model = %model_name, base_url = %base_url, "Code Review Agent");
-    tracing::info!("Strategy: Hierarchical Planning");
-    tracing::info!("Tools: FileSearch + ShellTool");
 
-    let model = Arc::new(LlmRunner::new(Arc::new(ConnectionManager::openai(
-        &base_url,
-        &model_name,
-        &api_key,
-    ))));
-    let registry = Arc::new(
-        PromptRegistry::from_config(&PromptConfig {
-            prompts_dir: Some(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string()),
-            ..Default::default()
+    let runner = Arc::new(
+        LlmRunner::from_config(Config {
+            provider: ProviderConfig::OpenAI {
+                model_name: model_name.clone(),
+                api_key,
+                base_url: Some(base_url),
+            },
+            max_messages: 100,
+            tools: vec![],
+            prompts_dir: None,
+            system_prompt: None,
         })
-        .expect("prompt config"),
+        .expect("runner config"),
     );
-    let memory = Arc::new(Mutex::new(SimpleMemory::new(50)));
-    let mut tools = ToolRegistry::new();
-    tools.register_with_category(FileSearch, "filesystem");
+
+    let mut tool_registry = ToolRegistry::new();
+    tool_registry.register_with_category(FileSearch, "filesystem");
     // ShellTool lets the agent read file contents with `cat` or search with
     // `grep`. It runs commands in `project_dir` with a 30-second timeout.
     //
@@ -59,7 +61,7 @@ async fn main() {
     // symlinks, and `cd` can still reach the full filesystem. The blocked
     // list below prevents the most destructive commands, but for production
     // use consider running the agent inside a container or seccomp sandbox.
-    tools.register_with_category(
+    tool_registry.register_with_category(
         ShellTool::new(
             &project_dir,
             Duration::from_secs(30),
@@ -75,15 +77,32 @@ async fn main() {
         ),
         "filesystem",
     );
+    let tools = Arc::new(tool_registry);
 
-    let agent = HierarchicalStrategy::new(
-        model,
-        registry,
-        Arc::new(tools),
-        memory,
-        10, // max_iterations per sub-goal plan
-        5,  // max_decompose_depth
+    let prompts = Arc::new(
+        PromptRegistry::from_config(&PromptConfig {
+            prompts_dir: Some(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string()),
+            ..Default::default()
+        })
+        .expect("prompt config"),
     );
+
+    let memory: Arc<Mutex<dyn agentverse::Memory>> = Arc::new(Mutex::new(SimpleMemory::new(50)));
+    let strategy = build(
+        StrategyKind::Hierarchical,
+        Arc::clone(&runner),
+        Arc::clone(&prompts),
+        Arc::clone(&tools),
+        Arc::clone(&memory),
+        10,
+    );
+    let store = Arc::new(
+        SqliteSessionStore::new("sqlite::memory:")
+            .await
+            .expect("session store"),
+    );
+
+    let agent = Agent::new(runner, tools, prompts, memory, store, strategy, false);
 
     let question = format!(
         "Review the avs-react/src codebase in {}: \
@@ -94,12 +113,7 @@ async fn main() {
     println!("> {}", question);
     println!();
 
-    use agentverse::{Message, MessageRole, RunStrategy};
-    let messages = vec![Message {
-        role: MessageRole::User,
-        content: question,
-    }];
-    match agent.run(messages).await {
+    match agent.invoke_stateless(&question).await {
         Ok(answer) => println!("Agent:\n{}", answer),
         Err(e) => eprintln!("Error: {}", e),
     }

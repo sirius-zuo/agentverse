@@ -8,12 +8,12 @@
 //   MODEL_NAME=Qwen3.6-35B-A3B-GGUF \
 //   cargo run -p example-web-search-agent -- "rust async programming" 3
 
-use agentverse::{
-    ConnectionManager, LlmRunner, Message, MessageRole, PromptConfig, PromptRegistry, RunStrategy,
-};
+use agentverse::{Config, LlmRunner, PromptConfig, PromptRegistry, ProviderConfig};
+use agentverse_agent::Agent;
 use agentverse_logging as avs_logging;
 use agentverse_memory::SimpleMemory;
-use agentverse_plan::PlanStrategy;
+use agentverse_session::SqliteSessionStore;
+use agentverse_strategy::{build, StrategyKind};
 use agentverse_tools::{ToolRegistry, WebSearch};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -46,22 +46,49 @@ async fn main() {
 
     tracing::info!(model = %model_name, base_url = %base_url, topic = %topic, n = %n, "Web Search Agent");
 
-    let model = Arc::new(LlmRunner::new(Arc::new(ConnectionManager::openai(
-        &base_url,
-        &model_name,
-        &api_key,
-    ))));
-    let registry = Arc::new(
+    let runner = Arc::new(
+        LlmRunner::from_config(Config {
+            provider: ProviderConfig::OpenAI {
+                model_name: model_name.clone(),
+                api_key,
+                base_url: Some(base_url),
+            },
+            max_messages: 100,
+            tools: vec![],
+            prompts_dir: None,
+            system_prompt: None,
+        })
+        .expect("runner"),
+    );
+
+    let mut tool_registry = ToolRegistry::new();
+    tool_registry.register(WebSearch);
+    let tools = Arc::new(tool_registry);
+
+    let prompts = Arc::new(
         PromptRegistry::from_config(&PromptConfig {
             prompts_dir: Some(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string()),
             ..Default::default()
         })
-        .expect("failed to load prompt config"),
+        .expect("prompts"),
     );
-    let memory = Arc::new(Mutex::new(SimpleMemory::new(50)));
-    let mut tools = ToolRegistry::new();
-    tools.register(WebSearch);
-    let agent = PlanStrategy::new(model, registry, Arc::new(tools), memory, 5);
+
+    let memory: Arc<Mutex<dyn agentverse::Memory>> = Arc::new(Mutex::new(SimpleMemory::new(50)));
+    let strategy = build(
+        StrategyKind::Plan,
+        Arc::clone(&runner),
+        Arc::clone(&prompts),
+        Arc::clone(&tools),
+        Arc::clone(&memory),
+        5,
+    );
+    let store = Arc::new(
+        SqliteSessionStore::new("sqlite::memory:")
+            .await
+            .expect("store"),
+    );
+
+    let agent = Agent::new(runner, tools, prompts, memory, store, strategy, false);
 
     let question = format!(
         "Search for '{}' and summarize the top {} results.",
@@ -69,11 +96,7 @@ async fn main() {
     );
     println!("> {}", question);
 
-    let messages = vec![Message {
-        role: MessageRole::User,
-        content: question,
-    }];
-    match agent.run(messages).await {
+    match agent.invoke_stateless(&question).await {
         Ok(answer) => println!("\nAgent: {}", answer),
         Err(e) => eprintln!("Error: {}", e),
     }

@@ -20,6 +20,7 @@ members = [
     "examples/web-search-agent",
     "examples/code-review-agent",
     "examples/anthropic-react",
+    "examples/http-agent",
     "avs-session",
 ]
 resolver = "2"

@@ -2,13 +2,16 @@
 name = "example-slack-hr-assistant"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 agentverse = { path = "../../avs-core" }
-agentverse-logging = { path = "../../avs-logging" }
-agentverse-plan = { path = "../../avs-plan" }
-agentverse-memory = { path = "../../avs-memory" }
-agentverse-tools = { path = "../../avs-tools" }
+agentverse-agent = { path = "../../avs-agent" }
 agentverse-integration = { path = "../../avs-integration" }
+agentverse-logging = { path = "../../avs-logging" }
+agentverse-memory = { path = "../../avs-memory" }
+agentverse-session = { path = "../../avs-session" }
+agentverse-strategy = { path = "../../avs-strategy" }
+agentverse-tools = { path = "../../avs-tools" }
 tokio.workspace = true
 tracing.workspace = true
