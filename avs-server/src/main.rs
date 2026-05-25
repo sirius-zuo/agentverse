@@ -7,9 +7,11 @@ mod routes;
 mod session_routes;
 
 use agentverse::{Config, LlmRunner};
+use agentverse_agent::Agent;
 use agentverse_guardrails::RateLimiter;
 use agentverse_logging as avs_logging;
-use agentverse_session::{Agent as SessionAgent, SqliteSessionStore};
+use agentverse_memory_pgvector::PostgresSessionStore;
+use agentverse_session::{SessionStore, SqliteSessionStore};
 use agentverse_tools::{Calculator, DateTimeTool, FileSearch, HttpClient, ToolRegistry};
 use axum::{
     middleware,
@@ -73,18 +75,30 @@ async fn main() {
         std::process::exit(1);
     });
 
-    // Initialize session store (SQLite by default; override with SESSION_DB_URL env var)
-    let session_db_url =
-        std::env::var("SESSION_DB_URL").unwrap_or_else(|_| "sqlite:sessions.db".to_string());
-    let session_store = Arc::new(
-        SqliteSessionStore::new(&session_db_url)
-            .await
-            .unwrap_or_else(|e| {
-                eprintln!("Failed to initialize session store: {}", e);
-                std::process::exit(1);
-            }),
-    );
-    let session_agent = Arc::new(SessionAgent::new(
+    // Build top-level session-aware agent
+    let session_store: Arc<dyn SessionStore> = match server_config.session.store.as_str() {
+        "sqlite" => Arc::new(
+            SqliteSessionStore::new(&server_config.session.database_url)
+                .await
+                .unwrap_or_else(|e| {
+                    eprintln!("Failed to initialize SQLite session store: {}", e);
+                    std::process::exit(1);
+                }),
+        ),
+        "postgres" | "pgvector" => Arc::new(
+            PostgresSessionStore::new(&server_config.session.database_url)
+                .await
+                .unwrap_or_else(|e| {
+                    eprintln!("Failed to initialize Postgres session store: {}", e);
+                    std::process::exit(1);
+                }),
+        ),
+        other => {
+            eprintln!("Unsupported session store '{}'. Use 'sqlite' or 'postgres'.", other);
+            std::process::exit(1);
+        }
+    };
+    let session_agent = Arc::new(Agent::new(
         Arc::new(
             LlmRunner::from_config(Config {
                 provider: server_config.agent.provider.clone(),
@@ -94,7 +108,7 @@ async fn main() {
                 system_prompt: None,
             })
             .unwrap_or_else(|e| {
-                eprintln!("Failed to build session agent: {}", e);
+                eprintln!("Failed to build top-level agent runner: {}", e);
                 std::process::exit(1);
             }),
         ),

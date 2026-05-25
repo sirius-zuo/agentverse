@@ -1,4 +1,5 @@
-use agentverse_session::{Agent, SessionStoreError};
+use agentverse_agent::{Agent, AgentError};
+use agentverse_session::SessionStoreError;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
@@ -89,8 +90,8 @@ pub async fn send_message(
         }
         Err(e) => {
             let status = match &e {
-                agentverse_session::SessionAgentError::Session(se) => store_err_status(se),
-                agentverse_session::SessionAgentError::Llm(_) => StatusCode::BAD_GATEWAY,
+                AgentError::Session(se) => store_err_status(se),
+                AgentError::Llm(_) => StatusCode::BAD_GATEWAY,
             };
             error!(error = %e, "Failed to invoke session");
             (status, Json(serde_json::json!({ "error": e.to_string() })))
@@ -124,11 +125,12 @@ pub async fn get_session(
             Json(serde_json::json!({ "error": "session not found" })),
         ),
         Err(e) => {
+            let status = match &e {
+                AgentError::Session(se) => store_err_status(se),
+                AgentError::Llm(_) => StatusCode::BAD_GATEWAY,
+            };
             error!(error = %e, "Failed to get session");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e.to_string() })),
-            )
+            (status, Json(serde_json::json!({ "error": e.to_string() })))
         }
     }
 }
@@ -152,8 +154,8 @@ pub async fn end_session(
         }
         Err(e) => {
             let status = match &e {
-                agentverse_session::SessionAgentError::Session(se) => store_err_status(se),
-                agentverse_session::SessionAgentError::Llm(_) => StatusCode::BAD_GATEWAY,
+                AgentError::Session(se) => store_err_status(se),
+                AgentError::Llm(_) => StatusCode::BAD_GATEWAY,
             };
             error!(error = %e, "Failed to end session");
             (status, Json(serde_json::json!({ "error": e.to_string() })))
@@ -165,6 +167,7 @@ pub async fn end_session(
 mod tests {
     use super::*;
     use agentverse::{Config, LlmRunner, ProviderConfig};
+    use agentverse_agent::Agent;
     use agentverse_session::SqliteSessionStore;
     use axum::routing::{delete, get, post};
     use axum::{body::Body, http::Request, Router};

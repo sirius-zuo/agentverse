@@ -8,8 +8,25 @@ pub struct ServerConfig {
     pub port: u16,
     pub agent: AgentConfig,
     pub guardrails: GuardrailsConfig,
+    pub session: SessionConfig,
     pub aether_registry_url: Option<String>,
     pub agent_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionConfig {
+    #[serde(default = "default_session_store")]
+    pub store: String,
+    #[serde(default = "default_session_database_url")]
+    pub database_url: String,
+}
+
+fn default_session_store() -> String {
+    std::env::var("SESSION_STORE").unwrap_or_else(|_| "sqlite".to_string())
+}
+
+fn default_session_database_url() -> String {
+    std::env::var("SESSION_DB_URL").unwrap_or_else(|_| "sqlite:sessions.db".to_string())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,6 +66,10 @@ impl Default for ServerConfig {
             guardrails: GuardrailsConfig {
                 enabled: true,
                 max_requests_per_minute: 60,
+            },
+            session: SessionConfig {
+                store: default_session_store(),
+                database_url: default_session_database_url(),
             },
             aether_registry_url: std::env::var("AETHER_REGISTRY_URL").ok(),
             agent_name: std::env::var("AGENT_NAME")
