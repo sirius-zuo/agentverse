@@ -1,17 +1,34 @@
+use agentverse::memory::{Message, MessageRole};
 use agentverse::{AgentError, RunStrategy};
+use async_trait::async_trait;
 
-struct Echo;
+struct EchoStrategy;
 
-#[async_trait::async_trait]
-impl RunStrategy for Echo {
-    async fn process(&mut self, input: String) -> Result<String, AgentError> {
-        Ok(format!("echo: {}", input))
+#[async_trait]
+impl RunStrategy for EchoStrategy {
+    async fn run(&self, messages: Vec<Message>) -> Result<String, AgentError> {
+        let last = messages.iter().rev()
+            .find(|m| matches!(m.role, MessageRole::User))
+            .map(|m| m.content.clone())
+            .unwrap_or_default();
+        Ok(last)
     }
 }
 
 #[tokio::test]
-async fn test_run_strategy_trait() {
-    let mut echo = Echo;
-    let result = echo.process("hello".to_string()).await.unwrap();
-    assert_eq!(result, "echo: hello");
+async fn run_strategy_echo_returns_last_user_message() {
+    let strategy = EchoStrategy;
+    let messages = vec![
+        Message { role: MessageRole::User, content: "hello world".to_string() },
+    ];
+    let result = strategy.run(messages).await.unwrap();
+    assert_eq!(result, "hello world");
+}
+
+#[tokio::test]
+async fn run_strategy_is_object_safe() {
+    let strategy: Box<dyn RunStrategy> = Box::new(EchoStrategy);
+    let messages = vec![Message { role: MessageRole::User, content: "test".to_string() }];
+    let result = strategy.run(messages).await.unwrap();
+    assert_eq!(result, "test");
 }
