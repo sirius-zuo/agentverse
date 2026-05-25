@@ -395,6 +395,30 @@ impl SessionStore for SqliteSessionStore {
             .collect())
     }
 
+    async fn list_all_active_sessions(&self) -> Result<Vec<Session>, SessionStoreError> {
+        let rows = sqlx::query_as::<_, (String, String, String, i64, i64)>(
+            "SELECT id, user_id, status, created_at, updated_at \
+             FROM sessions WHERE status = 'active' ORDER BY updated_at ASC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| SessionStoreError::Database(e.to_string()))?;
+
+        rows.into_iter()
+            .map(|(id, user_id, status, created_at, updated_at)| {
+                Ok(Session {
+                    id: id.parse().map_err(|_| {
+                        SessionStoreError::Database(format!("invalid UUID: {}", id))
+                    })?,
+                    user_id,
+                    status: status.parse().unwrap_or(SessionStatus::Active),
+                    created_at: chrono::DateTime::from_timestamp(created_at, 0).unwrap_or_default(),
+                    updated_at: chrono::DateTime::from_timestamp(updated_at, 0).unwrap_or_default(),
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()
+    }
+
     async fn cleanup_expired_messages(
         &self,
         session_id: SessionId,

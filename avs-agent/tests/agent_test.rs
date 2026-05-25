@@ -138,6 +138,10 @@ impl SessionStore for FakeStore {
     ) -> Result<u64, SessionStoreError> {
         Ok(0)
     }
+
+    async fn list_all_active_sessions(&self) -> Result<Vec<Session>, SessionStoreError> {
+        Ok(vec![])
+    }
 }
 
 #[tokio::test]

@@ -51,4 +51,6 @@ pub trait SessionStore: Send + Sync {
         cutoff_ts: i64,
         watermark: i64,
     ) -> Result<u64, SessionStoreError>;
+    /// Returns all active sessions across all users. Used by background workers only.
+    async fn list_all_active_sessions(&self) -> Result<Vec<Session>, SessionStoreError>;
 }
