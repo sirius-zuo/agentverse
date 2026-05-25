@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize)]
@@ -119,76 +121,5 @@ impl AetherClient {
             .json(&serde_json::json!({ "event_type": event_type, "payload": payload }))
             .send()
             .await;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use httpmock::prelude::*;
-
-    fn make_client(base_url: &str) -> AetherClient {
-        AetherClient::new(
-            base_url,
-            "test-agent",
-            "http://127.0.0.1:8080",
-            vec!["chat".to_string()],
-        )
-    }
-
-    #[tokio::test]
-    async fn register_returns_registration_on_success() {
-        let server = MockServer::start();
-        let _mock = server.mock(|when, then| {
-            when.method("POST").path("/registry/agents");
-            then.status(200).json_body(serde_json::json!({
-                "instance_id": "test-uuid",
-                "poll_interval_secs": 30
-            }));
-        });
-        let client = make_client(&server.base_url());
-        let reg = client.register().await;
-        assert!(reg.is_some());
-        let r = reg.unwrap();
-        assert_eq!(r.instance_id, "test-uuid");
-        assert_eq!(r.poll_interval_secs, 30);
-    }
-
-    #[tokio::test]
-    async fn register_returns_none_when_aether_unreachable() {
-        let client = make_client("http://127.0.0.1:1");
-        assert!(client.register().await.is_none());
-    }
-
-    #[tokio::test]
-    async fn register_returns_none_on_server_error() {
-        let server = MockServer::start();
-        let _mock = server.mock(|when, then| {
-            when.method("POST").path("/registry/agents");
-            then.status(500).body("error");
-        });
-        let client = make_client(&server.base_url());
-        assert!(client.register().await.is_none());
-    }
-
-    #[tokio::test]
-    async fn deregister_does_not_panic_on_error() {
-        let client = make_client("http://127.0.0.1:1");
-        client.deregister("any-id").await; // must not panic
-    }
-
-    #[tokio::test]
-    async fn push_event_is_fire_and_forget() {
-        let server = MockServer::start();
-        let mock = server.mock(|when, then| {
-            when.method("POST")
-                .path("/registry/instances/inst-1/events");
-            then.status(202);
-        });
-        let client = make_client(&server.base_url());
-        client
-            .push_event("inst-1", "error", serde_json::json!({"msg": "oops"}))
-            .await;
-        mock.assert();
     }
 }

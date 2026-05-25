@@ -13,7 +13,6 @@ members = [
     "avs-router",
     "avs-tools",
     "avs-mcp",
-    "avs-server",
     "avs-strategy",
     "examples/hello-agent",
     "examples/slack-hr-assistant",
