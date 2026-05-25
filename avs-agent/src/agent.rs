@@ -38,6 +38,7 @@ pub struct Agent {
 }
 
 impl Agent {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         runner: Arc<LlmRunner>,
         tools: Arc<ToolRegistry>,

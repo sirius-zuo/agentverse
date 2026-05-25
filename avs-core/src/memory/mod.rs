@@ -47,7 +47,7 @@ pub struct LongTermRecord {
 impl LongTermRecord {
     pub fn now(content: String, importance: f32) -> Self {
         debug_assert!(
-            importance >= 0.0 && importance <= 1.0,
+            (0.0..=1.0).contains(&importance),
             "importance must be in [0.0, 1.0]"
         );
         Self {
