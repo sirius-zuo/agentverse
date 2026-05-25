@@ -53,8 +53,9 @@ avs-agent
 avs-server  (library only — no binary, no Agent construction)
   └── serve(agent: Arc<Agent>, config: HttpConfig) → routes
 
-examples / production binaries
-  └── Agent::from_config(config).run().await
+example-hello-agent, example-web-search-agent, example-http-agent, ...
+  └── each is a binary that builds an Agent and calls agent.run()
+      avs-agent and avs-server are never run directly
 ```
 
 ---
@@ -233,7 +234,9 @@ pub fn build(
 
 ## avs-server Changes
 
-- `avs-server` loses its binary entry point. It becomes a library crate only. The production binary (`agentverse`) moves to `avs-agent/src/bin/agentverse.rs` — a thin `main.rs` that loads config, calls `Agent::from_config(config).await?`, and calls `agent.run().await`.
+- `avs-server` is a library crate only — it has no binary and never constructs an Agent.
+- `avs-agent` is a library crate only — the framework is never run directly.
+- The existing `agentverse-server` binary becomes `example-http-agent`: an example that shows how to build an HTTP-serving agent using `avs-agent` with the `http` feature.
 - `SessionState` struct is removed. `AppState` is removed. Routes accept `Arc<Agent>` directly.
 - `session_agent` variable in `main.rs` is eliminated.
 - All routes (`/invoke`, `/sessions/*`, `/aether/invoke`) go through one `Arc<Agent>`.
