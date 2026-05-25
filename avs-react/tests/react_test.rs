@@ -6,13 +6,11 @@
 //! integration tests against the updated CycleSkeleton and ReActStrategy APIs.
 
 use agentverse::{Config, LlmRunner, PromptConfig, PromptRegistry, RunStrategy};
-use agentverse_memory::SimpleMemory;
 use agentverse_react::{parse::parse_response, CycleAction, CycleSkeleton, ReActStrategy};
 use agentverse_tools::ToolRegistry;
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 // ─── Mock tool ────────────────────────────────────────────────────────────────
 
@@ -261,12 +259,10 @@ async fn react_run_returns_error_on_bad_port() {
         })
         .unwrap(),
     );
-    let memory = Arc::new(Mutex::new(SimpleMemory::new(10)));
     let strategy = ReActStrategy::new(
         runner,
         Arc::new(PromptRegistry::new()),
         Arc::new(ToolRegistry::new()),
-        memory,
         3,
     );
 

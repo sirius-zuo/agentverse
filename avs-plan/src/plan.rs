@@ -5,11 +5,10 @@
 
 use super::planner::generate_plan;
 use agentverse::memory::{Message, MessageRole};
-use agentverse::{AgentError, LlmRunner, Memory, PromptRegistry};
+use agentverse::{AgentError, LlmRunner, PromptRegistry};
 use agentverse_guardrails::check_output;
 use agentverse_tools::ToolRegistry;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 /// Plan-and-Execute strategy: plan first, then execute.
 ///
@@ -20,9 +19,6 @@ pub struct PlanStrategy {
     runner: Arc<LlmRunner>,
     prompts: Arc<PromptRegistry>,
     tools: Arc<ToolRegistry>,
-    /// Reserved for future per-step memory integration.
-    #[allow(dead_code)]
-    memory: Arc<Mutex<dyn Memory>>,
     max_iterations: usize,
 }
 
@@ -32,14 +28,12 @@ impl PlanStrategy {
         runner: Arc<LlmRunner>,
         prompts: Arc<PromptRegistry>,
         tools: Arc<ToolRegistry>,
-        memory: Arc<Mutex<dyn Memory>>,
         max_iterations: usize,
     ) -> Self {
         Self {
             runner,
             prompts,
             tools,
-            memory,
             max_iterations,
         }
     }
@@ -161,10 +155,8 @@ impl agentverse::RunStrategy for PlanStrategy {
 mod tests {
     use super::*;
     use agentverse::{Config, LlmRunner, PromptRegistry, RunStrategy};
-    use agentverse_memory::SimpleMemory;
     use agentverse_tools::ToolRegistry;
     use std::sync::Arc;
-    use tokio::sync::Mutex;
 
     fn make_plan_strategy() -> PlanStrategy {
         let runner = Arc::new(
@@ -185,7 +177,6 @@ mod tests {
             runner,
             Arc::new(PromptRegistry::new()),
             Arc::new(ToolRegistry::new()),
-            Arc::new(Mutex::new(SimpleMemory::new(50))),
             5,
         )
     }

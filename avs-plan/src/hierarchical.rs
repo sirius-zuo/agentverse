@@ -5,20 +5,16 @@
 
 use super::planner::{decompose_request, generate_plan};
 use agentverse::memory::{Message, MessageRole};
-use agentverse::{AgentError, LlmRunner, Memory, PromptRegistry};
+use agentverse::{AgentError, LlmRunner, PromptRegistry};
 use agentverse_guardrails::check_output;
 use agentverse_tools::ToolRegistry;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 /// Hierarchical Planning strategy.
 pub struct HierarchicalStrategy {
     runner: Arc<LlmRunner>,
     prompts: Arc<PromptRegistry>,
     tools: Arc<ToolRegistry>,
-    /// Reserved for future per-step memory integration.
-    #[allow(dead_code)]
-    memory: Arc<Mutex<dyn Memory>>,
     max_iterations: usize,
     max_decompose_depth: usize,
 }
@@ -29,7 +25,6 @@ impl HierarchicalStrategy {
         runner: Arc<LlmRunner>,
         prompts: Arc<PromptRegistry>,
         tools: Arc<ToolRegistry>,
-        memory: Arc<Mutex<dyn Memory>>,
         max_iterations: usize,
         max_decompose_depth: usize,
     ) -> Self {
@@ -37,7 +32,6 @@ impl HierarchicalStrategy {
             runner,
             prompts,
             tools,
-            memory,
             max_iterations,
             max_decompose_depth,
         }

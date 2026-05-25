@@ -5,10 +5,9 @@
 
 use super::cycle::{CycleAction, CycleSkeleton};
 use super::parse::parse_response;
-use agentverse::{AgentError, LlmRunner, Memory, Message, ModelError, PromptRegistry};
+use agentverse::{AgentError, LlmRunner, Message, ModelError, PromptRegistry};
 use agentverse_tools::ToolRegistry;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::info;
 
 /// The high-level ReAct strategy interface.
@@ -16,9 +15,6 @@ use tracing::info;
 /// Users interact with this, not CycleSkeleton directly.
 pub struct ReActStrategy {
     skeleton: CycleSkeleton,
-    /// Reserved for future per-step memory integration (e.g., augmenting intermediate prompts).
-    #[allow(dead_code)]
-    memory: Arc<Mutex<dyn Memory>>,
 }
 
 impl ReActStrategy {
@@ -27,12 +23,10 @@ impl ReActStrategy {
         runner: Arc<LlmRunner>,
         prompts: Arc<PromptRegistry>,
         tools: Arc<ToolRegistry>,
-        memory: Arc<Mutex<dyn Memory>>,
         max_iterations: usize,
     ) -> Self {
         Self {
             skeleton: CycleSkeleton::new(runner, prompts, tools, max_iterations),
-            memory,
         }
     }
 }

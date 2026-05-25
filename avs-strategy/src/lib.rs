@@ -7,11 +7,9 @@ pub use agentverse::RunStrategy;
 pub use agentverse_plan::{HierarchicalStrategy, PlanStrategy};
 pub use agentverse_react::ReActStrategy;
 
-use agentverse::memory::Memory;
 use agentverse::{LlmRunner, PromptRegistry};
 use agentverse_tools::ToolRegistry;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 /// Enumeration of available strategies.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,7 +27,6 @@ pub enum StrategyKind {
 /// * `runner` - Shared LLM runner for model invocations
 /// * `prompts` - Prompt registry for template lookup
 /// * `tools` - Tool registry for agent tool execution
-/// * `memory` - Shared memory for state management
 /// * `max_iterations` - Maximum iterations for the strategy loop
 ///
 /// # Returns
@@ -44,7 +41,6 @@ pub enum StrategyKind {
 ///     runner,
 ///     prompts,
 ///     tools,
-///     memory,
 ///     10,
 /// );
 /// let result = strategy.run(messages).await?;
@@ -54,7 +50,6 @@ pub fn build(
     runner: Arc<LlmRunner>,
     prompts: Arc<PromptRegistry>,
     tools: Arc<ToolRegistry>,
-    memory: Arc<Mutex<dyn Memory>>,
     max_iterations: usize,
 ) -> Arc<dyn RunStrategy> {
     match kind {
@@ -62,21 +57,18 @@ pub fn build(
             runner,
             prompts,
             tools,
-            memory,
             max_iterations,
         )),
         StrategyKind::Plan => Arc::new(PlanStrategy::new(
             runner,
             prompts,
             tools,
-            memory,
             max_iterations,
         )),
         StrategyKind::Hierarchical => Arc::new(HierarchicalStrategy::new(
             runner,
             prompts,
             tools,
-            memory,
             max_iterations,
             3,
         )),
@@ -87,15 +79,9 @@ pub fn build(
 mod tests {
     use super::*;
     use agentverse::{Config, LlmRunner, ProviderConfig};
-    use agentverse_memory::SimpleMemory;
     use agentverse_tools::ToolRegistry;
 
-    fn make_resources() -> (
-        Arc<LlmRunner>,
-        Arc<PromptRegistry>,
-        Arc<ToolRegistry>,
-        Arc<Mutex<dyn Memory>>,
-    ) {
+    fn make_resources() -> (Arc<LlmRunner>, Arc<PromptRegistry>, Arc<ToolRegistry>) {
         let runner = Arc::new(
             LlmRunner::from_config(Config {
                 provider: ProviderConfig::OpenAI {
@@ -110,37 +96,28 @@ mod tests {
             })
             .unwrap(),
         );
-        let memory: Arc<Mutex<dyn Memory>> = Arc::new(Mutex::new(SimpleMemory::new(50)));
         (
             runner,
             Arc::new(PromptRegistry::new()),
             Arc::new(ToolRegistry::new()),
-            memory,
         )
     }
 
     #[test]
     fn build_react_strategy_returns_arc_dyn() {
-        let (runner, prompts, tools, memory) = make_resources();
-        let _strategy = build(StrategyKind::React, runner, prompts, tools, memory, 5);
+        let (runner, prompts, tools) = make_resources();
+        let _strategy = build(StrategyKind::React, runner, prompts, tools, 5);
     }
 
     #[test]
     fn build_plan_strategy_returns_arc_dyn() {
-        let (runner, prompts, tools, memory) = make_resources();
-        let _strategy = build(StrategyKind::Plan, runner, prompts, tools, memory, 5);
+        let (runner, prompts, tools) = make_resources();
+        let _strategy = build(StrategyKind::Plan, runner, prompts, tools, 5);
     }
 
     #[test]
     fn build_hierarchical_strategy_returns_arc_dyn() {
-        let (runner, prompts, tools, memory) = make_resources();
-        let _strategy = build(
-            StrategyKind::Hierarchical,
-            runner,
-            prompts,
-            tools,
-            memory,
-            5,
-        );
+        let (runner, prompts, tools) = make_resources();
+        let _strategy = build(StrategyKind::Hierarchical, runner, prompts, tools, 5);
     }
 }

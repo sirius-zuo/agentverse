@@ -79,7 +79,6 @@ async fn main() {
         Arc::clone(&runner),
         Arc::clone(&prompts),
         Arc::clone(&tools),
-        Arc::clone(&memory),
         5,
     );
     let store = Arc::new(

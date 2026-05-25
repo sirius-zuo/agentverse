@@ -189,7 +189,6 @@ mod tests {
             Arc::clone(&runner),
             Arc::clone(&prompts),
             Arc::clone(&tools),
-            Arc::clone(&memory),
             3,
         );
         let store = Arc::new(SqliteSessionStore::new("sqlite::memory:").await.unwrap());

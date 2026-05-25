@@ -3,13 +3,11 @@
 //! Tests the PlanStep, Plan, and strategy structures.
 
 use agentverse::{AsyncTool, Config, LlmRunner, PromptRegistry};
-use agentverse_memory::SimpleMemory;
 use agentverse_plan::{HierarchicalStrategy, Plan, PlanStep, PlanStrategy};
 use agentverse_tools::{Calculator, ToolRegistry};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -241,7 +239,6 @@ fn test_plan_strategy_construction() {
         make_runner(),
         Arc::new(PromptRegistry::default()),
         Arc::new(ToolRegistry::new()),
-        Arc::new(Mutex::new(SimpleMemory::new(20))),
         10,
     );
 }
@@ -252,7 +249,6 @@ fn test_hierarchical_strategy_construction() {
         make_runner(),
         Arc::new(PromptRegistry::default()),
         Arc::new(ToolRegistry::new()),
-        Arc::new(Mutex::new(SimpleMemory::new(30))),
         10,
         5,
     );
@@ -278,7 +274,6 @@ async fn plan_run_returns_error_on_bad_port() {
         make_runner(),
         Arc::new(PromptRegistry::new()),
         Arc::new(ToolRegistry::new()),
-        Arc::new(Mutex::new(SimpleMemory::new(50))),
         5,
     );
     let messages = vec![agentverse::Message {
@@ -296,7 +291,6 @@ async fn hierarchical_run_returns_error_on_bad_port() {
         make_runner(),
         Arc::new(PromptRegistry::new()),
         Arc::new(ToolRegistry::new()),
-        Arc::new(Mutex::new(SimpleMemory::new(50))),
         5,
         3,
     );
