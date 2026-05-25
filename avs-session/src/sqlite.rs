@@ -347,7 +347,7 @@ impl SessionStore for SqliteSessionStore {
         session_id: SessionId,
         new_watermark: i64,
     ) -> Result<(), SessionStoreError> {
-        sqlx::query(
+        let result = sqlx::query(
             "UPDATE sessions \
              SET consolidation_watermark = MAX(consolidation_watermark, ?), \
                  updated_at = ? \
@@ -359,6 +359,9 @@ impl SessionStore for SqliteSessionStore {
         .execute(&self.pool)
         .await
         .map_err(|e| SessionStoreError::Database(e.to_string()))?;
+        if result.rows_affected() == 0 {
+            return Err(SessionStoreError::NotFound(session_id));
+        }
         Ok(())
     }
 
@@ -401,13 +404,19 @@ impl SessionStore for SqliteSessionStore {
         if watermark == 0 {
             return Ok(0);
         }
+        // Cap at stored watermark to protect unconsolidated messages
+        let stored_wm = self.get_watermark(session_id).await?;
+        let effective_watermark = watermark.min(stored_wm);
+        if effective_watermark == 0 {
+            return Ok(0);
+        }
         let result = sqlx::query(
             "DELETE FROM messages \
              WHERE session_id = ? AND created_at < ? AND sequence_num <= ?",
         )
         .bind(session_id.to_string())
         .bind(cutoff_ts)
-        .bind(watermark)
+        .bind(effective_watermark)
         .execute(&self.pool)
         .await
         .map_err(|e| SessionStoreError::Database(e.to_string()))?;
