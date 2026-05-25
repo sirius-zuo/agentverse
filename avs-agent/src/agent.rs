@@ -101,18 +101,23 @@ impl Agent {
     fn assemble_messages_with_context(
         &self,
         system: Option<String>,
-        long_term: Vec<Message>,
+        long_term_text: Option<String>,
         history: Vec<Message>,
         input: &str,
     ) -> Vec<Message> {
         let mut msgs = Vec::new();
-        if let Some(sys) = system {
+        let sys_content = match (system, long_term_text) {
+            (Some(sys), Some(lt)) => Some(format!("{sys}\n\n{lt}")),
+            (Some(sys), None) => Some(sys),
+            (None, Some(lt)) => Some(lt),
+            (None, None) => None,
+        };
+        if let Some(content) = sys_content {
             msgs.push(Message {
                 role: MessageRole::System,
-                content: sys,
+                content,
             });
         }
-        msgs.extend(long_term);
         msgs.extend(history);
         msgs.push(Message {
             role: MessageRole::User,
@@ -177,6 +182,7 @@ impl Agent {
     }
 
     pub async fn invoke_stateless(&self, input: &str) -> Result<String, AgentError> {
+        // Stateless: no session, no memory context — always a fresh single-turn call.
         let messages = self.assemble_messages(self.render_system(), vec![], input);
         let response = self.strategy.run(messages).await?;
         Ok(response)
@@ -192,19 +198,27 @@ impl Agent {
 
         let history = self.get_working_buffer(user_id, session_id).await?;
 
-        // Layer 3: retrieve scored memories and inject as System context
-        let long_term_context = if let Some(ref ms) = self.memory_store {
-            ms.retrieve(user_id, input, 5)
+        // Layer 3: retrieve scored memories and inject into system prompt
+        let long_term_text = if let Some(ref ms) = self.memory_store {
+            let memories = ms.retrieve(user_id, input, 5)
                 .await
-                .unwrap_or_default()
-                .into_iter()
-                .map(|sm| Message {
-                    role: MessageRole::System,
-                    content: format!("[Memory] {}", sm.content),
-                })
-                .collect::<Vec<_>>()
+                .unwrap_or_else(|e| {
+                    tracing::warn!(error = %e, "layer-3 memory retrieve failed, proceeding without context");
+                    vec![]
+                });
+            if memories.is_empty() {
+                None
+            } else {
+                Some(
+                    memories
+                        .into_iter()
+                        .map(|sm| format!("[Memory] {}", sm.content))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                )
+            }
         } else {
-            vec![]
+            None
         };
 
         let user_msg = Message {
@@ -213,7 +227,7 @@ impl Agent {
         };
         let messages = self.assemble_messages_with_context(
             self.render_system(),
-            long_term_context,
+            long_term_text,
             history,
             input,
         );
@@ -232,7 +246,8 @@ impl Agent {
         // Layer 3: async fire-and-forget consolidation
         if let Some(ms) = self.memory_store.clone() {
             let uid = user_id.to_string();
-            let record = LongTermRecord::now(response.clone(), 0.5);
+            // TODO: replace 0.5 with heuristic or LLM-assigned importance scorer
+            let record = LongTermRecord::now(format!("User: {input}\nAssistant: {response}"), 0.5);
             tokio::spawn(async move {
                 let _ = ms.write(&uid, record).await;
             });
