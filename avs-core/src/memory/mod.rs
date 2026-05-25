@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -35,4 +36,75 @@ pub trait Memory: Send + Sync {
     fn clear(&mut self);
 }
 
+pub struct LongTermRecord {
+    pub content: String,
+    /// LLM-assigned or heuristic importance score, 0.0–1.0.
+    pub importance: f32,
+    pub created_at: DateTime<Utc>,
+}
+
+impl LongTermRecord {
+    pub fn now(content: String, importance: f32) -> Self {
+        Self {
+            content,
+            importance,
+            created_at: Utc::now(),
+        }
+    }
+}
+
+pub struct ScoredMemory {
+    pub content: String,
+    /// Combined score: α·recency + β·importance + γ·relevance
+    pub score: f32,
+    pub created_at: DateTime<Utc>,
+}
+
+#[async_trait]
+pub trait MemoryStore: Send + Sync {
+    async fn write(&self, user_id: &str, record: LongTermRecord) -> Result<(), MemoryError>;
+    async fn retrieve(
+        &self,
+        user_id: &str,
+        query: &str,
+        top_k: usize,
+    ) -> Result<Vec<ScoredMemory>, MemoryError>;
+}
+
 mod short_term;
+
+#[cfg(test)]
+mod store_tests {
+    use super::*;
+
+    struct NoopMemoryStore;
+
+    #[async_trait]
+    impl MemoryStore for NoopMemoryStore {
+        async fn write(&self, _: &str, _: LongTermRecord) -> Result<(), MemoryError> {
+            Ok(())
+        }
+        async fn retrieve(
+            &self,
+            _: &str,
+            _: &str,
+            _: usize,
+        ) -> Result<Vec<ScoredMemory>, MemoryError> {
+            Ok(vec![])
+        }
+    }
+
+    #[tokio::test]
+    async fn noop_memory_store_retrieve_returns_empty() {
+        let store = NoopMemoryStore;
+        let result = store.retrieve("alice", "test query", 5).await.unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn long_term_record_now_sets_fields() {
+        let r = LongTermRecord::now("hello".to_string(), 0.7);
+        assert_eq!(r.content, "hello");
+        assert!((r.importance - 0.7).abs() < 1e-6);
+    }
+}
