@@ -73,6 +73,9 @@ impl ConsolidationWorker {
         let sessions = self.store.list_all_active_sessions().await?;
         for session in sessions {
             let msgs = self.store.load_messages_above_watermark(session.id).await?;
+            if msgs.is_empty() {
+                continue;
+            }
             if msgs.len() < self.config.batch_size {
                 // Check idle timeout: session.updated_at is the last-modified time
                 let idle_secs = chrono::Utc::now().timestamp() - session.updated_at.timestamp();
@@ -80,16 +83,13 @@ impl ConsolidationWorker {
                     continue;
                 }
             }
-            if msgs.is_empty() {
-                continue;
-            }
-            let max_seq = msgs.iter().map(|(seq, _)| *seq).max().unwrap_or(0);
-            for (_, msg) in &msgs {
+            for (seq, msg) in &msgs {
                 // TODO: replace with LLM summarizer once wired in
                 let record = LongTermRecord::now(msg.content.clone(), 0.5);
                 self.memory_store.write(&session.user_id, record).await?;
+                // Advance watermark after each successful write to prevent duplicate writes on retry
+                self.store.advance_watermark(session.id, *seq).await?;
             }
-            self.store.advance_watermark(session.id, max_seq).await?;
         }
         Ok(())
     }

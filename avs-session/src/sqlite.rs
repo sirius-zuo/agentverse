@@ -349,12 +349,10 @@ impl SessionStore for SqliteSessionStore {
     ) -> Result<(), SessionStoreError> {
         let result = sqlx::query(
             "UPDATE sessions \
-             SET consolidation_watermark = MAX(consolidation_watermark, ?), \
-                 updated_at = ? \
+             SET consolidation_watermark = MAX(consolidation_watermark, ?) \
              WHERE id = ?",
         )
         .bind(new_watermark)
-        .bind(chrono::Utc::now().timestamp())
         .bind(session_id.to_string())
         .execute(&self.pool)
         .await

@@ -341,12 +341,10 @@ impl SessionStore for PostgresSessionStore {
     ) -> Result<(), SessionStoreError> {
         let result = sqlx::query(
             "UPDATE sessions \
-             SET consolidation_watermark = GREATEST(consolidation_watermark, $1), \
-                 updated_at = $2 \
-             WHERE id = $3",
+             SET consolidation_watermark = GREATEST(consolidation_watermark, $1) \
+             WHERE id = $2",
         )
         .bind(new_watermark)
-        .bind(chrono::Utc::now().timestamp())
         .bind(session_id.to_string())
         .execute(&self.pool)
         .await
