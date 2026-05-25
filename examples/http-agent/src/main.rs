@@ -10,12 +10,10 @@
 use agentverse::{Config, LlmRunner, PromptRegistry, ProviderConfig};
 use agentverse_agent::Agent;
 use agentverse_logging as avs_logging;
-use agentverse_memory::SimpleMemory;
-use agentverse_session::SqliteSessionStore;
+use agentverse_session::SqliteSessionMemory;
 use agentverse_strategy::{build, StrategyKind};
 use agentverse_tools::{Calculator, DateTimeTool, ToolRegistry};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() {
@@ -47,7 +45,6 @@ async fn main() {
     let tools = Arc::new(tool_registry);
 
     let prompts = Arc::new(PromptRegistry::new());
-    let memory: Arc<Mutex<dyn agentverse::Memory>> = Arc::new(Mutex::new(SimpleMemory::new(100)));
     let strategy = build(
         StrategyKind::React,
         Arc::clone(&runner),
@@ -56,13 +53,13 @@ async fn main() {
         10,
     );
     let store = Arc::new(
-        SqliteSessionStore::new("sqlite:agent.db")
+        SqliteSessionMemory::new("sqlite:agent.db")
             .await
             .expect("session store"),
     );
 
     // enable_http_server=true: Agent reads HOST/PORT from env and spawns HTTP server internally
-    let _agent = Agent::new(runner, tools, prompts, memory, store, strategy, true, None);
+    let _agent = Agent::new(runner, tools, prompts, store, strategy, true, None);
 
     tracing::info!("Agent started. Press Ctrl-C to stop.");
     tokio::signal::ctrl_c()

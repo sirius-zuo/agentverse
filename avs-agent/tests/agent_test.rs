@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use agentverse::memory::{Message, MessageRole};
-use agentverse_session::{Session, SessionId, SessionStatus, SessionStore, SessionStoreError};
+use agentverse_session::{Session, SessionId, SessionMemory, SessionMemoryError, SessionStatus};
 use async_trait::async_trait;
 
 #[derive(Default)]
@@ -13,8 +13,8 @@ struct FakeStore {
 }
 
 #[async_trait]
-impl SessionStore for FakeStore {
-    async fn create(&self, user_id: &str) -> Result<Session, SessionStoreError> {
+impl SessionMemory for FakeStore {
+    async fn create(&self, user_id: &str) -> Result<Session, SessionMemoryError> {
         let session = Session::new(user_id);
         self.sessions
             .lock()
@@ -23,7 +23,7 @@ impl SessionStore for FakeStore {
         Ok(session)
     }
 
-    async fn get(&self, session_id: SessionId) -> Result<Option<Session>, SessionStoreError> {
+    async fn get(&self, session_id: SessionId) -> Result<Option<Session>, SessionMemoryError> {
         Ok(self.sessions.lock().unwrap().get(&session_id).cloned())
     }
 
@@ -31,16 +31,16 @@ impl SessionStore for FakeStore {
         &self,
         session_id: SessionId,
         status: SessionStatus,
-    ) -> Result<(), SessionStoreError> {
+    ) -> Result<(), SessionMemoryError> {
         let mut sessions = self.sessions.lock().unwrap();
         let session = sessions
             .get_mut(&session_id)
-            .ok_or(SessionStoreError::NotFound(session_id))?;
+            .ok_or(SessionMemoryError::NotFound(session_id))?;
         session.status = status;
         Ok(())
     }
 
-    async fn list_by_user(&self, user_id: &str) -> Result<Vec<Session>, SessionStoreError> {
+    async fn list_by_user(&self, user_id: &str) -> Result<Vec<Session>, SessionMemoryError> {
         Ok(self
             .sessions
             .lock()
@@ -55,9 +55,9 @@ impl SessionStore for FakeStore {
         &self,
         session_id: SessionId,
         message: Message,
-    ) -> Result<(), SessionStoreError> {
+    ) -> Result<(), SessionMemoryError> {
         if !self.sessions.lock().unwrap().contains_key(&session_id) {
-            return Err(SessionStoreError::NotFound(session_id));
+            return Err(SessionMemoryError::NotFound(session_id));
         }
         self.messages
             .lock()
@@ -73,7 +73,7 @@ impl SessionStore for FakeStore {
         session_id: SessionId,
         user_message: Message,
         assistant_message: Message,
-    ) -> Result<(), SessionStoreError> {
+    ) -> Result<(), SessionMemoryError> {
         self.append_message(session_id, user_message).await?;
         self.append_message(session_id, assistant_message).await
     }
@@ -81,9 +81,9 @@ impl SessionStore for FakeStore {
     async fn load_messages(
         &self,
         session_id: SessionId,
-    ) -> Result<Vec<Message>, SessionStoreError> {
+    ) -> Result<Vec<Message>, SessionMemoryError> {
         if !self.sessions.lock().unwrap().contains_key(&session_id) {
-            return Err(SessionStoreError::NotFound(session_id));
+            return Err(SessionMemoryError::NotFound(session_id));
         }
         Ok(self
             .messages
@@ -94,7 +94,7 @@ impl SessionStore for FakeStore {
             .unwrap_or_default())
     }
 
-    async fn get_watermark(&self, session_id: SessionId) -> Result<i64, SessionStoreError> {
+    async fn get_watermark(&self, session_id: SessionId) -> Result<i64, SessionMemoryError> {
         Ok(*self
             .watermarks
             .lock()
@@ -107,7 +107,7 @@ impl SessionStore for FakeStore {
         &self,
         session_id: SessionId,
         new_watermark: i64,
-    ) -> Result<(), SessionStoreError> {
+    ) -> Result<(), SessionMemoryError> {
         let mut wm = self.watermarks.lock().unwrap();
         let entry = wm.entry(session_id).or_insert(0);
         if new_watermark > *entry {
@@ -119,7 +119,7 @@ impl SessionStore for FakeStore {
     async fn load_messages_above_watermark(
         &self,
         session_id: SessionId,
-    ) -> Result<Vec<(i64, agentverse::memory::Message)>, SessionStoreError> {
+    ) -> Result<Vec<(i64, agentverse::memory::Message)>, SessionMemoryError> {
         let wm = self.get_watermark(session_id).await?;
         let msgs = self.load_messages(session_id).await?;
         Ok(msgs
@@ -135,11 +135,11 @@ impl SessionStore for FakeStore {
         _session_id: SessionId,
         _cutoff_ts: i64,
         _watermark: i64,
-    ) -> Result<u64, SessionStoreError> {
+    ) -> Result<u64, SessionMemoryError> {
         Ok(0)
     }
 
-    async fn list_all_active_sessions(&self) -> Result<Vec<Session>, SessionStoreError> {
+    async fn list_all_active_sessions(&self) -> Result<Vec<Session>, SessionMemoryError> {
         Ok(vec![])
     }
 }
@@ -151,7 +151,7 @@ async fn session_manager_rejects_wrong_user_before_llm_call() {
     let manager = agentverse_session::SessionManager::new(store);
 
     let err = manager.assert_owner("bob", session.id).await.unwrap_err();
-    assert!(matches!(err, SessionStoreError::NotFound(id) if id == session.id));
+    assert!(matches!(err, SessionMemoryError::NotFound(id) if id == session.id));
 }
 
 #[tokio::test]

@@ -14,12 +14,10 @@ use agentverse::{Config, LlmRunner, PromptConfig, PromptRegistry, ProviderConfig
 use agentverse_agent::Agent;
 use agentverse_integration::{Event, IntegrationRuntime};
 use agentverse_logging as avs_logging;
-use agentverse_memory::SimpleMemory;
-use agentverse_session::SqliteSessionStore;
+use agentverse_session::SqliteSessionMemory;
 use agentverse_strategy::{build, StrategyKind};
 use agentverse_tools::ToolRegistry;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() {
@@ -55,7 +53,6 @@ async fn main() {
         .expect("prompt config"),
     );
 
-    let memory: Arc<Mutex<dyn agentverse::Memory>> = Arc::new(Mutex::new(SimpleMemory::new(50)));
     let strategy = build(
         StrategyKind::Plan,
         Arc::clone(&runner),
@@ -64,14 +61,12 @@ async fn main() {
         10,
     );
     let store = Arc::new(
-        SqliteSessionStore::new("sqlite::memory:")
+        SqliteSessionMemory::new("sqlite::memory:")
             .await
             .expect("session store"),
     );
 
-    let agent = Arc::new(Agent::new(
-        runner, tools, prompts, memory, store, strategy, false, None,
-    ));
+    let agent = Agent::new(runner, tools, prompts, store, strategy, false, None);
 
     let config_path = concat!(env!("CARGO_MANIFEST_DIR"), "/agent.toml");
     let runtime = IntegrationRuntime::from_config(config_path)

@@ -1,5 +1,5 @@
 use crate::{Agent, AgentError};
-use agentverse_session::SessionStoreError;
+use agentverse_session::SessionMemoryError;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
@@ -9,10 +9,10 @@ use std::sync::Arc;
 use tracing::{error, info};
 use uuid::Uuid;
 
-fn store_err_status(e: &SessionStoreError) -> StatusCode {
+fn store_err_status(e: &SessionMemoryError) -> StatusCode {
     match e {
-        SessionStoreError::NotFound(_) => StatusCode::NOT_FOUND,
-        SessionStoreError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        SessionMemoryError::NotFound(_) => StatusCode::NOT_FOUND,
+        SessionMemoryError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
 
@@ -157,17 +157,15 @@ pub async fn end_session(
 mod tests {
     use super::*;
     use agentverse::{Config, LlmRunner, PromptRegistry, ProviderConfig};
-    use agentverse_memory::SimpleMemory;
-    use agentverse_session::SqliteSessionStore;
+    use agentverse_session::SqliteSessionMemory;
     use agentverse_strategy::{build as build_strategy, StrategyKind};
     use agentverse_tools::ToolRegistry;
     use axum::routing::{delete, get, post};
     use axum::{body::Body, http::Request, Router};
-    use tokio::sync::Mutex;
     use tower::ServiceExt;
 
     async fn make_agent() -> Arc<Agent> {
-        let store = Arc::new(SqliteSessionStore::new("sqlite::memory:").await.unwrap());
+        let store = Arc::new(SqliteSessionMemory::new("sqlite::memory:").await.unwrap());
         let runner = Arc::new(
             LlmRunner::from_config(Config {
                 provider: ProviderConfig::OpenAI {
@@ -184,8 +182,6 @@ mod tests {
         );
         let tools = Arc::new(ToolRegistry::new());
         let prompts = Arc::new(PromptRegistry::new());
-        let memory: Arc<Mutex<dyn agentverse::Memory>> =
-            Arc::new(Mutex::new(SimpleMemory::new(50)));
         let strategy = build_strategy(
             StrategyKind::React,
             Arc::clone(&runner),
@@ -193,7 +189,7 @@ mod tests {
             Arc::clone(&tools),
             5,
         );
-        Agent::new(runner, tools, prompts, memory, store, strategy, false, None)
+        Agent::new(runner, tools, prompts, store, strategy, false, None)
     }
 
     fn make_app(agent: Arc<Agent>) -> Router {

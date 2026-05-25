@@ -11,12 +11,10 @@
 use agentverse::{Config, LlmRunner, PromptConfig, PromptRegistry, ProviderConfig};
 use agentverse_agent::Agent;
 use agentverse_logging as avs_logging;
-use agentverse_memory::SimpleMemory;
-use agentverse_session::SqliteSessionStore;
+use agentverse_session::SqliteSessionMemory;
 use agentverse_strategy::{build, StrategyKind};
 use agentverse_tools::{ToolRegistry, WebSearch};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() {
@@ -73,7 +71,6 @@ async fn main() {
         .expect("prompts"),
     );
 
-    let memory: Arc<Mutex<dyn agentverse::Memory>> = Arc::new(Mutex::new(SimpleMemory::new(50)));
     let strategy = build(
         StrategyKind::Plan,
         Arc::clone(&runner),
@@ -82,12 +79,12 @@ async fn main() {
         5,
     );
     let store = Arc::new(
-        SqliteSessionStore::new("sqlite::memory:")
+        SqliteSessionMemory::new("sqlite::memory:")
             .await
             .expect("store"),
     );
 
-    let agent = Agent::new(runner, tools, prompts, memory, store, strategy, false, None);
+    let agent = Agent::new(runner, tools, prompts, store, strategy, false, None);
 
     let question = format!(
         "Search for '{}' and summarize the top {} results.",

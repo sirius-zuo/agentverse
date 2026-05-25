@@ -2,13 +2,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use agentverse::memory::{LongTermRecord, MemoryStore, Message, MessageRole};
-use agentverse::{LlmRunner, Memory, PromptRegistry, RunStrategy};
-use agentverse_session::{Session, SessionId, SessionManager, SessionStore, SessionStoreError};
+use agentverse::memory::{LongtermMemory, LongtermRecord, Message, MessageRole};
+use agentverse::{LlmRunner, PromptRegistry, RunStrategy};
+use agentverse_session::{Session, SessionId, SessionManager, SessionMemory, SessionMemoryError};
 use agentverse_tools::ToolRegistry;
 use tokio::sync::Mutex;
 
-struct CachedBuffer {
+struct CacheMemory {
     messages: Vec<Message>,
     last_used: Instant,
 }
@@ -16,7 +16,7 @@ struct CachedBuffer {
 #[derive(Debug, thiserror::Error)]
 pub enum AgentError {
     #[error("session error: {0}")]
-    Session(#[from] SessionStoreError),
+    Session(#[from] SessionMemoryError),
     #[error("llm error: {0}")]
     Llm(#[from] agentverse::AgentError),
 }
@@ -28,35 +28,30 @@ pub struct Agent {
     #[allow(dead_code)]
     tools: Arc<ToolRegistry>,
     prompts: Arc<PromptRegistry>,
-    #[allow(dead_code)]
-    memory: Arc<Mutex<dyn Memory>>,
     sessions: Arc<SessionManager>,
     strategy: Arc<dyn RunStrategy>,
-    working_buffers: Mutex<HashMap<(String, SessionId), CachedBuffer>>,
+    cache_memory: Mutex<HashMap<(String, SessionId), CacheMemory>>,
     buffer_ttl: Duration,
-    memory_store: Option<Arc<dyn MemoryStore>>,
+    memory_store: Option<Arc<dyn LongtermMemory>>,
 }
 
 impl Agent {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         runner: Arc<LlmRunner>,
         tools: Arc<ToolRegistry>,
         prompts: Arc<PromptRegistry>,
-        memory: Arc<Mutex<dyn Memory>>,
-        store: Arc<dyn SessionStore>,
+        store: Arc<dyn SessionMemory>,
         strategy: Arc<dyn RunStrategy>,
         enable_http_server: bool,
-        memory_store: Option<Arc<dyn MemoryStore>>,
+        memory_store: Option<Arc<dyn LongtermMemory>>,
     ) -> Arc<Self> {
         let agent = Arc::new(Self {
             runner,
             tools,
             prompts,
-            memory,
             sessions: Arc::new(SessionManager::new(store)),
             strategy,
-            working_buffers: Mutex::new(HashMap::new()),
+            cache_memory: Mutex::new(HashMap::new()),
             buffer_ttl: Duration::from_secs(300),
             memory_store,
         });
@@ -127,14 +122,14 @@ impl Agent {
         msgs
     }
 
-    async fn get_working_buffer(
+    async fn get_cache_memory(
         &self,
         user_id: &str,
         session_id: SessionId,
     ) -> Result<Vec<Message>, AgentError> {
         let key = (user_id.to_string(), session_id);
         {
-            let cache = self.working_buffers.lock().await;
+            let cache = self.cache_memory.lock().await;
             if let Some(buf) = cache.get(&key) {
                 if buf.last_used.elapsed() <= self.buffer_ttl {
                     return Ok(buf.messages.clone());
@@ -143,12 +138,12 @@ impl Agent {
         }
         // Miss or TTL expired: sweep expired entries, then rehydrate from Layer 2
         let history = self.sessions.load_messages(session_id).await?;
-        let mut cache = self.working_buffers.lock().await;
+        let mut cache = self.cache_memory.lock().await;
         let ttl = self.buffer_ttl;
         cache.retain(|_, buf| buf.last_used.elapsed() <= ttl);
         cache.insert(
             key,
-            CachedBuffer {
+            CacheMemory {
                 messages: history.clone(),
                 last_used: Instant::now(),
             },
@@ -156,7 +151,7 @@ impl Agent {
         Ok(history)
     }
 
-    async fn update_working_buffer(
+    async fn update_cache_memory(
         &self,
         user_id: &str,
         session_id: SessionId,
@@ -164,7 +159,7 @@ impl Agent {
         assistant_msg: Message,
     ) {
         let key = (user_id.to_string(), session_id);
-        let mut cache = self.working_buffers.lock().await;
+        let mut cache = self.cache_memory.lock().await;
         if let Some(buf) = cache.get_mut(&key) {
             buf.messages.push(user_msg);
             buf.messages.push(assistant_msg);
@@ -174,7 +169,7 @@ impl Agent {
             // with just this turn so the next invoke avoids a cold DB read.
             cache.insert(
                 key,
-                CachedBuffer {
+                CacheMemory {
                     messages: vec![user_msg, assistant_msg],
                     last_used: Instant::now(),
                 },
@@ -197,7 +192,7 @@ impl Agent {
     ) -> Result<String, AgentError> {
         self.sessions.assert_owner(user_id, session_id).await?;
 
-        let history = self.get_working_buffer(user_id, session_id).await?;
+        let history = self.get_cache_memory(user_id, session_id).await?;
 
         // Layer 3: retrieve scored memories and inject into system prompt
         let long_term_text = if let Some(ref ms) = self.memory_store {
@@ -241,14 +236,14 @@ impl Agent {
         self.sessions
             .append_turn(session_id, user_msg.clone(), assistant_msg.clone())
             .await?;
-        self.update_working_buffer(user_id, session_id, user_msg, assistant_msg)
+        self.update_cache_memory(user_id, session_id, user_msg, assistant_msg)
             .await;
 
         // Layer 3: async fire-and-forget consolidation
         if let Some(ms) = self.memory_store.clone() {
             let uid = user_id.to_string();
             // TODO: replace 0.5 with heuristic or LLM-assigned importance scorer
-            let record = LongTermRecord::now(format!("User: {input}\nAssistant: {response}"), 0.5);
+            let record = LongtermRecord::now(format!("User: {input}\nAssistant: {response}"), 0.5);
             tokio::spawn(async move {
                 let _ = ms.write(&uid, record).await;
             });
@@ -279,7 +274,7 @@ impl Agent {
         self.sessions.end_session(session_id).await?;
         // Layer-1 cascade: evict working buffer immediately on session delete
         let key = (user_id.to_string(), session_id);
-        self.working_buffers.lock().await.remove(&key);
+        self.cache_memory.lock().await.remove(&key);
         Ok(())
     }
 
@@ -300,19 +295,17 @@ impl Agent {
 #[cfg(test)]
 mod lt_tests {
     use super::*;
-    use agentverse::memory::{LongTermRecord, MemoryError, MemoryStore, ScoredMemory};
+    use agentverse::memory::{LongtermMemory, LongtermRecord, MemoryError, ScoredMemory};
     use agentverse::{Config, LlmRunner, PromptRegistry};
-    use agentverse_memory::SimpleMemory;
-    use agentverse_session::SqliteSessionStore;
+    use agentverse_session::SqliteSessionMemory;
     use agentverse_strategy::{build, StrategyKind};
     use agentverse_tools::ToolRegistry;
     use std::sync::Arc;
-    use tokio::sync::Mutex;
 
     struct NoopMemoryStore;
     #[async_trait::async_trait]
-    impl MemoryStore for NoopMemoryStore {
-        async fn write(&self, _: &str, _: LongTermRecord) -> Result<(), MemoryError> {
+    impl LongtermMemory for NoopMemoryStore {
+        async fn write(&self, _: &str, _: LongtermRecord) -> Result<(), MemoryError> {
             Ok(())
         }
         async fn retrieve(
@@ -343,8 +336,6 @@ mod lt_tests {
         );
         let tools = Arc::new(ToolRegistry::new());
         let prompts = Arc::new(PromptRegistry::new());
-        let memory: Arc<Mutex<dyn agentverse::Memory>> =
-            Arc::new(Mutex::new(SimpleMemory::new(50)));
         let strategy = build(
             StrategyKind::React,
             Arc::clone(&runner),
@@ -352,18 +343,9 @@ mod lt_tests {
             Arc::clone(&tools),
             3,
         );
-        let store = Arc::new(SqliteSessionStore::new("sqlite::memory:").await.unwrap());
-        let ms: Arc<dyn agentverse::memory::MemoryStore> = Arc::new(NoopMemoryStore);
-        let agent = Agent::new(
-            runner,
-            tools,
-            prompts,
-            memory,
-            store,
-            strategy,
-            false,
-            Some(ms),
-        );
+        let store = Arc::new(SqliteSessionMemory::new("sqlite::memory:").await.unwrap());
+        let ms: Arc<dyn LongtermMemory> = Arc::new(NoopMemoryStore);
+        let agent = Agent::new(runner, tools, prompts, store, strategy, false, Some(ms));
         let sid = agent.create_session("alice").await.unwrap();
         assert!(agent.get_session("alice", sid).await.unwrap().is_some());
     }
@@ -373,12 +355,10 @@ mod lt_tests {
 mod tests {
     use super::*;
     use agentverse::{Config, LlmRunner, PromptRegistry};
-    use agentverse_memory::SimpleMemory;
-    use agentverse_session::SqliteSessionStore;
+    use agentverse_session::SqliteSessionMemory;
     use agentverse_strategy::{build, StrategyKind};
     use agentverse_tools::ToolRegistry;
     use std::sync::Arc;
-    use tokio::sync::Mutex;
 
     async fn make_agent() -> Arc<Agent> {
         let runner = Arc::new(
@@ -397,8 +377,6 @@ mod tests {
         );
         let tools = Arc::new(ToolRegistry::new());
         let prompts = Arc::new(PromptRegistry::new());
-        let memory: Arc<Mutex<dyn agentverse::Memory>> =
-            Arc::new(Mutex::new(SimpleMemory::new(50)));
         let strategy = build(
             StrategyKind::React,
             Arc::clone(&runner),
@@ -406,8 +384,8 @@ mod tests {
             Arc::clone(&tools),
             3,
         );
-        let store = Arc::new(SqliteSessionStore::new("sqlite::memory:").await.unwrap());
-        Agent::new(runner, tools, prompts, memory, store, strategy, false, None)
+        let store = Arc::new(SqliteSessionMemory::new("sqlite::memory:").await.unwrap());
+        Agent::new(runner, tools, prompts, store, strategy, false, None)
     }
 
     #[tokio::test]

@@ -106,15 +106,13 @@ pub async fn aether_invoke(
 mod tests {
     use super::*;
     use agentverse::{Config, LlmRunner, PromptRegistry};
-    use agentverse_memory::SimpleMemory;
-    use agentverse_session::SqliteSessionStore;
+    use agentverse_session::SqliteSessionMemory;
     use agentverse_strategy::{build, StrategyKind};
     use agentverse_tools::ToolRegistry;
     use axum::body::Body;
     use axum::http::Request;
     use axum::routing::{get, post};
     use axum::Router;
-    use tokio::sync::Mutex;
     use tower::ServiceExt;
 
     async fn make_agent() -> Arc<Agent> {
@@ -134,8 +132,6 @@ mod tests {
         );
         let tools = Arc::new(ToolRegistry::new());
         let prompts = Arc::new(PromptRegistry::new());
-        let memory: Arc<Mutex<dyn agentverse::Memory>> =
-            Arc::new(Mutex::new(SimpleMemory::new(50)));
         let strategy = build(
             StrategyKind::React,
             Arc::clone(&runner),
@@ -143,8 +139,8 @@ mod tests {
             Arc::clone(&tools),
             3,
         );
-        let store = Arc::new(SqliteSessionStore::new("sqlite::memory:").await.unwrap());
-        Agent::new(runner, tools, prompts, memory, store, strategy, false, None)
+        let store = Arc::new(SqliteSessionMemory::new("sqlite::memory:").await.unwrap());
+        Agent::new(runner, tools, prompts, store, strategy, false, None)
     }
 
     fn make_app(agent: Arc<Agent>) -> Router {

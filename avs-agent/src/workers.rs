@@ -1,5 +1,5 @@
-use agentverse::memory::{LongTermRecord, MemoryStore};
-use agentverse_session::SessionStore;
+use agentverse::memory::{LongtermMemory, LongtermRecord};
+use agentverse_session::SessionMemory;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -39,15 +39,15 @@ impl Default for CleanupConfig {
 }
 
 pub struct ConsolidationWorker {
-    store: Arc<dyn SessionStore>,
-    memory_store: Arc<dyn MemoryStore>,
+    store: Arc<dyn SessionMemory>,
+    memory_store: Arc<dyn LongtermMemory>,
     config: ConsolidationConfig,
 }
 
 impl ConsolidationWorker {
     pub fn new(
-        store: Arc<dyn SessionStore>,
-        memory_store: Arc<dyn MemoryStore>,
+        store: Arc<dyn SessionMemory>,
+        memory_store: Arc<dyn LongtermMemory>,
         config: ConsolidationConfig,
     ) -> Self {
         Self {
@@ -85,7 +85,7 @@ impl ConsolidationWorker {
             }
             for (seq, msg) in &msgs {
                 // TODO: replace with LLM summarizer once wired in
-                let record = LongTermRecord::now(msg.content.clone(), 0.5);
+                let record = LongtermRecord::now(msg.content.clone(), 0.5);
                 self.memory_store.write(&session.user_id, record).await?;
                 // Advance watermark after each successful write to prevent duplicate writes on retry
                 self.store.advance_watermark(session.id, *seq).await?;
@@ -96,12 +96,12 @@ impl ConsolidationWorker {
 }
 
 pub struct CleanupWorker {
-    store: Arc<dyn SessionStore>,
+    store: Arc<dyn SessionMemory>,
     config: CleanupConfig,
 }
 
 impl CleanupWorker {
-    pub fn new(store: Arc<dyn SessionStore>, config: CleanupConfig) -> Self {
+    pub fn new(store: Arc<dyn SessionMemory>, config: CleanupConfig) -> Self {
         Self { store, config }
     }
 

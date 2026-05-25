@@ -37,14 +37,14 @@ pub trait Memory: Send + Sync {
 }
 
 #[derive(Debug, Clone)]
-pub struct LongTermRecord {
+pub struct LongtermRecord {
     pub content: String,
     /// LLM-assigned or heuristic importance score, 0.0–1.0.
     pub importance: f32,
     pub created_at: DateTime<Utc>,
 }
 
-impl LongTermRecord {
+impl LongtermRecord {
     pub fn now(content: String, importance: f32) -> Self {
         debug_assert!(
             (0.0..=1.0).contains(&importance),
@@ -68,8 +68,8 @@ pub struct ScoredMemory {
 
 /// Layer 3 user-scoped long-term store. See also `LongTermBackend` for the lower-level embedding interface.
 #[async_trait]
-pub trait MemoryStore: Send + Sync {
-    async fn write(&self, user_id: &str, record: LongTermRecord) -> Result<(), MemoryError>;
+pub trait LongtermMemory: Send + Sync {
+    async fn write(&self, user_id: &str, record: LongtermRecord) -> Result<(), MemoryError>;
     async fn retrieve(
         &self,
         user_id: &str,
@@ -87,8 +87,8 @@ mod store_tests {
     struct NoopMemoryStore;
 
     #[async_trait]
-    impl MemoryStore for NoopMemoryStore {
-        async fn write(&self, _: &str, _: LongTermRecord) -> Result<(), MemoryError> {
+    impl LongtermMemory for NoopMemoryStore {
+        async fn write(&self, _: &str, _: LongtermRecord) -> Result<(), MemoryError> {
             Ok(())
         }
         async fn retrieve(
@@ -110,7 +110,7 @@ mod store_tests {
 
     #[tokio::test]
     async fn long_term_record_now_sets_fields() {
-        let r = LongTermRecord::now("hello".to_string(), 0.7);
+        let r = LongtermRecord::now("hello".to_string(), 0.7);
         assert_eq!(r.content, "hello");
         assert!((r.importance - 0.7).abs() < 1e-6);
     }
