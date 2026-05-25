@@ -1,351 +1,467 @@
 # AgentVerse
 
-AgentVerse is a lightweight Rust framework for building AI agents that are production-ready from day one — type-safe, async-native, and resilient by design. Agents reason through multi-step problems, call tools, maintain conversation context, and reach users wherever they are: Slack, GitHub, WhatsApp, or a plain HTTP endpoint. Swap between ReAct, Plan-and-Execute, and Hierarchical orchestration; connect any OpenAI-compatible, Anthropic, or Gemini model; tune costs with built-in prompt cache optimization and flexible memory management; and compose exactly the capabilities you need from a workspace of focused, independent crates.
+AgentVerse is a Rust workspace for building async AI agents. It separates the core LLM runner from session management, orchestration strategies, tools, memory backends, platform integrations, and the HTTP server so agents can run as examples, embedded library code, connector-driven bots, or managed HTTP services.
+
+Current server mode is HTTP-first. Agents can run standalone, expose HTTP APIs, and optionally self-register with an Aether HTTP registry. The old stdio and Unix-socket adapter stories are deprecated and are not part of the current server path.
+
+## What Is Implemented
+
+- **Stateless LLM runner**: `agentverse::LlmRunner` renders prompts and calls model providers through `ConnectionManager`.
+- **Multi-user sessions**: `agentverse-agent::Agent` composes `LlmRunner` with `SessionManager` for durable session storage.
+- **HTTP server**: `agentverse-server` exposes health, readiness, stateless invoke, Aether invoke, and session routes.
+- **Aether HTTP registry client**: `avs-server/src/aether_client.rs` registers and deregisters an HTTP agent when `AETHER_REGISTRY_URL` is set.
+- **Agent-owned integrations**: `IntegrationRuntime` reads connector config, starts Slack/GitHub/WhatsApp or console connectors, receives events, calls a handler, and sends responses.
+- **Strategies and tools**: ReAct, Plan-and-Execute, hierarchical planning, async `ToolRegistry`, built-in tools, and MCP adapters are available to examples and library users.
+
+Important current limitation: the HTTP server builds a `ToolRegistry`, but `/invoke` and `/aether/invoke` currently call `LlmRunner` directly. Tool-using strategies are available in the strategy crates and examples, but are not yet the server invocation path.
 
 ## Quick Start
 
 ### Prerequisites
 
-- **Rust 1.75+** — `rustup install stable`
-- **LLM API** — any OpenAI-compatible endpoint:
-  - **OpenAI API** — get a key from [platform.openai.com](https://platform.openai.com)
-  - **Local LLM** — [llama.cpp](https://github.com/ggerganov/llama.cpp), [Ollama](https://ollama.ai), or similar
+- Rust 1.75+
+- An OpenAI-compatible model endpoint, Anthropic API key, or Gemini API key
+- `protobuf-compiler` for CI-equivalent builds on some platforms
 
 ### Run an Example Agent
 
-The fastest way to try AgentVerse is to run one of the bundled examples. They work with any OpenAI-compatible endpoint (OpenAI API, llama.cpp, Ollama, vLLM, etc.).
+Examples use the strategy crates directly and are the fastest way to try tool-using agents.
 
 ```bash
-MODEL_BASE_URL=http://localhost:9090/v1 MODEL_NAME=your-model cargo run -p example-hello-agent
-# or with OpenAI
-MODEL_BASE_URL=https://api.openai.com/v1 MODEL_API_KEY=sk-xxx MODEL_NAME=gpt-4 cargo run -p example-hello-agent
+# Local OpenAI-compatible endpoint
+MODEL_BASE_URL=http://localhost:9090/v1 \
+MODEL_NAME=your-model \
+cargo run -p example-hello-agent
+
+# OpenAI-compatible hosted endpoint
+MODEL_BASE_URL=https://api.openai.com/v1 \
+MODEL_API_KEY=sk-xxx \
+MODEL_NAME=gpt-4o \
+cargo run -p example-hello-agent
 ```
 
-All examples call `avs_logging::init()` at startup; set `RUST_LOG=debug` to see structured logs.
+Other OpenAI-compatible endpoints usually work by changing `MODEL_BASE_URL`, for example Ollama, llama.cpp, vLLM, LM Studio, Groq, or Together AI.
 
-### Run the HTTP Server (Optional)
+### Run the HTTP Server
 
-The HTTP server exposes an agent as an API — useful for web frontends, mobile apps, or shared infrastructure.
+The `agentverse-server` package builds a binary named `agentverse`.
 
 ```bash
 cargo build -p agentverse-server
-
-# Using OpenAI API
-MODEL_BASE_URL=https://api.openai.com MODEL_API_KEY=sk-xxx \
-  cargo run -p agentverse-server
-
-# Using a local LLM (llama.cpp on port 9090, server on 8080)
-MODEL_BASE_URL=http://127.0.0.1:9090 \
-  cargo run -p agentverse-server
-# (MODEL_API_KEY is optional for local LLMs — empty key is accepted)
 ```
 
-Test it:
+Run against a local OpenAI-compatible endpoint:
 
 ```bash
-# Health check
+MODEL_BASE_URL=http://127.0.0.1:9090/v1 \
+MODEL_API_KEY=local-dummy-key \
+MODEL_NAME=your-model \
+cargo run -p agentverse-server
+```
+
+Run against OpenAI:
+
+```bash
+MODEL_BASE_URL=https://api.openai.com/v1 \
+MODEL_API_KEY=sk-xxx \
+MODEL_NAME=gpt-4o \
+cargo run -p agentverse-server
+```
+
+The server listens on `127.0.0.1:8080` by default.
+
+```bash
 curl http://localhost:8080/health
-
-# Invoke the agent
-curl -X POST http://localhost:8080/invoke \
-  -H "Content-Type: application/json" \
-  -d '{"user_id": "user1", "message": "Hello, agent!"}'
+curl http://localhost:8080/ready
 ```
 
-> **Other OpenAI-compatible services?** Set `MODEL_BASE_URL` to your endpoint:
-> - **Ollama**: `http://127.0.0.1:11434/v1`
-> - **vLLM**: `http://localhost:8000/v1`
-> - **LM Studio**: `http://localhost:1234/v1`
-> - **Groq**: `https://api.groq.com/openai/v1`
-> - **Together AI**: `https://api.together.xyz/v1`
-
-### Run as an Aether Node (Stdio Adapter)
-
-The `agentverse` binary can be driven by [Aether](https://github.com/sirius-zuo/aether) — an independent multi-agent orchestration framework — over a newline-delimited JSON Envelope protocol on stdin/stdout.
-
-```bash
-# Build the binary
-cargo build -p agentverse-server
-
-# Run in stdio adapter mode (Aether manages process lifecycle)
-AGENTVERSE_BIN=/path/to/agentverse
-MODEL_API_KEY=sk-xxx MODEL_BASE_URL=http://localhost:9090/v1 MODEL_NAME=my-model \
-  $AGENTVERSE_BIN --stdio
-```
-
-In `--stdio` mode the binary:
-- Reads `Invoke` / `Ping` Envelopes from stdin (one JSON object per line)
-- Responds with `Result` / `Pong` / `Error` Envelopes on stdout
-- Exits cleanly on EOF (Aether drops stdin when done)
-- Writes all logs to **stderr** so stdout stays clean for the protocol
-
-You never invoke `--stdio` manually — Aether spawns the process automatically via `StdioFactory`. See the [Aether project](https://github.com/sirius-zuo/aether) and its `examples/agentverse-pipeline` for a working end-to-end example.
-
-## Multi-LLM Provider Support
-
-AgentVerse supports multiple LLM providers through a unified interface. The `ProviderConfig` enum allows you to switch providers without changing agent code.
-
-### Supported Providers
-
-| Provider | Use Case | Example Model |
-|---|---|---|
-| **OpenAI** | API-compatible with OpenAI's chat completions (works with llama.cpp, Ollama, vLLM, etc.) | `gpt-4`, `phi3-mini`, `llama-3` |
-| **Anthropic** | Claude models via Anthropic's API | `claude-3-opus`, `claude-3-sonnet` |
-| **Gemini** | Google's Gemini models via Gemini API | `gemini-pro`, `gemini-1.5-flash` |
-
-### Configuration File
-
-```yaml
-# config.yaml
-host: "0.0.0.0"
-port: 8080
-agent:
-  provider:
-    type: openai  # or "anthropic" or "gemini"
-    model_name: "gpt-4"
-    api_key: "sk-xxx"
-    base_url: "http://127.0.0.1:9090/v1"  # only for OpenAI
-  max_iterations: 10
-guardrails:
-  enabled: true
-  max_requests_per_minute: 60
-```
-
-#### Provider Examples
-
-**OpenAI** (or any OpenAI-compatible endpoint):
-```yaml
-provider:
-  type: openai
-  model_name: "gpt-4"
-  api_key: "sk-xxx"
-  base_url: "http://127.0.0.1:9090/v1"  # llama.cpp, Ollama, etc.
-```
-
-**Anthropic**:
-```yaml
-provider:
-  type: anthropic
-  model_name: "claude-3-sonnet-20240229"
-  api_key: "sk-ant-xxx"
-```
-
-**Gemini**:
-```yaml
-provider:
-  type: gemini
-  model_name: "gemini-pro"
-  api_key: "your-gemini-api-key"
-```
-
-> **Note:** The `base_url` field is only required for OpenAI-compatible providers (e.g., llama.cpp, Ollama). Anthropic and Gemini use fixed endpoints.
-
-## Environment Variables
-
-| Variable | Default | Description |
-|---|---|---|
-| `MODEL_BASE_URL` | *(none)* | OpenAI-compatible LLM endpoint (e.g. `https://api.openai.com/v1`, `http://127.0.0.1:9090/v1`) |
-| `MODEL_API_KEY` | *(empty)* | API key (required for OpenAI/Anthropic/Gemini, optional for local LLMs) |
-| `MODEL_NAME` | *(inferred)* | Model identifier (e.g. `gpt-4`, `phi3-mini`) |
-| `API_KEY` | *(empty)* | Server auth token (Bearer token for `/invoke` on port 8080) |
-| `CONFIG_PATH` | *(none)* | Path to YAML config file |
-| `RUST_LOG` | `info` | Log level filter (e.g. `debug`, `agentverse=trace`) |
-| `LOG_FORMAT` | *(text)* | Set to `json` for structured JSON log output |
-
-When running as an Aether node, pass these same variables in `StdioFactory::envs` — the binary reads them at startup regardless of transport mode.
-
-Run with: `CONFIG_PATH=config.yaml cargo run -p agentverse-server`
+`MODEL_API_KEY` must be non-empty for the server because `LlmRunner::from_config` validates provider config. For local endpoints that ignore auth, use a harmless dummy value.
 
 ## Server API
 
 ### `GET /health`
 
-Returns server health and model info.
+Returns process health and configured model name.
 
 ```json
-{"status": "healthy", "model": "http://localhost:9090"}
+{"status":"healthy","model":"gpt-4o"}
 ```
 
 ### `GET /ready`
 
-Returns readiness status.
+Returns readiness.
 
 ```json
-{"status": "ready"}
+{"status":"ready"}
 ```
 
 ### `POST /invoke`
 
-Invoke the agent with a user message.
+Stateless single-message invocation. This route does not persist conversation history.
 
 ```bash
 curl -X POST http://localhost:8080/invoke \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer my-secret-key" \
-  -d '{"user_id": "user1", "message": "Hello, agent!"}'
+  -d '{"user_id":"user1","message":"Hello, agent!"}'
 ```
 
 Response:
 
 ```json
-{"message": "Hello! How can I help you?", "user_id": "user1"}
+{"message":"Hello! How can I help you?","user_id":"user1"}
 ```
 
-## Crates
+### Session Routes
 
-| Crate | Description |
-|---|---|
-| `agentverse` | Core framework — Agent, Config, ToolResult, Memory, PromptRegistry |
-| `agentverse-logging` | Logging init — `avs_logging::init()` wires `tracing-subscriber` with `RUST_LOG` / `LOG_FORMAT` |
-| `agentverse-react` | ReAct strategy loop |
-| `agentverse-plan` | Plan-and-Execute + Hierarchical strategies |
-| `agentverse-router` | Dynamic strategy routing |
-| `agentverse-memory` | Layered memory system (short/long term) |
-| `agentverse-memory-lancedb` | LanceDB-backed long-term memory |
-| `agentverse-memory-pgvector` | pgvector-backed long-term memory |
-| `agentverse-tools` | Built-in tools (Calculator, DateTime, FileSearch, HttpClient, ShellTool, WebSearch) + async ToolRegistry |
-| `agentverse-mcp` | MCP client for external tool servers |
-| `agentverse-guardrails` | Security layer (prompt/output/rate limiting) |
-| `agentverse-integration` | IntegrationRuntime with Slack, console connectors |
-| `agentverse-server` | Standalone HTTP server |
+Sessions persist per-user conversation history in the configured `SessionStore`. The server currently uses SQLite by default.
 
-## Examples
-
-| Example | Strategy | Tools | Description |
-|---|---|---|---|
-| `hello-agent` | ReAct | Calculator, DateTime | Interactive REPL — best starting point |
-| `react-calculator` | ReAct | Calculator | Multi-step ReAct loop — model breaks arithmetic into sequential tool calls |
-| `web-search-agent` | Plan-and-Execute | WebSearch | Takes `<topic> <n>` CLI args; fetches top N DuckDuckGo results and summarises them |
-| `anthropic-react` | ReAct | Calculator | Anthropic Claude with prompt caching; shows cache_write/cache_read token split |
-| `code-review-agent` | Hierarchical | FileSearch, ShellTool | Decompose → plan per sub-goal → execute → synthesize |
-| `slack-hr-assistant` | Plan-and-Execute | — | Slack/console bot driven by `IntegrationRuntime` and `agent.toml` config |
+Create a session:
 
 ```bash
-# Local LLM (llama.cpp / Ollama)
-MODEL_BASE_URL=http://localhost:9090/v1 MODEL_NAME=your-model \
-  cargo run -p example-hello-agent
-
-# Web search (takes topic and result count as positional args)
-MODEL_BASE_URL=http://localhost:9090/v1 MODEL_NAME=your-model \
-  cargo run -p example-web-search-agent -- "rust async" 3
-
-# Anthropic Claude
-MODEL_API_KEY=sk-ant-... cargo run -p example-anthropic-react
+curl -X POST http://localhost:8080/sessions \
+  -H "Content-Type: application/json" \
+  -d '{"user_id":"alice"}'
 ```
 
-Each example has a `prompts/` directory with `system.j2` (identity), strategy template (e.g. `react.j2`, `hierarchical.j2`), and optional few-shot examples in `.toml` files. See [Prompt Templates](#prompt-templates) below.
+Response:
+
+```json
+{"session_id":"00000000-0000-0000-0000-000000000000"}
+```
+
+Send a message in a session:
+
+```bash
+curl -X POST http://localhost:8080/sessions/<session_id>/messages \
+  -H "Content-Type: application/json" \
+  -d '{"user_id":"alice","message":"Remember that my favorite color is green."}'
+```
+
+Response:
+
+```json
+{"session_id":"00000000-0000-0000-0000-000000000000","reply":"..."}
+```
+
+Get session metadata:
+
+```bash
+curl 'http://localhost:8080/sessions/<session_id>?user_id=alice'
+```
+
+End a session:
+
+```bash
+curl -X DELETE http://localhost:8080/sessions/<session_id> \
+  -H "Content-Type: application/json" \
+  -d '{"user_id":"alice"}'
+```
+
+Session ownership is checked by `Agent::assert_owner(user_id, session_id)` before any session access. Authentication, if enabled, is still a server-wide bearer token and does not yet bind request identity to `user_id`.
+
+### `POST /aether/invoke`
+
+Aether-compatible HTTP invoke route using the local `Envelope` JSON shape.
+
+```bash
+curl -X POST http://localhost:8080/aether/invoke \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id":"00000000-0000-0000-0000-000000000000",
+    "kind":"invoke",
+    "payload":{"input":"Hello from Aether"},
+    "metadata":{}
+  }'
+```
+
+Response:
+
+```json
+{
+  "id":"00000000-0000-0000-0000-000000000000",
+  "kind":"result",
+  "payload":{"output":"..."},
+  "metadata":{}
+}
+```
+
+## Configuration
+
+You can configure the server with environment variables or `CONFIG_PATH`.
+
+### Environment Variables
+
+| Variable | Default | Description |
+|---|---:|---|
+| `MODEL_BASE_URL` | `http://localhost:9090/v1` | OpenAI-compatible base URL for server default config |
+| `MODEL_API_KEY` | empty | Provider API key; must be non-empty for the server |
+| `MODEL_NAME` | `gpt-4` | Model name for server default config |
+| `API_KEY` | unset | Optional bearer token required by all server routes when set |
+| `CONFIG_PATH` | unset | YAML config file path |
+| `SESSION_STORE` | `sqlite` | Session store backend: `sqlite` or `postgres` |
+| `SESSION_DB_URL` | `sqlite:sessions.db` | Database URL for the chosen session store |
+| `AETHER_REGISTRY_URL` | unset | Optional Aether HTTP registry base URL |
+| `AGENT_NAME` | `agentverse-agent` | Logical name used during Aether registration |
+| `RUST_LOG` | `info` | Tracing level filter |
+| `LOG_FORMAT` | text | Set to `json` for JSON logs |
+
+### YAML Config
+
+```yaml
+host: "127.0.0.1"
+port: 8080
+agent_name: "agentverse-agent"
+aether_registry_url: null
+agent:
+  provider:
+    type: openai
+    model_name: "gpt-4o"
+    api_key: "sk-xxx"
+    base_url: "https://api.openai.com/v1"
+  max_iterations: 10
+guardrails:
+  enabled: true
+  max_requests_per_minute: 60
+session:
+  store: "sqlite"
+  database_url: "sqlite:sessions.db"
+```
+
+For Postgres session storage:
+
+```yaml
+session:
+  store: "postgres"
+  database_url: "postgres://user:password@localhost:5432/agentverse"
+```
+
+Run with:
+
+```bash
+CONFIG_PATH=config.yaml cargo run -p agentverse-server
+```
+
+## Aether HTTP Registry
+
+AgentVerse no longer uses stdio or Unix sockets for the current Aether management path. When `AETHER_REGISTRY_URL` is set, the server:
+
+1. Starts its normal HTTP API.
+2. Posts `name`, `http_url`, and `capabilities` to `{AETHER_REGISTRY_URL}/registry/agents`.
+3. Stores the returned `instance_id` in memory.
+4. Deregisters best-effort on SIGTERM with `DELETE /registry/instances/{instance_id}`.
+
+If the registry is unreachable, the server logs a warning and continues as a standalone HTTP agent.
+
+```bash
+AETHER_REGISTRY_URL=http://localhost:7000 \
+AGENT_NAME=research-agent \
+MODEL_BASE_URL=http://127.0.0.1:9090/v1 \
+MODEL_API_KEY=local-dummy-key \
+MODEL_NAME=your-model \
+cargo run -p agentverse-server
+```
+
+Aether is a lifecycle coordinator, not the business-data path. It discovers and health-checks agents over HTTP; agent payloads are handled by the agent's own HTTP or integration surfaces.
+
+## Multi-User Sessions
+
+`agentverse-agent` owns the top-level `Agent`. `agentverse-session` does not contain an agent; it provides session data infrastructure only.
+
+```text
+Entry point
+  -> agentverse_agent::Agent
+    -> agentverse_session::SessionManager
+      -> Arc<dyn SessionStore>
+    -> LlmRunner
+      -> ConnectionManager
+      -> ModelProvider
+```
+
+The session agent flow is:
+
+1. `assert_owner(user_id, session_id)` — verify the user owns the session.
+2. Load existing messages for `session_id`.
+3. Add the new user message in memory.
+4. Call `LlmRunner::invoke(messages)`.
+5. Persist both messages atomically via `append_turn` after a successful LLM response.
+6. Return the assistant text.
+
+Available stores:
+
+- `SqliteSessionStore` in `agentverse-session`, used by the server by default.
+- `PostgresSessionStore` in `agentverse-memory-pgvector`, for production use.
+
+Ownership checks are performed by `Agent` through `SessionManager::assert_owner(user_id, session_id)` before any store access. The store itself operates by `session_id` only.
+
+## Integrations
+
+`agentverse-integration` is owned by the agent. It does not drive the agent from outside. The agent creates an `IntegrationRuntime`, provides a handler, and the runtime handles connector I/O.
+
+```rust
+use agentverse_integration::{Event, IntegrationRuntime};
+
+let runtime = IntegrationRuntime::from_config("agent.toml").await?;
+
+runtime
+    .run(|event: Event| async move {
+        let answer = handle_event_text(event.text.clone()).await?;
+        Ok(Event { text: answer, ..event })
+    })
+    .await?;
+```
+
+If `agent.toml` is missing, `IntegrationRuntime::from_config` falls back to `ConsoleConnector`.
+
+Example `agent.toml`:
+
+```toml
+[integration]
+input = "slack"
+outputs = ["slack"]
+
+[connector.slack]
+port = 3000
+bot_token_env = "SLACK_BOT_TOKEN"
+signing_secret_env = "SLACK_SIGNING_SECRET"
+
+[connector.github]
+port = 3001
+token_env = "GITHUB_TOKEN"
+webhook_secret_env = "GITHUB_WEBHOOK_SECRET"
+```
+
+Supported connector implementations:
+
+- Console
+- Slack
+- GitHub
+- WhatsApp
+
+Connector secrets are environment variable names in config, not secret values.
+
+## Strategies and Tools
+
+Strategies:
+
+- `agentverse-react`: ReAct loop
+- `agentverse-plan`: Plan-and-Execute and hierarchical planning
+- `agentverse-router`: dynamic strategy routing
+
+Tools:
+
+- Calculator
+- DateTime
+- FileSearch
+- HttpClient
+- ShellTool
+- WebSearch
+- MCP tool adapter via `agentverse-mcp`
+
+`ToolRegistry` stores async tools and supports category tags. Example agents wire tools directly into strategies. The HTTP server's direct invocation routes do not yet execute strategy loops or tool calls.
 
 ## Prompt Templates
 
-AgentVerse uses a three-layer prompt design that maximises LLM prompt cache reuse across multi-turn conversations.
+AgentVerse uses `PromptRegistry` to load embedded defaults and optional `.j2` templates from a prompts directory.
 
-### Template roles
+Common example layout:
 
-| File | Purpose | Cache behaviour |
-|---|---|---|
-| `system.j2` | Agent identity + rules | Cached in system block — paid once per session |
-| `react.j2` | Tool descriptions + format instructions + few-shot examples | Inserted as the first user message once; sits in the stable prefix captured by the penultimate-message cache breakpoint |
-| Conversation messages | Actual Thought / Action / Tool Result / Answer exchanges | Volatile; only the current message is uncharged |
-
-Because `react.j2` never changes within a session, it is effectively free after the first request — the prefix cache serves it on every subsequent turn. `system.j2` is cached independently via the system-block breakpoint.
-
-### Directory layout
-
-Each example ships a `prompts/` directory. The layout depends on the strategy:
-
-**ReAct** (`hello-agent`, `react-calculator`, `web-search-agent`, `anthropic-react`):
-```
+```text
 prompts/
-  system.j2              # Identity + rules (no tools here)
-  react.j2               # Tools + format + {% if examples %}...{% endif %}
-  react_examples.toml    # Few-shot examples injected into react.j2
-  examples.toml          # General examples (available to other strategies)
-```
-
-**Hierarchical** (`code-review-agent`):
-```
-prompts/
-  system.j2                   # Identity + rules
-  hierarchical.j2             # Decomposition prompt → "strategies.hierarchical.decompose"
-  hierarchical_examples.toml  # input / output pairs showing decomposition
+  system.j2
+  react.j2
+  react_examples.toml
   examples.toml
 ```
 
-**Plan-and-Execute** (`slack-hr-assistant`):
-```
-prompts/
-  system.j2             # Identity + rules
-  plan_and_execute.j2   # Planning prompt → "strategies.plan_and_execute"
-  plan_examples.toml    # input / output pairs showing planning
-  examples.toml
-```
+Strategy template names are normalized by file name:
 
-### Wiring it up
+- `react.j2` -> `react` / `strategies.react`
+- `plan_and_execute.j2` -> `strategies.plan_and_execute`
+- `hierarchical.j2` -> `strategies.hierarchical.decompose`
+
+Example:
 
 ```rust
 use agentverse::{PromptConfig, PromptRegistry};
 
-let registry = Arc::new(
-    PromptRegistry::from_config(&PromptConfig {
-        prompts_dir: Some(
-            concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string(),
-        ),
-        ..Default::default()
-    })
-    .expect("prompt config"),
-);
+let registry = PromptRegistry::from_config(&PromptConfig {
+    prompts_dir: Some("examples/hello-agent/prompts".to_string()),
+    ..Default::default()
+})?;
 ```
 
-### Example files
-
-All example files use the `[[example]]` TOML array-of-tables syntax:
+Example `.toml` files use array-of-table entries:
 
 ```toml
-# prompts/react_examples.toml
 [[example]]
 input = "What is 6 * 7?"
-output = "Thought: I need to multiply.\nAction: calculator\nAction Input: {\"operation\": \"multiply\", \"a\": 6, \"b\": 7}"
+output = "Thought: I should multiply.\nAction: calculator\nAction Input: {\"operation\":\"multiply\",\"a\":6,\"b\":7}"
 ```
 
-The file stem becomes the example-set name (`react_examples.toml` → `"react_examples"`). The `react.j2` template receives this set automatically via `{{ examples }}`.
+## Crates
 
-## Documentation
+| Crate | Package | Purpose |
+|---|---|---|
+| `avs-core` | `agentverse` | Core config, errors, prompts, model providers, `LlmRunner`, memory and tool traits |
+| `avs-agent` | `agentverse-agent` | Top-level multi-user agent orchestrator that composes `LlmRunner` and `SessionManager` |
+| `avs-session` | `agentverse-session` | Session model, session manager, store trait, and SQLite session store |
+| `avs-server` | `agentverse-server` | HTTP server, auth middleware, session routes, Aether registry client |
+| `avs-integration` | `agentverse-integration` | Agent-owned connector runtime for console, Slack, GitHub, WhatsApp |
+| `avs-react` | `agentverse-react` | ReAct strategy loop |
+| `avs-plan` | `agentverse-plan` | Plan-and-Execute and hierarchical strategies |
+| `avs-router` | `agentverse-router` | Strategy router |
+| `avs-tools` | `agentverse-tools` | Built-in tools and async `ToolRegistry` |
+| `avs-mcp` | `agentverse-mcp` | MCP client and tool adapter |
+| `avs-memory` | `agentverse-memory` | Memory helpers and long-term backend traits |
+| `avs-memory-lancedb` | `agentverse-memory-lancedb` | LanceDB long-term memory backend |
+| `avs-memory-pgvector` | `agentverse-memory-pgvector` | pgvector memory backend and Postgres session store |
+| `avs-guardrails` | `agentverse-guardrails` | Prompt, output, action, and rate-limit guardrails |
+| `avs-logging` | `agentverse-logging` | Tracing subscriber initialization |
 
-- **[Developer Guide](DEVELOPMENT.md)** — Complete guide for developing, testing, and deploying agents with AgentVerse
-  - Architecture overview
-  - Creating custom agents
-  - Writing tools
-  - Prompt engineering with templates
-  - Testing strategies
-  - Deploying to production
-  - Adding long-term memory
-  - Integrating external systems (Slack, Webhooks)
-  - Debugging & observability
+## Examples
+
+| Package | Description |
+|---|---|
+| `example-hello-agent` | Interactive ReAct REPL with Calculator and DateTime |
+| `example-react-calculator` | ReAct calculator demonstration |
+| `example-web-search-agent` | Plan-and-Execute web search summary |
+| `example-anthropic-react` | Anthropic ReAct example with prompt-cache usage stats |
+| `example-code-review-agent` | Hierarchical code-review agent with file and shell tools |
+| `example-slack-hr-assistant` | IntegrationRuntime-backed Slack/console assistant |
+
+Run examples with `cargo run -p <package>`.
+
+## Development
+
+```bash
+cargo fmt --all --check
+cargo clippy --all -- -D warnings
+cargo test --all
+cargo check --examples
+```
+
+See [DEVELOPMENT.md](DEVELOPMENT.md) for deeper implementation notes.
 
 ## Project Structure
 
-```
+```text
 AgentVerse/
-├── avs-core/              # Core: Agent, Config, PromptRegistry, Memory, Tool traits
-├── avs-logging/           # Logging init: avs_logging::init() (RUST_LOG / LOG_FORMAT)
-├── avs-react/             # ReAct strategy loop
-├── avs-plan/              # Plan-and-Execute + Hierarchical strategies
-├── avs-router/            # Dynamic strategy routing
-├── avs-tools/             # Built-in tools (Calculator, DateTime, FileSearch, HttpClient, WebSearch, ShellTool)
-├── avs-mcp/               # MCP client for external tool servers
-├── avs-guardrails/        # Security: prompt injection, output filtering, rate limiting
-├── avs-integration/       # IntegrationRuntime with Slack, console connectors
-├── avs-memory/            # Memory traits (Memory, ShortTermMemory)
-├── avs-memory-lancedb/    # LanceDB-backed long-term memory
-├── avs-memory-pgvector/   # pgvector-backed long-term memory
-├── avs-server/            # Standalone HTTP server
-└── examples/              # Example agents
-    ├── hello-agent/       # Interactive REPL with Calculator + DateTime
-    ├── react-calculator/  # Multi-step ReAct loop with Calculator
-    ├── web-search-agent/  # Plan-and-Execute with WebSearch (CLI args)
-    ├── anthropic-react/   # Anthropic Claude with prompt caching
-    ├── code-review-agent/ # Hierarchical planning with FileSearch + ShellTool
-    └── slack-hr-assistant/ # IntegrationRuntime Slack/console bot
+|-- avs-core/
+|-- avs-session/
+|-- avs-server/
+|-- avs-integration/
+|-- avs-react/
+|-- avs-plan/
+|-- avs-router/
+|-- avs-tools/
+|-- avs-mcp/
+|-- avs-memory/
+|-- avs-memory-lancedb/
+|-- avs-memory-pgvector/
+|-- avs-guardrails/
+|-- avs-logging/
+|-- examples/
+`-- docs/superpowers/specs/
 ```
 
 ## License
