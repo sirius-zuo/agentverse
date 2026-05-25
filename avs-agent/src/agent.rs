@@ -109,9 +109,11 @@ impl Agent {
                 }
             }
         }
-        // Miss or TTL expired: rehydrate from Layer 2
+        // Miss or TTL expired: sweep expired entries, then rehydrate from Layer 2
         let history = self.sessions.load_messages(session_id).await?;
         let mut cache = self.working_buffers.lock().await;
+        let ttl = self.buffer_ttl;
+        cache.retain(|_, buf| buf.last_used.elapsed() <= ttl);
         cache.insert(
             key,
             CachedBuffer {
@@ -135,6 +137,16 @@ impl Agent {
             buf.messages.push(user_msg);
             buf.messages.push(assistant_msg);
             buf.last_used = Instant::now();
+        } else {
+            // Key was TTL-evicted during the LLM call; insert a minimal buffer
+            // with just this turn so the next invoke avoids a cold DB read.
+            cache.insert(
+                key,
+                CachedBuffer {
+                    messages: vec![user_msg, assistant_msg],
+                    last_used: Instant::now(),
+                },
+            );
         }
     }
 
