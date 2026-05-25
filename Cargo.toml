@@ -14,6 +14,7 @@ members = [
     "avs-tools",
     "avs-mcp",
     "avs-server",
+    "avs-strategy",
     "examples/hello-agent",
     "examples/slack-hr-assistant",
     "examples/react-calculator",

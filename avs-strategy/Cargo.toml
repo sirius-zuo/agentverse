@@ -1,0 +1,16 @@
+[package]
+name = "agentverse-strategy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+agentverse = { path = "../avs-core" }
+agentverse-react = { path = "../avs-react" }
+agentverse-plan = { path = "../avs-plan" }
+agentverse-memory = { path = "../avs-memory" }
+agentverse-tools = { path = "../avs-tools" }
+tokio = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }
