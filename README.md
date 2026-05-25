@@ -1,19 +1,32 @@
 # AgentVerse
 
-AgentVerse is a Rust workspace for building async AI agents. It separates the core LLM runner from session management, orchestration strategies, tools, memory backends, platform integrations, and the HTTP server so agents can run as examples, embedded library code, connector-driven bots, or managed HTTP services.
+AgentVerse is a Rust workspace for building async AI agents. It separates the core LLM runner from session management, orchestration strategies, tools, memory backends, and platform integrations. All LLM access goes through a single `Agent` entry point; the HTTP server is an optional sidecar that the agent can spawn itself.
 
-Current server mode is HTTP-first. Agents can run standalone, expose HTTP APIs, and optionally self-register with an Aether HTTP registry. The old stdio and Unix-socket adapter stories are deprecated and are not part of the current server path.
+## Architecture
+
+```
+your binary
+  └── agentverse_agent::Agent
+        ├── agentverse_strategy::build() → Arc<dyn RunStrategy>
+        │     ├── ReActStrategy  (avs-react)
+        │     ├── PlanStrategy   (avs-plan)
+        │     └── HierarchicalStrategy (avs-plan)
+        ├── LlmRunner  (avs-core)
+        ├── ToolRegistry  (avs-tools)
+        ├── SessionManager  (avs-session)
+        └── HTTP server (avs-agent `http` feature, optional)
+```
+
+`Agent` is the only way to invoke the LLM. You choose a strategy with `agentverse_strategy::build(StrategyKind::*)` and pass it to `Agent::new`. The agent handles session history, prompt assembly, and optional HTTP serving.
 
 ## What Is Implemented
 
-- **Stateless LLM runner**: `agentverse::LlmRunner` renders prompts and calls model providers through `ConnectionManager`.
-- **Multi-user sessions**: `agentverse-agent::Agent` composes `LlmRunner` with `SessionManager` for durable session storage.
-- **HTTP server**: `agentverse-server` exposes health, readiness, stateless invoke, Aether invoke, and session routes.
-- **Aether HTTP registry client**: `avs-server/src/aether_client.rs` registers and deregisters an HTTP agent when `AETHER_REGISTRY_URL` is set.
-- **Agent-owned integrations**: `IntegrationRuntime` reads connector config, starts Slack/GitHub/WhatsApp or console connectors, receives events, calls a handler, and sends responses.
-- **Strategies and tools**: ReAct, Plan-and-Execute, hierarchical planning, async `ToolRegistry`, built-in tools, and MCP adapters are available to examples and library users.
-
-Important current limitation: the HTTP server builds a `ToolRegistry`, but `/invoke` and `/aether/invoke` currently call `LlmRunner` directly. Tool-using strategies are available in the strategy crates and examples, but are not yet the server invocation path.
+- **Agent**: `agentverse-agent::Agent` is the single LLM access point. Composes `LlmRunner`, `StrategyKind`, and `SessionManager`.
+- **Strategies**: ReAct, Plan-and-Execute, Hierarchical planning. Selected at construction via `agentverse-strategy::build`.
+- **Multi-user sessions**: `Agent` routes through `SessionManager` for durable per-user conversation history.
+- **HTTP sidecar**: `Agent::new(..., enable_http_server: true)` spawns an HTTP server as a background task. The agent can run without it; the server cannot run without the agent.
+- **Agent-owned integrations**: `IntegrationRuntime` reads connector config, starts Slack/GitHub/WhatsApp or console connectors, calls an agent handler, and sends responses.
+- **Strategies and tools**: `ToolRegistry`, built-in tools, and MCP adapters are wired into strategies at agent construction.
 
 ## Quick Start
 
@@ -21,75 +34,51 @@ Important current limitation: the HTTP server builds a `ToolRegistry`, but `/inv
 
 - Rust 1.75+
 - An OpenAI-compatible model endpoint, Anthropic API key, or Gemini API key
-- `protobuf-compiler` for CI-equivalent builds on some platforms
 
 ### Run an Example Agent
 
-Examples use the strategy crates directly and are the fastest way to try tool-using agents.
-
 ```bash
-# Local OpenAI-compatible endpoint
+# Local OpenAI-compatible endpoint (no API key required)
 MODEL_BASE_URL=http://localhost:9090/v1 \
 MODEL_NAME=your-model \
 cargo run -p example-hello-agent
 
-# OpenAI-compatible hosted endpoint
+# Hosted OpenAI endpoint
 MODEL_BASE_URL=https://api.openai.com/v1 \
 MODEL_API_KEY=sk-xxx \
 MODEL_NAME=gpt-4o \
 cargo run -p example-hello-agent
 ```
 
-Other OpenAI-compatible endpoints usually work by changing `MODEL_BASE_URL`, for example Ollama, llama.cpp, vLLM, LM Studio, Groq, or Together AI.
+Other OpenAI-compatible endpoints work by changing `MODEL_BASE_URL`: Ollama, llama.cpp, vLLM, LM Studio, Groq, Together AI.
 
-### Run the HTTP Server
+### Run an HTTP Agent
 
-The `agentverse-server` package builds a binary named `agentverse`.
-
-```bash
-cargo build -p agentverse-server
-```
-
-Run against a local OpenAI-compatible endpoint:
+`example-http-agent` builds an `Agent` with `enable_http_server=true` and keeps the process alive:
 
 ```bash
-MODEL_BASE_URL=http://127.0.0.1:9090/v1 \
-MODEL_API_KEY=local-dummy-key \
-MODEL_NAME=your-model \
-cargo run -p agentverse-server
+ANTHROPIC_API_KEY=sk-ant-... \
+MODEL_NAME=claude-sonnet-4-6 \
+HOST=0.0.0.0 PORT=3000 \
+cargo run -p example-http-agent
 ```
 
-Run against OpenAI:
+The agent listens on `0.0.0.0:3000` by default.
 
 ```bash
-MODEL_BASE_URL=https://api.openai.com/v1 \
-MODEL_API_KEY=sk-xxx \
-MODEL_NAME=gpt-4o \
-cargo run -p agentverse-server
+curl http://localhost:3000/health
+curl http://localhost:3000/ready
 ```
 
-The server listens on `127.0.0.1:8080` by default.
-
-```bash
-curl http://localhost:8080/health
-curl http://localhost:8080/ready
-```
-
-`MODEL_API_KEY` must be non-empty for the server because `LlmRunner::from_config` validates provider config. For local endpoints that ignore auth, use a harmless dummy value.
-
-## Server API
+## HTTP API
 
 ### `GET /health`
 
-Returns process health and configured model name.
-
 ```json
-{"status":"healthy","model":"gpt-4o"}
+{"status":"healthy","model":"claude-sonnet-4-6"}
 ```
 
 ### `GET /ready`
-
-Returns readiness.
 
 ```json
 {"status":"ready"}
@@ -97,10 +86,10 @@ Returns readiness.
 
 ### `POST /invoke`
 
-Stateless single-message invocation. This route does not persist conversation history.
+Stateless single-message invocation. Does not persist conversation history.
 
 ```bash
-curl -X POST http://localhost:8080/invoke \
+curl -X POST http://localhost:3000/invoke \
   -H "Content-Type: application/json" \
   -d '{"user_id":"user1","message":"Hello, agent!"}'
 ```
@@ -113,105 +102,61 @@ Response:
 
 ### Session Routes
 
-Sessions persist per-user conversation history in the configured `SessionStore`. The server currently uses SQLite by default.
-
-Create a session:
+Sessions persist per-user conversation history in SQLite by default.
 
 ```bash
-curl -X POST http://localhost:8080/sessions \
+# Create a session
+curl -X POST http://localhost:3000/sessions \
   -H "Content-Type: application/json" \
   -d '{"user_id":"alice"}'
-```
+# → {"session_id":"<uuid>"}
 
-Response:
-
-```json
-{"session_id":"00000000-0000-0000-0000-000000000000"}
-```
-
-Send a message in a session:
-
-```bash
-curl -X POST http://localhost:8080/sessions/<session_id>/messages \
+# Send a message
+curl -X POST http://localhost:3000/sessions/<session_id>/messages \
   -H "Content-Type: application/json" \
   -d '{"user_id":"alice","message":"Remember that my favorite color is green."}'
-```
+# → {"session_id":"<uuid>","reply":"..."}
 
-Response:
+# Get session metadata
+curl 'http://localhost:3000/sessions/<session_id>?user_id=alice'
 
-```json
-{"session_id":"00000000-0000-0000-0000-000000000000","reply":"..."}
-```
-
-Get session metadata:
-
-```bash
-curl 'http://localhost:8080/sessions/<session_id>?user_id=alice'
-```
-
-End a session:
-
-```bash
-curl -X DELETE http://localhost:8080/sessions/<session_id> \
+# End a session
+curl -X DELETE http://localhost:3000/sessions/<session_id> \
   -H "Content-Type: application/json" \
   -d '{"user_id":"alice"}'
 ```
 
-Session ownership is checked by `Agent::assert_owner(user_id, session_id)` before any session access. Authentication, if enabled, is still a server-wide bearer token and does not yet bind request identity to `user_id`.
+Session ownership is enforced: `user_id` is checked against the session before any access.
 
 ### `POST /aether/invoke`
 
-Aether-compatible HTTP invoke route using the local `Envelope` JSON shape.
+Aether-compatible HTTP invoke route.
 
 ```bash
-curl -X POST http://localhost:8080/aether/invoke \
+curl -X POST http://localhost:3000/aether/invoke \
   -H "Content-Type: application/json" \
-  -d '{
-    "id":"00000000-0000-0000-0000-000000000000",
-    "kind":"invoke",
-    "payload":{"input":"Hello from Aether"},
-    "metadata":{}
-  }'
-```
-
-Response:
-
-```json
-{
-  "id":"00000000-0000-0000-0000-000000000000",
-  "kind":"result",
-  "payload":{"output":"..."},
-  "metadata":{}
-}
+  -d '{"id":"<uuid>","kind":"invoke","payload":{"input":"Hello"},"metadata":{}}'
 ```
 
 ## Configuration
-
-You can configure the server with environment variables or `CONFIG_PATH`.
 
 ### Environment Variables
 
 | Variable | Default | Description |
 |---|---:|---|
-| `MODEL_BASE_URL` | `http://localhost:9090/v1` | OpenAI-compatible base URL for server default config |
-| `MODEL_API_KEY` | empty | Provider API key; must be non-empty for the server |
-| `MODEL_NAME` | `gpt-4` | Model name for server default config |
-| `API_KEY` | unset | Optional bearer token required by all server routes when set |
-| `CONFIG_PATH` | unset | YAML config file path |
-| `SESSION_STORE` | `sqlite` | Session store backend: `sqlite` or `postgres` |
-| `SESSION_DB_URL` | `sqlite:sessions.db` | Database URL for the chosen session store |
-| `AETHER_REGISTRY_URL` | unset | Optional Aether HTTP registry base URL |
-| `AGENT_NAME` | `agentverse-agent` | Logical name used during Aether registration |
+| `MODEL_BASE_URL` | `http://localhost:9090/v1` | OpenAI-compatible base URL |
+| `MODEL_API_KEY` | empty | Provider API key (optional when `MODEL_BASE_URL` is set for local endpoints) |
+| `MODEL_NAME` | `gpt-4` | Model name |
+| `ANTHROPIC_API_KEY` | — | Anthropic API key (for Anthropic provider) |
+| `HOST` | `0.0.0.0` | HTTP server bind address |
+| `PORT` | `3000` | HTTP server port |
+| `API_KEY` | unset | Optional bearer token required by all HTTP routes when set |
 | `RUST_LOG` | `info` | Tracing level filter |
 | `LOG_FORMAT` | text | Set to `json` for JSON logs |
 
 ### YAML Config
 
 ```yaml
-host: "127.0.0.1"
-port: 8080
-agent_name: "agentverse-agent"
-aether_registry_url: null
 agent:
   provider:
     type: openai
@@ -219,183 +164,99 @@ agent:
     api_key: "sk-xxx"
     base_url: "https://api.openai.com/v1"
   max_iterations: 10
-guardrails:
-  enabled: true
-  max_requests_per_minute: 60
-session:
-  store: "sqlite"
-  database_url: "sqlite:sessions.db"
 ```
-
-For Postgres session storage:
-
-```yaml
-session:
-  store: "postgres"
-  database_url: "postgres://user:password@localhost:5432/agentverse"
-```
-
-Run with:
-
-```bash
-CONFIG_PATH=config.yaml cargo run -p agentverse-server
-```
-
-## Aether HTTP Registry
-
-AgentVerse no longer uses stdio or Unix sockets for the current Aether management path. When `AETHER_REGISTRY_URL` is set, the server:
-
-1. Starts its normal HTTP API.
-2. Posts `name`, `http_url`, and `capabilities` to `{AETHER_REGISTRY_URL}/registry/agents`.
-3. Stores the returned `instance_id` in memory.
-4. Deregisters best-effort on SIGTERM with `DELETE /registry/instances/{instance_id}`.
-
-If the registry is unreachable, the server logs a warning and continues as a standalone HTTP agent.
-
-```bash
-AETHER_REGISTRY_URL=http://localhost:7000 \
-AGENT_NAME=research-agent \
-MODEL_BASE_URL=http://127.0.0.1:9090/v1 \
-MODEL_API_KEY=local-dummy-key \
-MODEL_NAME=your-model \
-cargo run -p agentverse-server
-```
-
-Aether is a lifecycle coordinator, not the business-data path. It discovers and health-checks agents over HTTP; agent payloads are handled by the agent's own HTTP or integration surfaces.
 
 ## Multi-User Sessions
 
-`agentverse-agent` owns the top-level `Agent`. `agentverse-session` does not contain an agent; it provides session data infrastructure only.
+`agentverse-agent` owns the top-level `Agent`. `agentverse-session` provides session data infrastructure only.
 
 ```text
-Entry point
-  -> agentverse_agent::Agent
-    -> agentverse_session::SessionManager
-      -> Arc<dyn SessionStore>
-    -> LlmRunner
-      -> ConnectionManager
-      -> ModelProvider
+Agent::invoke(user_id, session_id, input)
+  1. assert_owner(user_id, session_id)
+  2. load history from SessionStore
+  3. assemble messages: [system] + history + user_input
+  4. strategy.run(messages)
+  5. append_turn(user_msg, assistant_msg) after successful LLM response
+  6. return assistant text
 ```
-
-The session agent flow is:
-
-1. `assert_owner(user_id, session_id)` — verify the user owns the session.
-2. Load existing messages for `session_id`.
-3. Add the new user message in memory.
-4. Call `LlmRunner::invoke(messages)`.
-5. Persist both messages atomically via `append_turn` after a successful LLM response.
-6. Return the assistant text.
 
 Available stores:
 
-- `SqliteSessionStore` in `agentverse-session`, used by the server by default.
-- `PostgresSessionStore` in `agentverse-memory-pgvector`, for production use.
-
-Ownership checks are performed by `Agent` through `SessionManager::assert_owner(user_id, session_id)` before any store access. The store itself operates by `session_id` only.
+- `SqliteSessionStore` in `agentverse-session` (default)
+- `PostgresSessionStore` in `agentverse-memory-pgvector`
 
 ## Integrations
 
-`agentverse-integration` is owned by the agent. It does not drive the agent from outside. The agent creates an `IntegrationRuntime`, provides a handler, and the runtime handles connector I/O.
+`agentverse-integration` is owned by the agent. The agent creates an `IntegrationRuntime` and provides a handler; the runtime handles connector I/O.
 
 ```rust
 use agentverse_integration::{Event, IntegrationRuntime};
+use std::sync::Arc;
 
+let agent = Arc::new(Agent::new(/* ... */));
 let runtime = IntegrationRuntime::from_config("agent.toml").await?;
 
 runtime
-    .run(|event: Event| async move {
-        let answer = handle_event_text(event.text.clone()).await?;
-        Ok(Event { text: answer, ..event })
+    .run(move |event: Event| {
+        let agent = Arc::clone(&agent);
+        async move {
+            let answer = agent.invoke_stateless(&event.text).await
+                .map_err(|e| agentverse::AgentError::Memory(e.to_string()))?;
+            Ok::<Event, agentverse::AgentError>(Event { text: answer, ..event })
+        }
     })
     .await?;
 ```
 
 If `agent.toml` is missing, `IntegrationRuntime::from_config` falls back to `ConsoleConnector`.
 
-Example `agent.toml`:
-
-```toml
-[integration]
-input = "slack"
-outputs = ["slack"]
-
-[connector.slack]
-port = 3000
-bot_token_env = "SLACK_BOT_TOKEN"
-signing_secret_env = "SLACK_SIGNING_SECRET"
-
-[connector.github]
-port = 3001
-token_env = "GITHUB_TOKEN"
-webhook_secret_env = "GITHUB_WEBHOOK_SECRET"
-```
-
-Supported connector implementations:
-
-- Console
-- Slack
-- GitHub
-- WhatsApp
-
-Connector secrets are environment variable names in config, not secret values.
+Supported connectors: Console, Slack, GitHub, WhatsApp.
 
 ## Strategies and Tools
 
-Strategies:
+Strategies are selected via `agentverse-strategy::build`:
+
+```rust
+use agentverse_strategy::{build, StrategyKind};
+
+let strategy = build(StrategyKind::React, runner, prompts, tools, memory, 10);
+// StrategyKind::Plan
+// StrategyKind::Hierarchical
+```
+
+Underlying strategy crates:
 
 - `agentverse-react`: ReAct loop
 - `agentverse-plan`: Plan-and-Execute and hierarchical planning
 - `agentverse-router`: dynamic strategy routing
 
-Tools:
+Built-in tools in `agentverse-tools`:
 
-- Calculator
-- DateTime
-- FileSearch
-- HttpClient
-- ShellTool
-- WebSearch
+- Calculator, DateTime, FileSearch, HttpClient, ShellTool, WebSearch
 - MCP tool adapter via `agentverse-mcp`
-
-`ToolRegistry` stores async tools and supports category tags. Example agents wire tools directly into strategies. The HTTP server's direct invocation routes do not yet execute strategy loops or tool calls.
 
 ## Prompt Templates
 
 AgentVerse uses `PromptRegistry` to load embedded defaults and optional `.j2` templates from a prompts directory.
 
-Common example layout:
+Common layout:
 
 ```text
 prompts/
   system.j2
   react.j2
   react_examples.toml
-  examples.toml
 ```
-
-Strategy template names are normalized by file name:
-
-- `react.j2` -> `react` / `strategies.react`
-- `plan_and_execute.j2` -> `strategies.plan_and_execute`
-- `hierarchical.j2` -> `strategies.hierarchical.decompose`
 
 Example:
 
 ```rust
 use agentverse::{PromptConfig, PromptRegistry};
 
-let registry = PromptRegistry::from_config(&PromptConfig {
-    prompts_dir: Some("examples/hello-agent/prompts".to_string()),
+let registry = Arc::new(PromptRegistry::from_config(&PromptConfig {
+    prompts_dir: Some(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string()),
     ..Default::default()
-})?;
-```
-
-Example `.toml` files use array-of-table entries:
-
-```toml
-[[example]]
-input = "What is 6 * 7?"
-output = "Thought: I should multiply.\nAction: calculator\nAction Input: {\"operation\":\"multiply\",\"a\":6,\"b\":7}"
+})?);
 ```
 
 ## Crates
@@ -403,9 +264,9 @@ output = "Thought: I should multiply.\nAction: calculator\nAction Input: {\"oper
 | Crate | Package | Purpose |
 |---|---|---|
 | `avs-core` | `agentverse` | Core config, errors, prompts, model providers, `LlmRunner`, memory and tool traits |
-| `avs-agent` | `agentverse-agent` | Top-level multi-user agent orchestrator that composes `LlmRunner` and `SessionManager` |
-| `avs-session` | `agentverse-session` | Session model, session manager, store trait, and SQLite session store |
-| `avs-server` | `agentverse-server` | HTTP server, auth middleware, session routes, Aether registry client |
+| `avs-agent` | `agentverse-agent` | Single LLM access point: `Agent` composes `LlmRunner`, strategy, and `SessionManager`; optional HTTP sidecar |
+| `avs-strategy` | `agentverse-strategy` | Strategy factory (`build`, `StrategyKind`) and umbrella re-exports |
+| `avs-session` | `agentverse-session` | Session model, session manager, store trait, SQLite session store |
 | `avs-integration` | `agentverse-integration` | Agent-owned connector runtime for console, Slack, GitHub, WhatsApp |
 | `avs-react` | `agentverse-react` | ReAct strategy loop |
 | `avs-plan` | `agentverse-plan` | Plan-and-Execute and hierarchical strategies |
@@ -425,9 +286,10 @@ output = "Thought: I should multiply.\nAction: calculator\nAction Input: {\"oper
 | `example-hello-agent` | Interactive ReAct REPL with Calculator and DateTime |
 | `example-react-calculator` | ReAct calculator demonstration |
 | `example-web-search-agent` | Plan-and-Execute web search summary |
-| `example-anthropic-react` | Anthropic ReAct example with prompt-cache usage stats |
+| `example-anthropic-react` | Anthropic ReAct agent with prompt-cache usage |
 | `example-code-review-agent` | Hierarchical code-review agent with file and shell tools |
 | `example-slack-hr-assistant` | IntegrationRuntime-backed Slack/console assistant |
+| `example-http-agent` | Agent with `enable_http_server=true`; demonstrates the HTTP sidecar |
 
 Run examples with `cargo run -p <package>`.
 
@@ -436,8 +298,7 @@ Run examples with `cargo run -p <package>`.
 ```bash
 cargo fmt --all --check
 cargo clippy --all -- -D warnings
-cargo test --all
-cargo check --examples
+cargo test --workspace
 ```
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for deeper implementation notes.
@@ -447,8 +308,9 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for deeper implementation notes.
 ```text
 AgentVerse/
 |-- avs-core/
+|-- avs-agent/
 |-- avs-session/
-|-- avs-server/
+|-- avs-strategy/
 |-- avs-integration/
 |-- avs-react/
 |-- avs-plan/
@@ -460,8 +322,7 @@ AgentVerse/
 |-- avs-memory-pgvector/
 |-- avs-guardrails/
 |-- avs-logging/
-|-- examples/
-`-- docs/superpowers/specs/
+`-- examples/
 ```
 
 ## License
