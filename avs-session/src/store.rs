@@ -33,4 +33,22 @@ pub trait SessionStore: Send + Sync {
     ) -> Result<(), SessionStoreError>;
     async fn load_messages(&self, session_id: SessionId)
         -> Result<Vec<Message>, SessionStoreError>;
+    async fn get_watermark(&self, session_id: SessionId) -> Result<i64, SessionStoreError>;
+    async fn advance_watermark(
+        &self,
+        session_id: SessionId,
+        new_watermark: i64,
+    ) -> Result<(), SessionStoreError>;
+    /// Returns (sequence_num, Message) tuples for all messages above the current watermark.
+    async fn load_messages_above_watermark(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Vec<(i64, Message)>, SessionStoreError>;
+    /// Deletes messages where `created_at < cutoff_ts AND sequence_num <= watermark`.
+    async fn cleanup_expired_messages(
+        &self,
+        session_id: SessionId,
+        cutoff_ts: i64,
+        watermark: i64,
+    ) -> Result<u64, SessionStoreError>;
 }

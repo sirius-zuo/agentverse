@@ -9,6 +9,7 @@ use async_trait::async_trait;
 struct FakeStore {
     sessions: Mutex<HashMap<SessionId, Session>>,
     messages: Mutex<HashMap<SessionId, Vec<Message>>>,
+    watermarks: Mutex<HashMap<SessionId, i64>>,
 }
 
 #[async_trait]
@@ -91,6 +92,51 @@ impl SessionStore for FakeStore {
             .get(&session_id)
             .cloned()
             .unwrap_or_default())
+    }
+
+    async fn get_watermark(&self, session_id: SessionId) -> Result<i64, SessionStoreError> {
+        Ok(*self
+            .watermarks
+            .lock()
+            .unwrap()
+            .get(&session_id)
+            .unwrap_or(&0))
+    }
+
+    async fn advance_watermark(
+        &self,
+        session_id: SessionId,
+        new_watermark: i64,
+    ) -> Result<(), SessionStoreError> {
+        let mut wm = self.watermarks.lock().unwrap();
+        let entry = wm.entry(session_id).or_insert(0);
+        if new_watermark > *entry {
+            *entry = new_watermark;
+        }
+        Ok(())
+    }
+
+    async fn load_messages_above_watermark(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Vec<(i64, agentverse::memory::Message)>, SessionStoreError> {
+        let wm = self.get_watermark(session_id).await?;
+        let msgs = self.load_messages(session_id).await?;
+        Ok(msgs
+            .into_iter()
+            .enumerate()
+            .map(|(i, m)| (i as i64 + 1, m))
+            .filter(|(seq, _)| *seq > wm)
+            .collect())
+    }
+
+    async fn cleanup_expired_messages(
+        &self,
+        _session_id: SessionId,
+        _cutoff_ts: i64,
+        _watermark: i64,
+    ) -> Result<u64, SessionStoreError> {
+        Ok(0)
     }
 }
 

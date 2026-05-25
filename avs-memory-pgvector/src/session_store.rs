@@ -107,6 +107,24 @@ impl PostgresSessionStore {
             .map_err(|e| SessionStoreError::Database(e.to_string()))?;
         }
 
+        let has_watermark: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)
+             FROM information_schema.columns
+             WHERE table_name = 'sessions' AND column_name = 'consolidation_watermark'",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| SessionStoreError::Database(e.to_string()))?;
+
+        if has_watermark == 0 {
+            sqlx::query(
+                "ALTER TABLE sessions ADD COLUMN consolidation_watermark BIGINT NOT NULL DEFAULT 0",
+            )
+            .execute(&self.pool)
+            .await
+            .map_err(|e| SessionStoreError::Database(e.to_string()))?;
+        }
+
         Ok(())
     }
 }
@@ -304,5 +322,87 @@ impl SessionStore for PostgresSessionStore {
                 content,
             })
             .collect())
+    }
+
+    async fn get_watermark(&self, session_id: SessionId) -> Result<i64, SessionStoreError> {
+        let wm: i64 =
+            sqlx::query_scalar("SELECT consolidation_watermark FROM sessions WHERE id = $1")
+                .bind(session_id.to_string())
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| SessionStoreError::Database(e.to_string()))?;
+        Ok(wm)
+    }
+
+    async fn advance_watermark(
+        &self,
+        session_id: SessionId,
+        new_watermark: i64,
+    ) -> Result<(), SessionStoreError> {
+        sqlx::query(
+            "UPDATE sessions \
+             SET consolidation_watermark = GREATEST(consolidation_watermark, $1), \
+                 updated_at = $2 \
+             WHERE id = $3",
+        )
+        .bind(new_watermark)
+        .bind(chrono::Utc::now().timestamp())
+        .bind(session_id.to_string())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| SessionStoreError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn load_messages_above_watermark(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Vec<(i64, Message)>, SessionStoreError> {
+        let wm = self.get_watermark(session_id).await?;
+        let rows = sqlx::query_as::<_, (i64, String, String)>(
+            "SELECT sequence_num, role, content \
+             FROM messages \
+             WHERE session_id = $1 AND sequence_num > $2 \
+             ORDER BY sequence_num ASC",
+        )
+        .bind(session_id.to_string())
+        .bind(wm)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| SessionStoreError::Database(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|(seq, role, content)| {
+                (
+                    seq,
+                    Message {
+                        role: Self::str_to_role(&role),
+                        content,
+                    },
+                )
+            })
+            .collect())
+    }
+
+    async fn cleanup_expired_messages(
+        &self,
+        session_id: SessionId,
+        cutoff_ts: i64,
+        watermark: i64,
+    ) -> Result<u64, SessionStoreError> {
+        if watermark == 0 {
+            return Ok(0);
+        }
+        let result = sqlx::query(
+            "DELETE FROM messages \
+             WHERE session_id = $1 AND created_at < $2 AND sequence_num <= $3",
+        )
+        .bind(session_id.to_string())
+        .bind(cutoff_ts)
+        .bind(watermark)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| SessionStoreError::Database(e.to_string()))?;
+        Ok(result.rows_affected())
     }
 }
