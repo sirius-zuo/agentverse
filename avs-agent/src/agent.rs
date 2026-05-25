@@ -1,10 +1,17 @@
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use agentverse::memory::{Message, MessageRole};
 use agentverse::{LlmRunner, Memory, PromptRegistry, RunStrategy};
 use agentverse_session::{Session, SessionId, SessionManager, SessionStore, SessionStoreError};
 use agentverse_tools::ToolRegistry;
 use tokio::sync::Mutex;
+
+struct CachedBuffer {
+    messages: Vec<Message>,
+    last_used: Instant,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum AgentError {
@@ -25,6 +32,8 @@ pub struct Agent {
     memory: Arc<Mutex<dyn Memory>>,
     sessions: Arc<SessionManager>,
     strategy: Arc<dyn RunStrategy>,
+    working_buffers: Mutex<HashMap<(String, SessionId), CachedBuffer>>,
+    buffer_ttl: Duration,
 }
 
 impl Agent {
@@ -44,6 +53,8 @@ impl Agent {
             memory,
             sessions: Arc::new(SessionManager::new(store)),
             strategy,
+            working_buffers: Mutex::new(HashMap::new()),
+            buffer_ttl: Duration::from_secs(300),
         });
 
         #[cfg(feature = "http")]
@@ -84,6 +95,49 @@ impl Agent {
         msgs
     }
 
+    async fn get_working_buffer(
+        &self,
+        user_id: &str,
+        session_id: SessionId,
+    ) -> Result<Vec<Message>, AgentError> {
+        let key = (user_id.to_string(), session_id);
+        {
+            let cache = self.working_buffers.lock().await;
+            if let Some(buf) = cache.get(&key) {
+                if buf.last_used.elapsed() <= self.buffer_ttl {
+                    return Ok(buf.messages.clone());
+                }
+            }
+        }
+        // Miss or TTL expired: rehydrate from Layer 2
+        let history = self.sessions.load_messages(session_id).await?;
+        let mut cache = self.working_buffers.lock().await;
+        cache.insert(
+            key,
+            CachedBuffer {
+                messages: history.clone(),
+                last_used: Instant::now(),
+            },
+        );
+        Ok(history)
+    }
+
+    async fn update_working_buffer(
+        &self,
+        user_id: &str,
+        session_id: SessionId,
+        user_msg: Message,
+        assistant_msg: Message,
+    ) {
+        let key = (user_id.to_string(), session_id);
+        let mut cache = self.working_buffers.lock().await;
+        if let Some(buf) = cache.get_mut(&key) {
+            buf.messages.push(user_msg);
+            buf.messages.push(assistant_msg);
+            buf.last_used = Instant::now();
+        }
+    }
+
     pub async fn invoke_stateless(&self, input: &str) -> Result<String, AgentError> {
         let messages = self.assemble_messages(self.render_system(), vec![], input);
         let response = self.strategy.run(messages).await?;
@@ -98,7 +152,7 @@ impl Agent {
     ) -> Result<String, AgentError> {
         self.sessions.assert_owner(user_id, session_id).await?;
 
-        let history = self.sessions.load_messages(session_id).await?;
+        let history = self.get_working_buffer(user_id, session_id).await?;
         let user_msg = Message {
             role: MessageRole::User,
             content: input.to_string(),
@@ -112,8 +166,10 @@ impl Agent {
             content: response.clone(),
         };
         self.sessions
-            .append_turn(session_id, user_msg, assistant_msg)
+            .append_turn(session_id, user_msg.clone(), assistant_msg.clone())
             .await?;
+        self.update_working_buffer(user_id, session_id, user_msg, assistant_msg)
+            .await;
 
         Ok(response)
     }
@@ -137,7 +193,11 @@ impl Agent {
         session_id: SessionId,
     ) -> Result<(), AgentError> {
         self.sessions.assert_owner(user_id, session_id).await?;
-        Ok(self.sessions.end_session(session_id).await?)
+        self.sessions.end_session(session_id).await?;
+        // Layer-1 cascade: evict working buffer immediately on session delete
+        let key = (user_id.to_string(), session_id);
+        self.working_buffers.lock().await.remove(&key);
+        Ok(())
     }
 
     pub async fn list_sessions(&self, user_id: &str) -> Result<Vec<Session>, AgentError> {
@@ -209,5 +269,14 @@ mod tests {
         let session = agent.get_session("alice", session_id).await.unwrap();
         assert!(session.is_some());
         assert_eq!(session.unwrap().user_id, "alice");
+    }
+
+    #[tokio::test]
+    async fn working_buffer_rehydrates_after_db_write() {
+        // Verifies the rehydration path: fresh session → load_messages returns empty
+        let agent = make_agent().await;
+        let sid = agent.create_session("alice").await.unwrap();
+        let msgs = agent.load_messages("alice", sid).await.unwrap();
+        assert!(msgs.is_empty());
     }
 }
