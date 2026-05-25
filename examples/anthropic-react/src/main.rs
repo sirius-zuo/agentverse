@@ -18,9 +18,11 @@
 
 use agentverse::{Config, LlmRunner, Message, MessageRole, PromptConfig, PromptRegistry};
 use agentverse_logging as avs_logging;
+use agentverse_memory::SimpleMemory;
 use agentverse_react::ReActStrategy;
 use agentverse_tools::{Calculator, ToolRegistry};
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() {
@@ -62,7 +64,13 @@ async fn main() {
     let mut tools = ToolRegistry::new();
     tools.register(Calculator);
 
-    let _agent = ReActStrategy::new(runner, registry, Arc::new(tools), 15);
+    let _agent = ReActStrategy::new(
+        runner,
+        registry,
+        Arc::new(tools),
+        Arc::new(Mutex::new(SimpleMemory::new(0))),
+        15,
+    );
 
     // TODO(Task 4): Implement run loop using RunStrategy::run(messages)
     // For now, demonstrate that the agent is constructed successfully.

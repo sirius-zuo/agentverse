@@ -16,6 +16,7 @@ use tracing::info;
 /// Users interact with this, not CycleSkeleton directly.
 pub struct ReActStrategy {
     skeleton: CycleSkeleton,
+    /// Reserved for future per-step memory integration (e.g., augmenting intermediate prompts).
     #[allow(dead_code)]
     memory: Arc<Mutex<dyn Memory>>,
 }
@@ -64,11 +65,11 @@ impl agentverse::RunStrategy for ReActStrategy {
                         return Ok(saved);
                     }
                     info!(iteration, action = "continue", "Thought only, continuing");
-                    pending_answer = Some(thought.clone());
                     buf.push(Message {
                         role: agentverse::MessageRole::Assistant,
                         content: format!("Thought: {}", thought),
                     });
+                    pending_answer = Some(thought);
                     buf.push(Message {
                         role: agentverse::MessageRole::User,
                         content: "Either call a tool (Action: / Action Input:) or give your final answer (Answer: ...).".to_string(),
