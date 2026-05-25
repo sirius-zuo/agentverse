@@ -5,6 +5,10 @@ Cargo.lock
 # Worktrees
 .worktrees/
 
+# Claude Code and Superpowers local state
+.claude/
+.superpowers/
+
 # IDE
 .idea/
 .vscode/
