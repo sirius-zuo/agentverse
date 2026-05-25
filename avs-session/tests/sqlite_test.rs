@@ -7,7 +7,6 @@ use tempfile::tempdir;
 async fn make_store() -> SqliteSessionStore {
     let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
-    // keep dir alive for the test duration — leak it intentionally
     std::mem::forget(dir);
     SqliteSessionStore::new(db_path.to_str().unwrap())
         .await
@@ -18,9 +17,18 @@ async fn make_store() -> SqliteSessionStore {
 async fn create_and_get_session() {
     let store = make_store().await;
     let session = store.create("user-1").await.unwrap();
-    let fetched = store.get("user-1", session.id).await.unwrap().unwrap();
+    let fetched = store.get(session.id).await.unwrap().unwrap();
     assert_eq!(fetched.user_id, "user-1");
     assert!(matches!(fetched.status, SessionStatus::Active));
+}
+
+#[tokio::test]
+async fn get_by_session_id_returns_session_without_user_argument() {
+    let store = SqliteSessionStore::new("sqlite::memory:").await.unwrap();
+    let session = store.create("alice").await.unwrap();
+    let loaded = store.get(session.id).await.unwrap().unwrap();
+    assert_eq!(loaded.id, session.id);
+    assert_eq!(loaded.user_id, "alice");
 }
 
 #[tokio::test]
@@ -30,7 +38,6 @@ async fn append_and_load_messages_preserves_order() {
 
     store
         .append_message(
-            "user-1",
             session.id,
             Message {
                 role: MessageRole::User,
@@ -41,7 +48,6 @@ async fn append_and_load_messages_preserves_order() {
         .unwrap();
     store
         .append_message(
-            "user-1",
             session.id,
             Message {
                 role: MessageRole::Assistant,
@@ -52,7 +58,6 @@ async fn append_and_load_messages_preserves_order() {
         .unwrap();
     store
         .append_message(
-            "user-1",
             session.id,
             Message {
                 role: MessageRole::User,
@@ -62,7 +67,7 @@ async fn append_and_load_messages_preserves_order() {
         .await
         .unwrap();
 
-    let messages = store.load_messages("user-1", session.id).await.unwrap();
+    let messages = store.load_messages(session.id).await.unwrap();
     assert_eq!(messages.len(), 3);
     assert_eq!(messages[0].content, "hello");
     assert_eq!(messages[1].content, "hi there");
@@ -70,14 +75,42 @@ async fn append_and_load_messages_preserves_order() {
 }
 
 #[tokio::test]
+async fn append_turn_persists_both_messages_in_order() {
+    let store = SqliteSessionStore::new("sqlite::memory:").await.unwrap();
+    let session = store.create("alice").await.unwrap();
+
+    store
+        .append_turn(
+            session.id,
+            Message {
+                role: MessageRole::User,
+                content: "hello".to_string(),
+            },
+            Message {
+                role: MessageRole::Assistant,
+                content: "hi".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+
+    let messages = store.load_messages(session.id).await.unwrap();
+    assert_eq!(messages.len(), 2);
+    assert!(matches!(messages[0].role, MessageRole::User));
+    assert_eq!(messages[0].content, "hello");
+    assert!(matches!(messages[1].role, MessageRole::Assistant));
+    assert_eq!(messages[1].content, "hi");
+}
+
+#[tokio::test]
 async fn update_status_marks_completed() {
     let store = make_store().await;
     let session = store.create("user-1").await.unwrap();
     store
-        .update_status("user-1", session.id, SessionStatus::Completed)
+        .update_status(session.id, SessionStatus::Completed)
         .await
         .unwrap();
-    let fetched = store.get("user-1", session.id).await.unwrap().unwrap();
+    let fetched = store.get(session.id).await.unwrap().unwrap();
     assert!(matches!(fetched.status, SessionStatus::Completed));
 }
 
@@ -95,7 +128,7 @@ async fn list_by_user_returns_all_sessions() {
 async fn load_messages_empty_for_new_session() {
     let store = make_store().await;
     let session = store.create("user-1").await.unwrap();
-    let messages = store.load_messages("user-1", session.id).await.unwrap();
+    let messages = store.load_messages(session.id).await.unwrap();
     assert!(messages.is_empty());
 }
 
@@ -108,7 +141,7 @@ async fn session_manager_create_returns_id() {
     let store = Arc::new(make_store().await);
     let manager = SessionManager::new(store);
     let id = manager.create_session("alice").await.unwrap();
-    let session = manager.get_session("alice", id).await.unwrap().unwrap();
+    let session = manager.get_session(id).await.unwrap().unwrap();
     assert_eq!(session.user_id, "alice");
 }
 
@@ -117,8 +150,8 @@ async fn session_manager_end_session_marks_completed() {
     let store = Arc::new(make_store().await);
     let manager = SessionManager::new(store);
     let id = manager.create_session("bob").await.unwrap();
-    manager.end_session("bob", id).await.unwrap();
-    let session = manager.get_session("bob", id).await.unwrap().unwrap();
+    manager.end_session(id).await.unwrap();
+    let session = manager.get_session(id).await.unwrap().unwrap();
     assert!(matches!(session.status, SessionStatus::Completed));
 }
 
@@ -134,13 +167,11 @@ async fn session_manager_list_sessions_for_user() {
 
 #[tokio::test]
 async fn user_cannot_access_other_users_session() {
-    let store = make_store().await;
+    let store: Arc<dyn SessionStore> = Arc::new(make_store().await);
     let alice_session = store.create("alice").await.unwrap();
 
-    // append a message as alice
     store
         .append_message(
-            "alice",
             alice_session.id,
             Message {
                 role: MessageRole::User,
@@ -150,17 +181,16 @@ async fn user_cannot_access_other_users_session() {
         .await
         .unwrap();
 
-    // bob tries to get alice's session — should return None (not found for this user)
-    let result = store.get("bob", alice_session.id).await.unwrap();
-    assert!(result.is_none(), "bob should not see alice's session");
+    // get() no longer filters by user_id; ownership is checked via assert_owner
+    let result = store.get(alice_session.id).await.unwrap();
+    assert!(result.is_some(), "session should be found by id");
+    assert_eq!(result.unwrap().user_id, "alice");
 
-    // bob tries to load alice's messages — should return NotFound error
-    let result = store.load_messages("bob", alice_session.id).await;
-    assert!(result.is_err(), "bob should not load alice's messages");
-
-    // bob tries to update alice's session — should return NotFound error
-    let result = store
-        .update_status("bob", alice_session.id, SessionStatus::Completed)
-        .await;
-    assert!(result.is_err(), "bob should not update alice's session");
+    // bob tries to assert ownership — should fail
+    let manager = SessionManager::new(Arc::clone(&store));
+    let err = manager.assert_owner("bob", alice_session.id).await.unwrap_err();
+    assert!(
+        matches!(err, agentverse_session::SessionStoreError::NotFound(id) if id == alice_session.id),
+        "bob should not own alice's session"
+    );
 }

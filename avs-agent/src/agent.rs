@@ -2,13 +2,10 @@ use std::sync::Arc;
 
 use agentverse::memory::{Message, MessageRole};
 use agentverse::LlmRunner;
-
-use crate::manager::SessionManager;
-use crate::session::{Session, SessionId};
-use crate::store::{SessionStore, SessionStoreError};
+use agentverse_session::{Session, SessionId, SessionManager, SessionStore, SessionStoreError};
 
 #[derive(Debug, thiserror::Error)]
-pub enum SessionAgentError {
+pub enum AgentError {
     #[error("session error: {0}")]
     Session(#[from] SessionStoreError),
     #[error("llm error: {0}")]
@@ -17,18 +14,22 @@ pub enum SessionAgentError {
 
 pub struct Agent {
     runner: Arc<LlmRunner>,
-    sessions: SessionManager,
+    sessions: Arc<SessionManager>,
 }
 
 impl Agent {
     pub fn new(runner: Arc<LlmRunner>, store: Arc<dyn SessionStore>) -> Self {
         Self {
             runner,
-            sessions: SessionManager::new(store),
+            sessions: Arc::new(SessionManager::new(store)),
         }
     }
 
-    pub async fn create_session(&self, user_id: &str) -> Result<SessionId, SessionAgentError> {
+    pub fn from_parts(runner: Arc<LlmRunner>, sessions: Arc<SessionManager>) -> Self {
+        Self { runner, sessions }
+    }
+
+    pub async fn create_session(&self, user_id: &str) -> Result<SessionId, AgentError> {
         Ok(self.sessions.create_session(user_id).await?)
     }
 
@@ -36,19 +37,21 @@ impl Agent {
         &self,
         user_id: &str,
         session_id: SessionId,
-    ) -> Result<Option<Session>, SessionAgentError> {
-        Ok(self.sessions.get_session(user_id, session_id).await?)
+    ) -> Result<Option<Session>, AgentError> {
+        self.sessions.assert_owner(user_id, session_id).await?;
+        Ok(self.sessions.get_session(session_id).await?)
     }
 
     pub async fn end_session(
         &self,
         user_id: &str,
         session_id: SessionId,
-    ) -> Result<(), SessionAgentError> {
-        Ok(self.sessions.end_session(user_id, session_id).await?)
+    ) -> Result<(), AgentError> {
+        self.sessions.assert_owner(user_id, session_id).await?;
+        Ok(self.sessions.end_session(session_id).await?)
     }
 
-    pub async fn list_sessions(&self, user_id: &str) -> Result<Vec<Session>, SessionAgentError> {
+    pub async fn list_sessions(&self, user_id: &str) -> Result<Vec<Session>, AgentError> {
         Ok(self.sessions.list_sessions(user_id).await?)
     }
 
@@ -56,8 +59,9 @@ impl Agent {
         &self,
         user_id: &str,
         session_id: SessionId,
-    ) -> Result<Vec<Message>, SessionAgentError> {
-        Ok(self.sessions.load_messages(user_id, session_id).await?)
+    ) -> Result<Vec<Message>, AgentError> {
+        self.sessions.assert_owner(user_id, session_id).await?;
+        Ok(self.sessions.load_messages(session_id).await?)
     }
 
     pub async fn invoke(
@@ -65,30 +69,24 @@ impl Agent {
         user_id: &str,
         session_id: SessionId,
         input: &str,
-    ) -> Result<String, SessionAgentError> {
-        // Load existing history
-        let mut messages = self.sessions.load_messages(user_id, session_id).await?;
+    ) -> Result<String, AgentError> {
+        self.sessions.assert_owner(user_id, session_id).await?;
 
-        // Build in-memory user message (do not persist yet)
+        let mut messages = self.sessions.load_messages(session_id).await?;
         let user_msg = Message {
             role: MessageRole::User,
             content: input.to_string(),
         };
         messages.push(user_msg.clone());
 
-        // Call LLM — if this fails, nothing has been persisted, caller can safely retry
         let response = self.runner.invoke(messages).await?;
-
-        // Persist both messages only after a successful LLM response
-        self.sessions
-            .append_message(user_id, session_id, user_msg)
-            .await?;
-        let asst_msg = Message {
+        let assistant_msg = Message {
             role: MessageRole::Assistant,
             content: response.content.clone(),
         };
+
         self.sessions
-            .append_message(user_id, session_id, asst_msg)
+            .append_turn(session_id, user_msg, assistant_msg)
             .await?;
 
         Ok(response.content)

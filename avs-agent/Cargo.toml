@@ -1,0 +1,14 @@
+[package]
+name = "agentverse-agent"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+agentverse = { path = "../avs-core" }
+agentverse-session = { path = "../avs-session" }
+thiserror.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
