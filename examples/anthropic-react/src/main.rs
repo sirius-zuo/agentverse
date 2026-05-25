@@ -12,14 +12,15 @@
 // Run:
 //   ANTHROPIC_API_KEY=sk-ant-... \
 //   cargo run -p example-anthropic-react
+//
+// TODO(Task 4): Restore full run loop once ReActStrategy::run() is
+// re-implemented against the new CycleSkeleton API.
 
-use agentverse::{ConnectionManager, PromptConfig, PromptRegistry};
+use agentverse::{Config, LlmRunner, Message, MessageRole, PromptConfig, PromptRegistry};
 use agentverse_logging as avs_logging;
-use agentverse_memory::SimpleMemory;
 use agentverse_react::ReActStrategy;
 use agentverse_tools::{Calculator, ToolRegistry};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() {
@@ -36,14 +37,20 @@ async fn main() {
     tracing::info!("Tool: Calculator");
     tracing::info!("Prompt caching: enabled (system prompt + penultimate message)");
 
-    let model = Arc::new(ConnectionManager::anthropic(
-        "https://api.anthropic.com",
-        &model_name,
-        &api_key,
-    ));
+    let runner = Arc::new(
+        LlmRunner::from_config(Config {
+            provider: agentverse::ProviderConfig::Anthropic {
+                model_name: model_name.clone(),
+                api_key,
+            },
+            max_messages: 50,
+            tools: vec![],
+            prompts_dir: None,
+            system_prompt: None,
+        })
+        .expect("runner config"),
+    );
 
-    // Load the system prompt from prompts/system.j2 (relative to the workspace
-    // root, where `cargo run` is invoked).
     let registry = Arc::new(
         PromptRegistry::from_config(&PromptConfig {
             prompts_dir: Some("examples/anthropic-react/prompts".to_string()),
@@ -52,38 +59,19 @@ async fn main() {
         .expect("prompt config"),
     );
 
-    let memory = Arc::new(Mutex::new(SimpleMemory::new(50)));
     let mut tools = ToolRegistry::new();
     tools.register(Calculator);
-    let mut agent = ReActStrategy::new(registry, model, tools, memory, 15);
 
-    // Multi-step arithmetic that requires four sequential tool calls:
-    //   step 1: 137 * 48  = 6576
-    //   step 2: 256 / 4   = 64
-    //   step 3: 6576 + 64 = 6640
-    //   step 4: 6640 - 19 = 6621
-    // Each iteration re-sends the system prompt; after the first write it is
-    // served from cache, so cache_read_tokens grows with each loop iteration.
+    let _agent = ReActStrategy::new(runner, registry, Arc::new(tools), 15);
+
+    // TODO(Task 4): Implement run loop using RunStrategy::run(messages)
+    // For now, demonstrate that the agent is constructed successfully.
     let question = "What is (137 * 48) + (256 / 4) - 19?";
     println!("> {}", question);
+    println!("Anthropic ReAct agent created (Task 4 will wire the run loop).");
 
-    match agent.run(question.to_string()).await {
-        Ok(result) => {
-            println!("\nAgent: {}", result.answer);
-            println!(
-                "\n[tokens] input={} output={} cache_write={} cache_read={}",
-                result.total_usage.input_tokens,
-                result.total_usage.output_tokens,
-                result.total_usage.cache_write_tokens,
-                result.total_usage.cache_read_tokens,
-            );
-            if result.total_usage.cache_read_tokens > 0 {
-                println!(
-                    "[cache]  {} tokens served from cache across loop iterations",
-                    result.total_usage.cache_read_tokens
-                );
-            }
-        }
-        Err(e) => eprintln!("Error: {}", e),
-    }
+    let _example_messages = [Message {
+        role: MessageRole::User,
+        content: question.to_string(),
+    }];
 }

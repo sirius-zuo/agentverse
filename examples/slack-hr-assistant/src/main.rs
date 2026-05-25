@@ -9,7 +9,9 @@
 //   MODEL_BASE_URL=http://localhost:9090/v1 \
 //   MODEL_NAME=your-model \
 //   cargo run -p example-slack-hr-assistant
-use agentverse::{ConnectionManager, PromptConfig, PromptRegistry, RunStrategy};
+use agentverse::{
+    ConnectionManager, Message, MessageRole, PromptConfig, PromptRegistry, RunStrategy,
+};
 use agentverse_integration::{Event, IntegrationRuntime};
 use agentverse_logging as avs_logging;
 use agentverse_memory::SimpleMemory;
@@ -51,7 +53,14 @@ async fn main() {
         .run(move |event: Event| {
             let strategy = Arc::clone(&strategy);
             async move {
-                let answer = strategy.lock().await.process(event.text).await?;
+                let answer = strategy
+                    .lock()
+                    .await
+                    .run(vec![Message {
+                        role: MessageRole::User,
+                        content: event.text.clone(),
+                    }])
+                    .await?;
                 Ok::<Event, agentverse::AgentError>(Event {
                     text: answer,
                     ..event

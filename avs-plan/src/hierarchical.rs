@@ -234,7 +234,10 @@ impl<M> agentverse::RunStrategy for HierarchicalStrategy<M>
 where
     M: agentverse::Memory + Send + 'static,
 {
-    async fn process(&mut self, input: String) -> Result<String, agentverse::AgentError> {
-        self.run(input).await
+    async fn run(
+        &self,
+        _messages: Vec<agentverse::Message>,
+    ) -> Result<String, agentverse::AgentError> {
+        todo!("Task 4: implement HierarchicalStrategy::run() with new CycleSkeleton API")
     }
 }
