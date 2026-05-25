@@ -11,7 +11,7 @@
 - `LlmRunner` is a pure message-to-response layer with no prompt logic.
 - Strategies use `LlmRunner` for every LLM call; they never touch `ConnectionManager` directly.
 - `PromptRegistry`, `ToolRegistry`, and `Memory` are owned by `Agent` and shared (via `Arc`) with the strategy.
-- `avs-server` is a library Agent optionally starts. No binary can start without an Agent.
+- `avs-server` is a library that example binaries optionally mount. It depends on `avs-agent`; `avs-agent` never depends on `avs-server`.
 - Every example is an Agent binary. No example constructs a strategy directly.
 
 ---
@@ -39,7 +39,6 @@ avs-strategy  (new umbrella crate)
 
 avs-agent
   ├── depends on: avs-core, avs-session, avs-strategy
-  ├── optionally depends on: avs-server (http feature)
   └── Agent {
         runner:   Arc<LlmRunner>
         tools:    Arc<ToolRegistry>
@@ -47,15 +46,24 @@ avs-agent
         memory:   Arc<Mutex<dyn Memory>>
         sessions: Arc<SessionManager>
         strategy: Arc<dyn RunStrategy>
-        http:     Option<HttpConfig>
       }
 
-avs-server  (library only — no binary, no Agent construction)
-  └── serve(agent: Arc<Agent>, config: HttpConfig) → routes
+avs-agent
+  ├── depends on: avs-core, avs-session, avs-strategy
+  ├── optional `http` feature: axum, tower, tower-http, reqwest
+  │     HTTP server code compiled into avs-agent under this feature
+  └── Agent {
+        runner, tools, prompts, memory, sessions, strategy
+        // Agent::new(..., enable_http_server: bool)
+        // If enable_http_server is true, reads HOST/PORT from env and
+        // spawns the HTTP server as a tokio::spawn background task
+      }
 
-example-hello-agent, example-web-search-agent, example-http-agent, ...
-  └── each is a binary that builds an Agent and calls agent.run()
-      avs-agent and avs-server are never run directly
+example-hello-agent, example-web-search-agent, ...
+  └── each is a binary that builds an Agent:
+        agent.invoke_stateless(input)        — console/single-turn examples
+        Agent::new(..., true) + ctrl_c wait  — example-http-agent only
+      No example imports avs-server or calls avs_server::serve()
 ```
 
 ---
@@ -91,23 +99,32 @@ Strategy crates drop the `M: Memory` generic parameter. `Arc<Mutex<dyn Memory>>`
 - **Agent level**: primes initial context from long-term memory before calling the strategy; stores the final turn after the strategy returns.
 - **Strategy level**: multi-step strategies (Plan, Hierarchical) query memory per-step to augment intermediate prompts. The strategy uses the shared `Arc<Mutex<dyn Memory>>` it received at construction.
 
-### avs-server is a library Agent starts
+### avs-server is internal to avs-agent
 
-`avs-server` is a library crate with no binary and no Agent construction. It provides HTTP routes that Agent mounts when `http` config is present. Agent depends on `avs-server` (optional feature). Nothing depends on `avs-server` to create an Agent.
+HTTP server capability is compiled into `avs-agent` under an optional `http` cargo feature. There is no separate public-facing `avs-server` library API. The `avs-server` crate code is absorbed into `avs-agent/src/http/`.
+
+`Agent::new()` accepts `enable_http_server: bool`. When true, the constructor reads `HOST` and `PORT` env vars, builds the axum `Router`, and spawns `tokio::spawn(axum::serve(listener, router))` — a background task. The constructor returns immediately; the HTTP server runs concurrently.
+
+The dependency direction is flat — no circular dependency:
 
 ```
-avs-server  (library — routes only)
-    ↑
-avs-agent   (optional Cargo feature `http` pulls in avs-server)
-    ↑
-example and production binaries
+example-http-agent
+  └── agentverse-agent (features = ["http"])
+        └── avs-agent/src/http/ (axum routes — compiled in, not a separate crate)
 ```
 
-Every binary entry point is an Agent. HTTP is a capability Agent optionally starts.
+`Agent` has full knowledge of its own HTTP surface but nothing depends on `avs-server` as an external crate. Console examples call `agent.invoke_stateless()` directly. `example-http-agent` creates `Agent::new(..., enable_http_server: true)` then awaits a shutdown signal — it has no other HTTP-specific code.
 
 ### avs-strategy factory
 
 `avs-strategy` is the single dependency `avs-agent` needs for strategy selection. It owns a `build()` factory and re-exports all strategy types. `avs-agent` never imports `ReActStrategy` or `PlanStrategy` directly.
+
+### No Agent::run()
+
+`Agent` has no `run()` method. The agent lifecycle is:
+1. `Agent::new(...)` — builds all resources; if `enable_http_server = true`, spawns the HTTP server in a background task and returns
+2. Callers invoke `agent.invoke_stateless(input)` or `agent.invoke(user_id, session_id, input)` directly
+3. For HTTP examples, the binary keeps the process alive (e.g., `tokio::signal::ctrl_c().await`) — there is no agent-level event loop to drive
 
 ---
 
@@ -122,6 +139,19 @@ pub struct Agent {
     sessions: Arc<SessionManager>,
     strategy: Arc<dyn RunStrategy>,
 }
+
+// Constructor — enable_http_server is a flag, not stored as a field.
+// If true, Agent reads HOST/PORT from env vars and spawns the HTTP server
+// as a background tokio task before returning.
+pub fn new(
+    runner:              Arc<LlmRunner>,
+    tools:               Arc<ToolRegistry>,
+    prompts:             Arc<PromptRegistry>,
+    memory:              Arc<Mutex<dyn Memory>>,
+    store:               Arc<dyn SessionStore>,
+    strategy:            Arc<dyn RunStrategy>,
+    enable_http_server:  bool,   // if true, reads HOST/PORT and spawns HTTP task
+) -> Arc<Self>
 ```
 
 ### `Agent::invoke` (session-aware)
@@ -153,14 +183,6 @@ pub async fn invoke_stateless(&self, input: &str) -> Result<String, AgentError>
 ```
 
 No session, no history. Used by the HTTP `/invoke` route and single-turn examples. Steps 1–2 and 7–8 are skipped; memory priming (step 3) is optional.
-
-### `Agent::run`
-
-```rust
-pub async fn run(&self) -> Result<(), AgentError>
-```
-
-Starts the agent. If `http` config is present, mounts routes and serves HTTP. Otherwise, runs in integration/console mode via `avs-integration`.
 
 ---
 
@@ -234,14 +256,20 @@ pub fn build(
 
 ## avs-server Changes
 
-- `avs-server` is a library crate only — it has no binary and never constructs an Agent.
-- `avs-agent` is a library crate only — the framework is never run directly.
-- The existing `agentverse-server` binary becomes `example-http-agent`: an example that shows how to build an HTTP-serving agent using `avs-agent` with the `http` feature.
+- `avs-server` code (routes, auth, config, aether client) is absorbed into `avs-agent` under `src/http/`.
+- `avs-agent/Cargo.toml` gains an optional `http` feature that adds axum, tower, tower-http, reqwest as dependencies.
 - `SessionState` struct is removed. `AppState` is removed. Routes accept `Arc<Agent>` directly.
-- `session_agent` variable in `main.rs` is eliminated.
+- `session_agent` variable is eliminated.
+- `avs-server` as an independent workspace crate is removed from the workspace.
 - All routes (`/invoke`, `/sessions/*`, `/aether/invoke`) go through one `Arc<Agent>`.
 - `/invoke` calls `agent.invoke_stateless(input)`.
 - `/sessions/:id/messages` calls `agent.invoke(user_id, session_id, input)`.
+- `Agent::new(..., enable_http_server: true)`:
+  1. Reads `HOST` (default `"0.0.0.0"`) and `PORT` (default `3000`) from env vars.
+  2. Builds the axum `Router` internally.
+  3. Calls `tokio::spawn(async move { axum::serve(listener, router).await })`.
+  4. Returns the `Agent` — the HTTP server runs as a detached background task.
+- `avs-agent` never depends on `avs-server` as an external crate. No circular dependency.
 
 ---
 
@@ -249,16 +277,17 @@ pub fn build(
 
 Every example is rewritten as an Agent binary. Direct strategy and `ConnectionManager` construction is removed.
 
-| Example | Strategy | Tools |
-|---|---|---|
-| `example-hello-agent` | React | Calculator, DateTime |
-| `example-react-calculator` | React | Calculator |
-| `example-web-search-agent` | Plan | WebSearch |
-| `example-anthropic-react` | React | Calculator |
-| `example-code-review-agent` | Hierarchical | FileSearch, ShellTool |
-| `example-slack-hr-assistant` | React | (integration-driven) |
+| Example | Strategy | Tools | Entry point |
+|---|---|---|---|
+| `example-hello-agent` | React | Calculator, DateTime | `agent.invoke_stateless(input)` in stdin loop |
+| `example-react-calculator` | React | Calculator | `agent.invoke_stateless(input)` |
+| `example-web-search-agent` | Plan | WebSearch | `agent.invoke_stateless(input)` |
+| `example-anthropic-react` | React | Calculator | `agent.invoke_stateless(input)` |
+| `example-code-review-agent` | Hierarchical | FileSearch, ShellTool | `agent.invoke_stateless(input)` |
+| `example-slack-hr-assistant` | React | (integration-driven) | `agent.invoke_stateless(input)` |
+| `example-http-agent` | React | Calculator, DateTime | `Agent::new(..., true)` then `ctrl_c().await` |
 
-Each example carries agent config (env vars or YAML). `main.rs` creates Agent and calls `agent.run()` or `agent.invoke_stateless(input)`.
+Each example carries agent config via env vars. `main.rs` creates Agent and calls `agent.invoke_stateless()` (console examples). `example-http-agent` passes `enable_http_server: true` — the Agent spawns the HTTP server internally and the binary just waits for a shutdown signal. No example imports `agentverse-server`. No example calls `agent.run()`.
 
 ---
 

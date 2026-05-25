@@ -32,7 +32,9 @@ impl LlmRunner {
         info!(model = %model_name, provider = %provider_name, "LlmRunner initialized");
 
         let cm = ConnectionManager::from_config(config.provider.clone())?;
-        Ok(Self { connection: Arc::new(cm) })
+        Ok(Self {
+            connection: Arc::new(cm),
+        })
     }
 
     pub async fn invoke(&self, messages: Vec<Message>) -> Result<GenerateResponse, AgentError> {
