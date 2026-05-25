@@ -36,6 +36,7 @@ pub trait Memory: Send + Sync {
     fn clear(&mut self);
 }
 
+#[derive(Debug, Clone)]
 pub struct LongTermRecord {
     pub content: String,
     /// LLM-assigned or heuristic importance score, 0.0–1.0.
@@ -45,6 +46,7 @@ pub struct LongTermRecord {
 
 impl LongTermRecord {
     pub fn now(content: String, importance: f32) -> Self {
+        debug_assert!(importance >= 0.0 && importance <= 1.0, "importance must be in [0.0, 1.0]");
         Self {
             content,
             importance,
@@ -53,6 +55,7 @@ impl LongTermRecord {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct ScoredMemory {
     pub content: String,
     /// Combined score: α·recency + β·importance + γ·relevance
@@ -60,6 +63,7 @@ pub struct ScoredMemory {
     pub created_at: DateTime<Utc>,
 }
 
+/// Layer 3 user-scoped long-term store. See also `LongTermBackend` for the lower-level embedding interface.
 #[async_trait]
 pub trait MemoryStore: Send + Sync {
     async fn write(&self, user_id: &str, record: LongTermRecord) -> Result<(), MemoryError>;
