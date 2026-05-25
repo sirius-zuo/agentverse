@@ -3,30 +3,19 @@ use tracing::info;
 
 use crate::config::Config;
 use crate::error::AgentError;
-use crate::memory::Message;
+use crate::memory::{Message, MessageRole};
 use crate::model::{ConnectionManager, GenerateRequest, GenerateResponse};
-use crate::prompt::{PromptConfig, PromptRegistry};
 
 pub struct LlmRunner {
-    connection_manager: Arc<ConnectionManager>,
-    prompt_registry: PromptRegistry,
+    connection: Arc<ConnectionManager>,
 }
 
 impl LlmRunner {
-    pub fn from_config(config: Config) -> Result<Self, AgentError> {
-        let prompt_config = PromptConfig {
-            system_prompt: config.system_prompt.clone(),
-            prompts_dir: config.prompts_dir.clone(),
-            templates: std::collections::HashMap::new(),
-            examples: std::collections::HashMap::new(),
-        };
-        Self::from_config_with_prompts(config, &prompt_config)
+    pub fn new(connection: Arc<ConnectionManager>) -> Self {
+        Self { connection }
     }
 
-    pub fn from_config_with_prompts(
-        config: Config,
-        prompt_config: &PromptConfig,
-    ) -> Result<Self, AgentError> {
+    pub fn from_config(config: Config) -> Result<Self, AgentError> {
         config.validate()?;
 
         let (model_name, provider_name) = match &config.provider {
@@ -43,30 +32,31 @@ impl LlmRunner {
         info!(model = %model_name, provider = %provider_name, "LlmRunner initialized");
 
         let cm = ConnectionManager::from_config(config.provider.clone())?;
-        let prompt_registry = PromptRegistry::from_config(prompt_config)?;
-
-        Ok(Self {
-            connection_manager: Arc::new(cm),
-            prompt_registry,
-        })
+        Ok(Self { connection: Arc::new(cm) })
     }
 
-    pub fn prompt_registry(&self) -> &PromptRegistry {
-        &self.prompt_registry
-    }
-
-    /// Stateless LLM invocation. Caller supplies the full message history.
     pub async fn invoke(&self, messages: Vec<Message>) -> Result<GenerateResponse, AgentError> {
-        let system = self
-            .prompt_registry
-            .render("system", std::collections::HashMap::new())
-            .ok()
-            .filter(|s| !s.is_empty());
+        let mut system_parts: Vec<String> = Vec::new();
+        let mut conv: Vec<Message> = Vec::new();
 
-        self.connection_manager
+        for msg in messages {
+            if matches!(msg.role, MessageRole::System) {
+                system_parts.push(msg.content);
+            } else {
+                conv.push(msg);
+            }
+        }
+
+        let system = if system_parts.is_empty() {
+            None
+        } else {
+            Some(system_parts.join("\n\n"))
+        };
+
+        self.connection
             .generate(GenerateRequest {
                 system,
-                messages,
+                messages: conv,
                 tools: None,
             })
             .await

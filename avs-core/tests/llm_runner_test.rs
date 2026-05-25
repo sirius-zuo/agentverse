@@ -32,11 +32,19 @@ async fn llm_runner_invoke_takes_messages_and_returns_error_on_bad_port() {
     assert!(result.is_err(), "expected network error on closed port");
 }
 
+#[tokio::test]
+async fn llm_runner_invoke_with_system_message_fails_on_bad_port() {
+    let runner = LlmRunner::from_config(closed_port_config()).unwrap();
+    let messages = vec![
+        Message { role: MessageRole::System, content: "You are a helpful assistant.".to_string() },
+        Message { role: MessageRole::User, content: "hello".to_string() },
+    ];
+    let result = runner.invoke(messages).await;
+    assert!(result.is_err());
+}
+
 #[test]
-fn llm_runner_builder_sets_system_prompt() {
-    let result = LlmRunnerBuilder::new()
-        .config(closed_port_config())
-        .system_prompt("You are a test assistant.")
-        .build();
+fn llm_runner_builder_builds_from_config() {
+    let result = LlmRunnerBuilder::new().config(closed_port_config()).build();
     assert!(result.is_ok());
 }
