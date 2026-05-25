@@ -53,18 +53,8 @@ pub fn build(
     max_iterations: usize,
 ) -> Arc<dyn RunStrategy> {
     match kind {
-        StrategyKind::React => Arc::new(ReActStrategy::new(
-            runner,
-            prompts,
-            tools,
-            max_iterations,
-        )),
-        StrategyKind::Plan => Arc::new(PlanStrategy::new(
-            runner,
-            prompts,
-            tools,
-            max_iterations,
-        )),
+        StrategyKind::React => Arc::new(ReActStrategy::new(runner, prompts, tools, max_iterations)),
+        StrategyKind::Plan => Arc::new(PlanStrategy::new(runner, prompts, tools, max_iterations)),
         StrategyKind::Hierarchical => Arc::new(HierarchicalStrategy::new(
             runner,
             prompts,
