@@ -5,12 +5,14 @@
 //! been removed as part of the Task 3 refactor.  Task 4 will add new
 //! integration tests against the updated CycleSkeleton and ReActStrategy APIs.
 
-use agentverse::{Config, LlmRunner, PromptConfig, PromptRegistry};
-use agentverse_react::{parse::parse_response, CycleAction, CycleSkeleton};
+use agentverse::{Config, LlmRunner, PromptConfig, PromptRegistry, RunStrategy};
+use agentverse_memory::SimpleMemory;
+use agentverse_react::{parse::parse_response, CycleAction, CycleSkeleton, ReActStrategy};
 use agentverse_tools::ToolRegistry;
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 // ─── Mock tool ────────────────────────────────────────────────────────────────
 
@@ -239,4 +241,40 @@ async fn test_cycle_skeleton_execute_tool_not_found() {
     let s = make_skeleton();
     let result = s.execute_tool("missing_tool", json!({})).await;
     assert!(result.is_err());
+}
+
+// ─── ReActStrategy tests ──────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn react_run_returns_error_on_bad_port() {
+    let runner = Arc::new(
+        LlmRunner::from_config(Config {
+            provider: agentverse::ProviderConfig::OpenAI {
+                model_name: "test".to_string(),
+                api_key: "sk-test".to_string(),
+                base_url: Some("http://127.0.0.1:1/v1".to_string()),
+            },
+            max_messages: 10,
+            tools: vec![],
+            prompts_dir: None,
+            system_prompt: None,
+        })
+        .unwrap(),
+    );
+    let memory = Arc::new(Mutex::new(SimpleMemory::new(10)));
+    let strategy = ReActStrategy::new(
+        runner,
+        Arc::new(PromptRegistry::new()),
+        Arc::new(ToolRegistry::new()),
+        memory,
+        3,
+    );
+
+    let messages = vec![agentverse::Message {
+        role: agentverse::MessageRole::User,
+        content: "What is 2+2?".to_string(),
+    }];
+
+    let result = strategy.run(messages).await;
+    assert!(result.is_err(), "Expected error when LLM is unreachable");
 }
