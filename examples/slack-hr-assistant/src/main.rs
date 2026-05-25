@@ -70,7 +70,7 @@ async fn main() {
     );
 
     let agent = Arc::new(Agent::new(
-        runner, tools, prompts, memory, store, strategy, false,
+        runner, tools, prompts, memory, store, strategy, false, None,
     ));
 
     let config_path = concat!(env!("CARGO_MANIFEST_DIR"), "/agent.toml");

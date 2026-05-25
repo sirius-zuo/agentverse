@@ -75,7 +75,7 @@ async fn main() {
             .expect("session store"),
     );
 
-    let agent = Agent::new(runner, tools, prompts, memory, store, strategy, false);
+    let agent = Agent::new(runner, tools, prompts, memory, store, strategy, false, None);
 
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
 

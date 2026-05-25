@@ -193,7 +193,7 @@ mod tests {
             Arc::clone(&tools),
             5,
         );
-        Agent::new(runner, tools, prompts, memory, store, strategy, false)
+        Agent::new(runner, tools, prompts, memory, store, strategy, false, None)
     }
 
     fn make_app(agent: Arc<Agent>) -> Router {

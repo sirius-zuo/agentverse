@@ -73,7 +73,7 @@ async fn main() {
             .expect("session store"),
     );
 
-    let agent = Agent::new(runner, tools, prompts, memory, store, strategy, false);
+    let agent = Agent::new(runner, tools, prompts, memory, store, strategy, false, None);
 
     let session_id = agent.create_session("user").await.expect("create session");
 

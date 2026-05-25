@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use agentverse::memory::{Message, MessageRole};
+use agentverse::memory::{LongTermRecord, MemoryStore, Message, MessageRole};
 use agentverse::{LlmRunner, Memory, PromptRegistry, RunStrategy};
 use agentverse_session::{Session, SessionId, SessionManager, SessionStore, SessionStoreError};
 use agentverse_tools::ToolRegistry;
@@ -34,6 +34,7 @@ pub struct Agent {
     strategy: Arc<dyn RunStrategy>,
     working_buffers: Mutex<HashMap<(String, SessionId), CachedBuffer>>,
     buffer_ttl: Duration,
+    memory_store: Option<Arc<dyn MemoryStore>>,
 }
 
 impl Agent {
@@ -45,6 +46,7 @@ impl Agent {
         store: Arc<dyn SessionStore>,
         strategy: Arc<dyn RunStrategy>,
         enable_http_server: bool,
+        memory_store: Option<Arc<dyn MemoryStore>>,
     ) -> Arc<Self> {
         let agent = Arc::new(Self {
             runner,
@@ -55,6 +57,7 @@ impl Agent {
             strategy,
             working_buffers: Mutex::new(HashMap::new()),
             buffer_ttl: Duration::from_secs(300),
+            memory_store,
         });
 
         #[cfg(feature = "http")]
@@ -87,6 +90,29 @@ impl Agent {
                 content: sys,
             });
         }
+        msgs.extend(history);
+        msgs.push(Message {
+            role: MessageRole::User,
+            content: input.to_string(),
+        });
+        msgs
+    }
+
+    fn assemble_messages_with_context(
+        &self,
+        system: Option<String>,
+        long_term: Vec<Message>,
+        history: Vec<Message>,
+        input: &str,
+    ) -> Vec<Message> {
+        let mut msgs = Vec::new();
+        if let Some(sys) = system {
+            msgs.push(Message {
+                role: MessageRole::System,
+                content: sys,
+            });
+        }
+        msgs.extend(long_term);
         msgs.extend(history);
         msgs.push(Message {
             role: MessageRole::User,
@@ -165,12 +191,32 @@ impl Agent {
         self.sessions.assert_owner(user_id, session_id).await?;
 
         let history = self.get_working_buffer(user_id, session_id).await?;
+
+        // Layer 3: retrieve scored memories and inject as System context
+        let long_term_context = if let Some(ref ms) = self.memory_store {
+            ms.retrieve(user_id, input, 5)
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .map(|sm| Message {
+                    role: MessageRole::System,
+                    content: format!("[Memory] {}", sm.content),
+                })
+                .collect::<Vec<_>>()
+        } else {
+            vec![]
+        };
+
         let user_msg = Message {
             role: MessageRole::User,
             content: input.to_string(),
         };
-
-        let messages = self.assemble_messages(self.render_system(), history, input);
+        let messages = self.assemble_messages_with_context(
+            self.render_system(),
+            long_term_context,
+            history,
+            input,
+        );
         let response = self.strategy.run(messages).await?;
 
         let assistant_msg = Message {
@@ -182,6 +228,15 @@ impl Agent {
             .await?;
         self.update_working_buffer(user_id, session_id, user_msg, assistant_msg)
             .await;
+
+        // Layer 3: async fire-and-forget consolidation
+        if let Some(ms) = self.memory_store.clone() {
+            let uid = user_id.to_string();
+            let record = LongTermRecord::now(response.clone(), 0.5);
+            tokio::spawn(async move {
+                let _ = ms.write(&uid, record).await;
+            });
+        }
 
         Ok(response)
     }
@@ -227,6 +282,78 @@ impl Agent {
 }
 
 #[cfg(test)]
+mod lt_tests {
+    use super::*;
+    use agentverse::memory::{LongTermRecord, MemoryError, MemoryStore, ScoredMemory};
+    use agentverse::{Config, LlmRunner, PromptRegistry};
+    use agentverse_memory::SimpleMemory;
+    use agentverse_session::SqliteSessionStore;
+    use agentverse_strategy::{build, StrategyKind};
+    use agentverse_tools::ToolRegistry;
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+
+    struct NoopMemoryStore;
+    #[async_trait::async_trait]
+    impl MemoryStore for NoopMemoryStore {
+        async fn write(&self, _: &str, _: LongTermRecord) -> Result<(), MemoryError> {
+            Ok(())
+        }
+        async fn retrieve(
+            &self,
+            _: &str,
+            _: &str,
+            _: usize,
+        ) -> Result<Vec<ScoredMemory>, MemoryError> {
+            Ok(vec![])
+        }
+    }
+
+    #[tokio::test]
+    async fn agent_with_memory_store_creates_session_normally() {
+        let runner = Arc::new(
+            LlmRunner::from_config(Config {
+                provider: agentverse::ProviderConfig::OpenAI {
+                    model_name: "test".to_string(),
+                    api_key: "sk-test".to_string(),
+                    base_url: Some("http://127.0.0.1:1/v1".to_string()),
+                },
+                max_messages: 10,
+                tools: vec![],
+                prompts_dir: None,
+                system_prompt: None,
+            })
+            .unwrap(),
+        );
+        let tools = Arc::new(ToolRegistry::new());
+        let prompts = Arc::new(PromptRegistry::new());
+        let memory: Arc<Mutex<dyn agentverse::Memory>> =
+            Arc::new(Mutex::new(SimpleMemory::new(50)));
+        let strategy = build(
+            StrategyKind::React,
+            Arc::clone(&runner),
+            Arc::clone(&prompts),
+            Arc::clone(&tools),
+            3,
+        );
+        let store = Arc::new(SqliteSessionStore::new("sqlite::memory:").await.unwrap());
+        let ms: Arc<dyn agentverse::memory::MemoryStore> = Arc::new(NoopMemoryStore);
+        let agent = Agent::new(
+            runner,
+            tools,
+            prompts,
+            memory,
+            store,
+            strategy,
+            false,
+            Some(ms),
+        );
+        let sid = agent.create_session("alice").await.unwrap();
+        assert!(agent.get_session("alice", sid).await.unwrap().is_some());
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use agentverse::{Config, LlmRunner, PromptRegistry};
@@ -264,7 +391,7 @@ mod tests {
             3,
         );
         let store = Arc::new(SqliteSessionStore::new("sqlite::memory:").await.unwrap());
-        Agent::new(runner, tools, prompts, memory, store, strategy, false)
+        Agent::new(runner, tools, prompts, memory, store, strategy, false, None)
     }
 
     #[tokio::test]
