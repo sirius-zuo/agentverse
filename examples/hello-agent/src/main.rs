@@ -76,6 +76,8 @@ async fn main() {
 
     let agent = Agent::new(runner, tools, prompts, memory, store, strategy, false);
 
+    let session_id = agent.create_session("user").await.expect("create session");
+
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
 
     loop {
@@ -99,7 +101,7 @@ async fn main() {
             break;
         }
 
-        match agent.invoke_stateless(&input).await {
+        match agent.invoke("user", session_id, &input).await {
             Ok(answer) => println!("\nAgent: {}\n", answer),
             Err(e) => eprintln!("Error: {}\n", e),
         }
