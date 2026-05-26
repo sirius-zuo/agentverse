@@ -27,7 +27,7 @@ AgentVerse/
 ├── avs-core/              # LlmRunner, Config, ProviderConfig, PromptRegistry, Memory + Tool traits
 ├── avs-agent/             # Agent: single LLM access point; optional HTTP sidecar (feature = "http")
 ├── avs-strategy/          # build() factory + StrategyKind enum; re-exports all strategies
-├── avs-session/           # Session model, SessionManager, SessionStore trait, SQLite store
+├── avs-session/           # Session model, SessionManager, SessionMemory trait, SqliteSessionMemory
 ├── avs-logging/           # avs_logging::init() (RUST_LOG / LOG_FORMAT)
 ├── avs-react/             # ReAct strategy loop
 ├── avs-plan/              # Plan-and-Execute + Hierarchical strategies
@@ -36,9 +36,9 @@ AgentVerse/
 ├── avs-mcp/               # MCP client for external tool servers
 ├── avs-guardrails/        # Security: prompt injection, output filtering, rate limiting
 ├── avs-integration/       # IntegrationRuntime with Slack, console connectors
-├── avs-memory/            # Memory traits (Memory, ShortTermMemory)
-├── avs-memory-lancedb/    # LanceDB-backed long-term memory
-├── avs-memory-pgvector/   # pgvector-backed long-term memory + Postgres session store
+├── avs-memory/            # Layer-1 working buffer (SimpleMemory, AgentMemory) and LongTermBackend trait
+├── avs-memory-lancedb/    # LanceDB Layer-3 LongtermMemory backend
+├── avs-memory-pgvector/   # pgvector Layer-3 LongtermMemory backend + PostgresSessionMemory
 └── examples/
     ├── hello-agent/        # Interactive REPL (ReAct + Calculator + DateTime)
     ├── react-calculator/   # Multi-step ReAct with Calculator
@@ -53,14 +53,15 @@ AgentVerse/
 
 | Concept | Crate | Description |
 |---------|-------|-------------|
-| **Agent** | `agentverse-agent` | Single LLM access point — composes `LlmRunner`, strategy, and `SessionManager` |
+| **Agent** | `agentverse-agent` | Single LLM access point — composes `LlmRunner`, strategy, `SessionManager`, and memory layers |
 | **StrategyKind** | `agentverse-strategy` | Enum selecting the orchestration loop; `build()` constructs an `Arc<dyn RunStrategy>` |
 | **LlmRunner** | `agentverse` | Renders prompts and calls model providers |
 | **Config** | `agentverse` | Provider settings (model name, API key, base URL) |
 | **PromptRegistry** | `agentverse` | Template engine (Minijinja) + example storage |
 | **Tool** | `agentverse` | `AsyncTool` trait — the single interface for all agent tools |
-| **SessionManager** | `agentverse-session` | Per-user conversation history with ownership checks |
-| **RunStrategy** | `agentverse` | Trait implemented by all strategies; `Agent` calls `strategy.run(messages)` |
+| **SessionMemory** | `agentverse-session` | Layer-2 durable conversation transcript; `SessionManager` wraps it with ownership checks |
+| **LongtermMemory** | `agentverse` | Layer-3 cross-session knowledge store; opt-in via `Agent::new(..., Some(store))` |
+| **RunStrategy** | `agentverse` | Trait implemented by all strategies; pure `Vec<Message> → String`, no memory coupling |
 
 ---
 
@@ -125,7 +126,6 @@ agentverse-agent = { path = "path/to/avs-agent" }
 agentverse-strategy = { path = "path/to/avs-strategy" }
 agentverse-session = { path = "path/to/avs-session" }
 agentverse-logging = { path = "path/to/avs-logging" }
-agentverse-memory = { path = "path/to/avs-memory" }
 agentverse-tools = { path = "path/to/avs-tools" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 ```
@@ -136,12 +136,10 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 use agentverse::{Config, LlmRunner, PromptConfig, PromptRegistry, ProviderConfig};
 use agentverse_agent::Agent;
 use agentverse_logging as avs_logging;
-use agentverse_memory::SimpleMemory;
-use agentverse_session::SqliteSessionStore;
+use agentverse_session::SqliteSessionMemory;
 use agentverse_strategy::{build, StrategyKind};
 use agentverse_tools::{Calculator, DateTimeTool, ToolRegistry};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() {
@@ -175,24 +173,20 @@ async fn main() {
         ..Default::default()
     }).expect("prompts"));
 
-    let memory: Arc<Mutex<dyn agentverse::Memory>> =
-        Arc::new(Mutex::new(SimpleMemory::new(50)));
-
     let strategy = build(
         StrategyKind::React,
         Arc::clone(&runner),
         Arc::clone(&prompts),
         Arc::clone(&tools),
-        Arc::clone(&memory),
         10,
     );
 
-    let store = Arc::new(
-        SqliteSessionStore::new("sqlite::memory:").await.expect("store")
+    let session_memory = Arc::new(
+        SqliteSessionMemory::new("sqlite::memory:").await.expect("session memory")
     );
 
-    // enable_http_server=false: console only
-    let agent = Agent::new(runner, tools, prompts, memory, store, strategy, false);
+    // enable_http_server=false: console only; None = no long-term memory
+    let agent = Agent::new(runner, tools, prompts, session_memory, strategy, false, None);
 
     // Stateless invoke (no session history)
     match agent.invoke_stateless("What is 6 * 7?").await {
@@ -223,7 +217,7 @@ agentverse-agent = { path = "path/to/avs-agent", features = ["http"] }
 ```rust
 // enable_http_server=true: spawns HTTP server as a background task
 // reads HOST (default 0.0.0.0) and PORT (default 3000) from env
-let _agent = Agent::new(runner, tools, prompts, memory, store, strategy, true);
+let _agent = Agent::new(runner, tools, prompts, session_memory, strategy, true, None);
 
 // Keep the process alive
 tokio::signal::ctrl_c().await.unwrap();
@@ -556,26 +550,33 @@ docker run -p 3000:3000 \
 
 ## Adding Long-Term Memory
 
-### LanceDB Memory
+Layer-3 `LongtermMemory` is opt-in. Pass `Some(store)` as the last argument to `Agent::new`; pass `None` to disable it entirely.
 
 ```rust
-use agentverse_lancedb::{LanceDbMemory, LanceDbConfig};
+use agentverse::memory::LongtermMemory;
+use std::sync::Arc;
 
-let memory = LanceDbMemory::new(LanceDbConfig {
-    uri: "/tmp/agentverse-vector-db".to_string(),
-    table_name: "memories".to_string(),
-}).await?;
+// Any type implementing LongtermMemory works here
+let longterm: Arc<dyn LongtermMemory> = Arc::new(MyLongtermStore::new().await?);
+
+let agent = Agent::new(runner, tools, prompts, session_memory, strategy, false, Some(longterm));
 ```
 
-### pgvector Memory
+On each `invoke` call the agent:
+1. Retrieves the top-k scored memories (`score = α·recency + β·importance + γ·relevance`) and injects them into the system prompt.
+2. Asynchronously writes the completed turn as a `LongtermRecord` (fire-and-forget, off the latency path).
 
-```rust
-use agentverse_pgvector::{PgVectorMemory, PgVectorConfig};
+Background workers (`ConsolidationWorker`, `CleanupWorker` in `avs-agent`) handle batch consolidation and retention-window cleanup independently of the per-turn write.
 
-let memory = PgVectorMemory::new(PgVectorConfig {
-    connection_string: "postgresql://user:pass@localhost/agentverse".to_string(),
-    table_name: "memories".to_string(),
-}).await?;
+### SQLite database location
+
+`SqliteSessionMemory` (Layer 2) uses a file URL like `"sqlite:agent.db"`. The file is created in the working directory where `cargo run` is invoked (typically the repo root). Most examples use `"sqlite::memory:"` — an in-process database that does not write to disk and is lost when the process exits.
+
+To inspect data at runtime:
+```bash
+sqlite3 agent.db "SELECT session_id, role, content FROM messages ORDER BY sequence_num;"
+# or enable sqlx trace logging for bound parameters:
+RUST_LOG=sqlx=trace cargo run -p example-http-agent
 ```
 
 ---
@@ -703,7 +704,7 @@ Strategy completed        iteration=3
 | `agentverse` | `LlmRunner`, `Config`, `ProviderConfig`, `PromptRegistry`, `RunStrategy`, `AsyncTool`, `ModelError` |
 | `agentverse-agent` | `Agent`, `AgentError` |
 | `agentverse-strategy` | `build()`, `StrategyKind` |
-| `agentverse-session` | `SqliteSessionStore`, `SessionManager`, `SessionId` |
+| `agentverse-session` | `SqliteSessionMemory`, `SessionMemory`, `SessionManager`, `SessionId` |
 | `agentverse-logging` | `init()` |
 | `agentverse-react` | `ReActStrategy` |
 | `agentverse-plan` | `PlanStrategy`, `HierarchicalStrategy` |

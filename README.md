@@ -13,17 +13,21 @@ your binary
         │     └── HierarchicalStrategy (avs-plan)
         ├── LlmRunner  (avs-core)
         ├── ToolRegistry  (avs-tools)
-        ├── SessionManager  (avs-session)
+        ├── Memory layers
+        │     ├── Layer 1: CacheMemory   — in-process RAM buffer, TTL-evicted
+        │     ├── Layer 2: SessionMemory — durable per-user conversation transcript (SQLite/Postgres)
+        │     └── Layer 3: LongtermMemory — distilled cross-session knowledge (vector store, optional)
         └── HTTP server (avs-agent `http` feature, optional)
 ```
 
-`Agent` is the only way to invoke the LLM. You choose a strategy with `agentverse_strategy::build(StrategyKind::*)` and pass it to `Agent::new`. The agent handles session history, prompt assembly, and optional HTTP serving.
+`Agent` is the only way to invoke the LLM. You choose a strategy with `agentverse_strategy::build(StrategyKind::*)` and pass it to `Agent::new`. The agent handles session history, memory assembly, prompt construction, and optional HTTP serving.
 
 ## What Is Implemented
 
-- **Agent**: `agentverse-agent::Agent` is the single LLM access point. Composes `LlmRunner`, `StrategyKind`, and `SessionManager`.
-- **Strategies**: ReAct, Plan-and-Execute, Hierarchical planning. Selected at construction via `agentverse-strategy::build`.
-- **Multi-user sessions**: `Agent` routes through `SessionManager` for durable per-user conversation history.
+- **Agent**: `agentverse-agent::Agent` is the single LLM access point. Composes `LlmRunner`, `StrategyKind`, `SessionManager`, and memory layers.
+- **Strategies**: ReAct, Plan-and-Execute, Hierarchical planning. Selected at construction via `agentverse-strategy::build`. Strategies are pure `Vec<Message> → String` with no memory coupling.
+- **Three-layer memory**: Layer 1 `CacheMemory` (in-process, TTL), Layer 2 `SessionMemory` (durable transcript), Layer 3 `LongtermMemory` (distilled cross-session knowledge, opt-in).
+- **Multi-user sessions**: `Agent` routes through `SessionManager` for durable per-user conversation history with ownership enforcement.
 - **HTTP sidecar**: `Agent::new(..., enable_http_server: true)` spawns an HTTP server as a background task. The agent can run without it; the server cannot run without the agent.
 - **Agent-owned integrations**: `IntegrationRuntime` reads connector config, starts Slack/GitHub/WhatsApp or console connectors, calls an agent handler, and sends responses.
 - **Strategies and tools**: `ToolRegistry`, built-in tools, and MCP adapters are wired into strategies at agent construction.
@@ -173,17 +177,19 @@ agent:
 ```text
 Agent::invoke(user_id, session_id, input)
   1. assert_owner(user_id, session_id)
-  2. load history from SessionStore
-  3. assemble messages: [system] + history + user_input
-  4. strategy.run(messages)
-  5. append_turn(user_msg, assistant_msg) after successful LLM response
-  6. return assistant text
+  2. get/rehydrate Layer-1 CacheMemory from Layer-2 SessionMemory if cold
+  3. retrieve scored Layer-3 LongtermMemory for the input (optional)
+  4. assemble messages: [system + long-term context] + cache + user_input
+  5. strategy.run(messages)
+  6. append_turn to Layer-1 cache and Layer-2 SessionMemory
+  7. async: consolidate turn into Layer-3 LongtermMemory
+  8. return assistant text
 ```
 
-Available stores:
+Available session memory backends:
 
-- `SqliteSessionStore` in `agentverse-session` (default)
-- `PostgresSessionStore` in `agentverse-memory-pgvector`
+- `SqliteSessionMemory` in `agentverse-session` (default)
+- `PostgresSessionMemory` in `agentverse-memory-pgvector`
 
 ## Integrations
 
@@ -219,7 +225,7 @@ Strategies are selected via `agentverse-strategy::build`:
 ```rust
 use agentverse_strategy::{build, StrategyKind};
 
-let strategy = build(StrategyKind::React, runner, prompts, tools, memory, 10);
+let strategy = build(StrategyKind::React, runner, prompts, tools, 10);
 // StrategyKind::Plan
 // StrategyKind::Hierarchical
 ```
@@ -266,14 +272,14 @@ let registry = Arc::new(PromptRegistry::from_config(&PromptConfig {
 | `avs-core` | `agentverse` | Core config, errors, prompts, model providers, `LlmRunner`, memory and tool traits |
 | `avs-agent` | `agentverse-agent` | Single LLM access point: `Agent` composes `LlmRunner`, strategy, and `SessionManager`; optional HTTP sidecar |
 | `avs-strategy` | `agentverse-strategy` | Strategy factory (`build`, `StrategyKind`) and umbrella re-exports |
-| `avs-session` | `agentverse-session` | Session model, session manager, store trait, SQLite session store |
+| `avs-session` | `agentverse-session` | Session model, `SessionManager`, `SessionMemory` trait, `SqliteSessionMemory` |
 | `avs-integration` | `agentverse-integration` | Agent-owned connector runtime for console, Slack, GitHub, WhatsApp |
 | `avs-react` | `agentverse-react` | ReAct strategy loop |
 | `avs-plan` | `agentverse-plan` | Plan-and-Execute and hierarchical strategies |
 | `avs-router` | `agentverse-router` | Strategy router |
 | `avs-tools` | `agentverse-tools` | Built-in tools and async `ToolRegistry` |
 | `avs-mcp` | `agentverse-mcp` | MCP client and tool adapter |
-| `avs-memory` | `agentverse-memory` | Memory helpers and long-term backend traits |
+| `avs-memory` | `agentverse-memory` | Layer-1 working buffer (`SimpleMemory`, `AgentMemory`) and `LongTermBackend` trait |
 | `avs-memory-lancedb` | `agentverse-memory-lancedb` | LanceDB long-term memory backend |
 | `avs-memory-pgvector` | `agentverse-memory-pgvector` | pgvector memory backend and Postgres session store |
 | `avs-guardrails` | `agentverse-guardrails` | Prompt, output, action, and rate-limit guardrails |
