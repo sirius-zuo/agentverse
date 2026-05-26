@@ -5,190 +5,37 @@
 
 use super::planner::generate_plan;
 use agentverse::memory::{Message, MessageRole};
-use agentverse::{AgentError, ConnectionManager, GenerateRequest, PromptRegistry};
+use agentverse::{AgentError, LlmRunner, PromptRegistry};
 use agentverse_guardrails::check_output;
 use agentverse_tools::ToolRegistry;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 /// Plan-and-Execute strategy: plan first, then execute.
 ///
 /// 1. Generate a plan from the user's request
 /// 2. Execute each step sequentially (tools or reasoning)
 /// 3. Ask the model to synthesize a final answer from all results
-pub struct PlanStrategy<M>
-where
-    M: agentverse::Memory,
-{
-    model: Arc<ConnectionManager>,
-    registry: Arc<PromptRegistry>,
-    tools: ToolRegistry,
-    memory: Arc<Mutex<M>>,
+pub struct PlanStrategy {
+    runner: Arc<LlmRunner>,
+    prompts: Arc<PromptRegistry>,
+    tools: Arc<ToolRegistry>,
     max_iterations: usize,
 }
 
-impl<M> PlanStrategy<M>
-where
-    M: agentverse::Memory,
-{
+impl PlanStrategy {
     /// Create a new Plan-and-Execute strategy.
     pub fn new(
-        model: Arc<ConnectionManager>,
-        registry: Arc<PromptRegistry>,
-        tools: ToolRegistry,
-        memory: Arc<Mutex<M>>,
+        runner: Arc<LlmRunner>,
+        prompts: Arc<PromptRegistry>,
+        tools: Arc<ToolRegistry>,
         max_iterations: usize,
     ) -> Self {
         Self {
-            model,
-            registry,
+            runner,
+            prompts,
             tools,
-            memory,
             max_iterations,
         }
-    }
-
-    /// Execute the plan-and-execute cycle.
-    pub async fn run(&mut self, input: String) -> Result<String, AgentError> {
-        self.memory.lock().await.append(agentverse::Message {
-            role: agentverse::memory::MessageRole::User,
-            content: input.clone(),
-        });
-
-        let tool_summaries = self.tools.tool_summaries();
-
-        let conversation = self
-            .memory
-            .lock()
-            .await
-            .last_n(20)
-            .await
-            .map_err(|e| AgentError::Memory(e.to_string()))?
-            .iter()
-            .map(|m| {
-                let role_str = match m.role {
-                    agentverse::memory::MessageRole::System => "System",
-                    agentverse::memory::MessageRole::User => "User",
-                    agentverse::memory::MessageRole::Assistant => "Assistant",
-                    agentverse::memory::MessageRole::Tool => "Tool",
-                };
-                format!("{}: {}", role_str, m.content)
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        let plan = generate_plan(
-            &self.model,
-            &self.registry,
-            &input,
-            &tool_summaries,
-            &conversation,
-        )
-        .await?;
-
-        self.memory.lock().await.append(agentverse::Message {
-            role: agentverse::memory::MessageRole::System,
-            content: format!("Plan generated: {}", plan.description),
-        });
-
-        let mut step_results: Vec<(usize, String)> = Vec::new();
-
-        for step in &plan.steps {
-            if step.id > self.max_iterations {
-                self.memory.lock().await.append(agentverse::Message {
-                    role: agentverse::memory::MessageRole::System,
-                    content: format!(
-                        "Stopping at step {}: max iterations ({}) reached",
-                        step.id, self.max_iterations
-                    ),
-                });
-                break;
-            }
-
-            let result = if let Some(ref tool_name) = step.tool {
-                let args = step.args.clone().unwrap_or_default();
-                match self.execute_tool(tool_name, args).await {
-                    Ok(result) => result,
-                    Err(e) => format!("Tool error: {}", e),
-                }
-            } else {
-                format!("Reasoning: {}", step.description)
-            };
-
-            step_results.push((step.id, result.clone()));
-
-            self.memory.lock().await.append(agentverse::Message {
-                role: agentverse::memory::MessageRole::System,
-                content: format!("Step {} executed: {}", step.id, result),
-            });
-        }
-
-        // Phase 3: Synthesize final answer
-        let conversation_history = self
-            .memory
-            .lock()
-            .await
-            .last_n(20)
-            .await
-            .map_err(|e| AgentError::Memory(e.to_string()))?
-            .iter()
-            .map(|m| {
-                let role_str = match m.role {
-                    agentverse::memory::MessageRole::System => "System",
-                    agentverse::memory::MessageRole::User => "User",
-                    agentverse::memory::MessageRole::Assistant => "Assistant",
-                    agentverse::memory::MessageRole::Tool => "Tool",
-                };
-                format!("{}: {}", role_str, m.content)
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        let final_prompt = format!(
-            "You executed the following plan:\n\
-             Plan: {}\n\n\
-             Step results:\n{}\n\n\
-             Based on these results, provide the final answer to the user's request.\n\n\
-             User request: {}\n\n\
-             Conversation history:\n{}",
-            plan.description,
-            step_results
-                .iter()
-                .map(|(id, result)| format!("Step {}: {}", id, result))
-                .collect::<Vec<_>>()
-                .join("\n"),
-            input,
-            conversation_history
-        );
-
-        let gen_request = GenerateRequest {
-            system: Some(final_prompt),
-            messages: vec![Message {
-                role: MessageRole::User,
-                content: "Based on the executed plan, provide the final answer.".to_string(),
-            }],
-            tools: None,
-        };
-
-        let answer = self
-            .model
-            .generate(gen_request)
-            .await
-            .map_err(AgentError::Model)?;
-
-        check_output(&answer.content).map_err(|e| {
-            AgentError::Guardrail(match e {
-                agentverse_guardrails::GuardrailError::OutputFiltered(msg) => {
-                    agentverse::GuardrailError::OutputFiltered(msg)
-                }
-                agentverse_guardrails::GuardrailError::PromptInjection(msg) => {
-                    agentverse::GuardrailError::PromptInjection(msg)
-                }
-                _ => agentverse::GuardrailError::OutputFiltered(e.to_string()),
-            })
-        })?;
-
-        Ok(answer.content)
     }
 
     /// Execute a single tool by name.
@@ -210,11 +57,138 @@ where
 }
 
 #[async_trait::async_trait]
-impl<M> agentverse::RunStrategy for PlanStrategy<M>
-where
-    M: agentverse::Memory + Send + 'static,
-{
-    async fn process(&mut self, input: String) -> Result<String, agentverse::AgentError> {
-        self.run(input).await
+impl agentverse::RunStrategy for PlanStrategy {
+    async fn run(&self, messages: Vec<Message>) -> Result<String, AgentError> {
+        let input = messages
+            .iter()
+            .rev()
+            .find(|m| matches!(m.role, MessageRole::User))
+            .map(|m| m.content.clone())
+            .unwrap_or_default();
+
+        let tool_summaries = self.tools.tool_summaries();
+
+        let conversation = messages
+            .iter()
+            .map(|m| {
+                let role = match m.role {
+                    MessageRole::System => "System",
+                    MessageRole::User => "User",
+                    MessageRole::Assistant => "Assistant",
+                    MessageRole::Tool => "Tool",
+                };
+                format!("{}: {}", role, m.content)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let plan = generate_plan(
+            &self.runner,
+            &self.prompts,
+            &input,
+            &tool_summaries,
+            &conversation,
+        )
+        .await?;
+
+        let mut step_results: Vec<(usize, String)> = Vec::new();
+
+        for step in &plan.steps {
+            if step.id > self.max_iterations {
+                break;
+            }
+
+            let result = if let Some(ref tool_name) = step.tool {
+                let args = step.args.clone().unwrap_or_default();
+                match self.execute_tool(tool_name, args).await {
+                    Ok(r) => r,
+                    Err(e) => format!("Tool error: {}", e),
+                }
+            } else {
+                format!("Reasoning: {}", step.description)
+            };
+
+            step_results.push((step.id, result));
+        }
+
+        let final_prompt = format!(
+            "You executed the following plan:\nPlan: {}\n\nStep results:\n{}\n\nProvide the final answer to: {}",
+            plan.description,
+            step_results
+                .iter()
+                .map(|(id, r)| format!("Step {}: {}", id, r))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            input
+        );
+
+        let synthesis_messages = vec![
+            Message {
+                role: MessageRole::System,
+                content: final_prompt,
+            },
+            Message {
+                role: MessageRole::User,
+                content: "Based on the executed plan, provide the final answer.".to_string(),
+            },
+        ];
+
+        let answer = self.runner.invoke(synthesis_messages).await?;
+
+        check_output(&answer.content).map_err(|e| {
+            AgentError::Guardrail(match e {
+                agentverse_guardrails::GuardrailError::OutputFiltered(msg) => {
+                    agentverse::GuardrailError::OutputFiltered(msg)
+                }
+                agentverse_guardrails::GuardrailError::PromptInjection(msg) => {
+                    agentverse::GuardrailError::PromptInjection(msg)
+                }
+                _ => agentverse::GuardrailError::OutputFiltered(e.to_string()),
+            })
+        })?;
+
+        Ok(answer.content)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentverse::{Config, LlmRunner, PromptRegistry, RunStrategy};
+    use agentverse_tools::ToolRegistry;
+    use std::sync::Arc;
+
+    fn make_plan_strategy() -> PlanStrategy {
+        let runner = Arc::new(
+            LlmRunner::from_config(Config {
+                provider: agentverse::ProviderConfig::OpenAI {
+                    model_name: "test".to_string(),
+                    api_key: "sk-test".to_string(),
+                    base_url: Some("http://127.0.0.1:1/v1".to_string()),
+                },
+                max_messages: 10,
+                tools: vec![],
+                prompts_dir: None,
+                system_prompt: None,
+            })
+            .unwrap(),
+        );
+        PlanStrategy::new(
+            runner,
+            Arc::new(PromptRegistry::new()),
+            Arc::new(ToolRegistry::new()),
+            5,
+        )
+    }
+
+    #[tokio::test]
+    async fn plan_run_returns_error_on_bad_port() {
+        let strategy = make_plan_strategy();
+        let messages = vec![agentverse::Message {
+            role: agentverse::memory::MessageRole::User,
+            content: "Search for rust".to_string(),
+        }];
+        let result = strategy.run(messages).await;
+        assert!(result.is_err());
     }
 }

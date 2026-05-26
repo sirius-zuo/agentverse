@@ -1,5 +1,5 @@
-use agentverse_agent::{Agent, AgentError};
-use agentverse_session::SessionStoreError;
+use crate::{Agent, AgentError};
+use agentverse_session::SessionMemoryError;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
@@ -9,16 +9,10 @@ use std::sync::Arc;
 use tracing::{error, info};
 use uuid::Uuid;
 
-/// Shared sub-state for session handlers
-#[derive(Clone)]
-pub struct SessionState {
-    pub agent: Arc<Agent>,
-}
-
-fn store_err_status(e: &SessionStoreError) -> StatusCode {
+fn store_err_status(e: &SessionMemoryError) -> StatusCode {
     match e {
-        SessionStoreError::NotFound(_) => StatusCode::NOT_FOUND,
-        SessionStoreError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        SessionMemoryError::NotFound(_) => StatusCode::NOT_FOUND,
+        SessionMemoryError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
 
@@ -30,7 +24,7 @@ pub struct CreateSessionRequest {
 }
 
 pub async fn create_session(
-    State(state): State<SessionState>,
+    State(agent): State<Arc<Agent>>,
     Json(req): Json<CreateSessionRequest>,
 ) -> impl IntoResponse {
     if req.user_id.trim().is_empty() {
@@ -39,7 +33,7 @@ pub async fn create_session(
             Json(serde_json::json!({ "error": "user_id must not be empty" })),
         );
     }
-    match state.agent.create_session(&req.user_id).await {
+    match agent.create_session(&req.user_id).await {
         Ok(session_id) => {
             info!(user_id = %req.user_id, %session_id, "Session created");
             (
@@ -66,7 +60,7 @@ pub struct SendMessageRequest {
 }
 
 pub async fn send_message(
-    State(state): State<SessionState>,
+    State(agent): State<Arc<Agent>>,
     Path(session_id): Path<Uuid>,
     Json(req): Json<SendMessageRequest>,
 ) -> impl IntoResponse {
@@ -76,11 +70,7 @@ pub async fn send_message(
             Json(serde_json::json!({ "error": "message must not be empty" })),
         );
     }
-    match state
-        .agent
-        .invoke(&req.user_id, session_id, &req.message)
-        .await
-    {
+    match agent.invoke(&req.user_id, session_id, &req.message).await {
         Ok(reply) => {
             info!(user_id = %req.user_id, %session_id, "Message sent");
             (
@@ -107,11 +97,11 @@ pub struct GetSessionQuery {
 }
 
 pub async fn get_session(
-    State(state): State<SessionState>,
+    State(agent): State<Arc<Agent>>,
     Path(session_id): Path<Uuid>,
     Query(query): Query<GetSessionQuery>,
 ) -> impl IntoResponse {
-    match state.agent.get_session(&query.user_id, session_id).await {
+    match agent.get_session(&query.user_id, session_id).await {
         Ok(Some(session)) => (
             StatusCode::OK,
             Json(serde_json::json!({
@@ -143,11 +133,11 @@ pub struct EndSessionRequest {
 }
 
 pub async fn end_session(
-    State(state): State<SessionState>,
+    State(agent): State<Arc<Agent>>,
     Path(session_id): Path<Uuid>,
     Json(req): Json<EndSessionRequest>,
 ) -> impl IntoResponse {
-    match state.agent.end_session(&req.user_id, session_id).await {
+    match agent.end_session(&req.user_id, session_id).await {
         Ok(()) => {
             info!(user_id = %req.user_id, %session_id, "Session ended");
             (StatusCode::NO_CONTENT, Json(serde_json::json!({})))
@@ -166,15 +156,16 @@ pub async fn end_session(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentverse::{Config, LlmRunner, ProviderConfig};
-    use agentverse_agent::Agent;
-    use agentverse_session::SqliteSessionStore;
+    use agentverse::{Config, LlmRunner, PromptRegistry, ProviderConfig};
+    use agentverse_session::SqliteSessionMemory;
+    use agentverse_strategy::{build as build_strategy, StrategyKind};
+    use agentverse_tools::ToolRegistry;
     use axum::routing::{delete, get, post};
     use axum::{body::Body, http::Request, Router};
     use tower::ServiceExt;
 
-    async fn make_session_state() -> SessionState {
-        let store = Arc::new(SqliteSessionStore::new("sqlite::memory:").await.unwrap());
+    async fn make_agent() -> Arc<Agent> {
+        let session_memory = Arc::new(SqliteSessionMemory::new("sqlite::memory:").await.unwrap());
         let runner = Arc::new(
             LlmRunner::from_config(Config {
                 provider: ProviderConfig::OpenAI {
@@ -189,18 +180,33 @@ mod tests {
             })
             .unwrap(),
         );
-        SessionState {
-            agent: Arc::new(Agent::new(runner, store)),
-        }
+        let tools = Arc::new(ToolRegistry::new());
+        let prompts = Arc::new(PromptRegistry::new());
+        let strategy = build_strategy(
+            StrategyKind::React,
+            Arc::clone(&runner),
+            Arc::clone(&prompts),
+            Arc::clone(&tools),
+            5,
+        );
+        Agent::new(
+            runner,
+            tools,
+            prompts,
+            session_memory,
+            strategy,
+            false,
+            None,
+        )
     }
 
-    fn make_app(state: SessionState) -> Router {
+    fn make_app(agent: Arc<Agent>) -> Router {
         Router::new()
             .route("/sessions", post(create_session))
             .route("/sessions/:session_id/messages", post(send_message))
             .route("/sessions/:session_id", get(get_session))
             .route("/sessions/:session_id", delete(end_session))
-            .with_state(state)
+            .with_state(agent)
     }
 
     async fn post_json(
@@ -222,8 +228,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_session_returns_201() {
-        let state = make_session_state().await;
-        let app = make_app(state);
+        let agent = make_agent().await;
+        let app = make_app(agent);
         let res = post_json(app, "/sessions", serde_json::json!({ "user_id": "alice" })).await;
         assert_eq!(res.status(), StatusCode::CREATED);
         let body = body_json(res).await;
@@ -232,16 +238,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_session_empty_user_returns_400() {
-        let state = make_session_state().await;
-        let app = make_app(state);
+        let agent = make_agent().await;
+        let app = make_app(agent);
         let res = post_json(app, "/sessions", serde_json::json!({ "user_id": "" })).await;
         assert_eq!(res.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
     async fn test_get_session_not_found_returns_404() {
-        let state = make_session_state().await;
-        let app = make_app(state);
+        let agent = make_agent().await;
+        let app = make_app(agent);
         let unknown_id = Uuid::new_v4();
         let req = Request::get(format!("/sessions/{}?user_id=alice", unknown_id))
             .body(Body::empty())
@@ -252,10 +258,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_session_returns_200() {
-        let state = make_session_state().await;
+        let agent = make_agent().await;
         // Create a session first
-        let session_id = state.agent.create_session("alice").await.unwrap();
-        let app = make_app(state);
+        let session_id = agent.create_session("alice").await.unwrap();
+        let app = make_app(agent);
         let req = Request::get(format!("/sessions/{}?user_id=alice", session_id))
             .body(Body::empty())
             .unwrap();
@@ -268,9 +274,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_message_empty_message_returns_400() {
-        let state = make_session_state().await;
-        let session_id = state.agent.create_session("alice").await.unwrap();
-        let app = make_app(state);
+        let agent = make_agent().await;
+        let session_id = agent.create_session("alice").await.unwrap();
+        let app = make_app(agent);
         let res = post_json(
             app,
             &format!("/sessions/{}/messages", session_id),
@@ -282,9 +288,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_end_session_returns_204() {
-        let state = make_session_state().await;
-        let session_id = state.agent.create_session("alice").await.unwrap();
-        let app = make_app(state);
+        let agent = make_agent().await;
+        let session_id = agent.create_session("alice").await.unwrap();
+        let app = make_app(agent);
         let req = Request::delete(format!("/sessions/{}", session_id))
             .header("content-type", "application/json")
             .body(Body::from(
@@ -297,9 +303,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_message_wrong_user_returns_404() {
-        let state = make_session_state().await;
-        let session_id = state.agent.create_session("alice").await.unwrap();
-        let app = make_app(state);
+        let agent = make_agent().await;
+        let session_id = agent.create_session("alice").await.unwrap();
+        let app = make_app(agent);
         // Bob tries to message Alice's session
         let res = post_json(
             app,

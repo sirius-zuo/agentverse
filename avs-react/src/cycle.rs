@@ -3,32 +3,21 @@
 //! Provides the fixed loop structure; each strategy only implements
 //! its own `step()` logic via a closure.
 
-use agentverse::{AgentError, ConnectionManager, PromptRegistry};
-use agentverse_guardrails::{check_output, check_prompt};
+use agentverse::{AgentError, LlmRunner, PromptRegistry};
+use agentverse_guardrails::check_output;
 use agentverse_tools::ToolRegistry;
 use serde_json::Value;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 /// The fixed cycle skeleton that all strategies share.
 ///
 /// Each strategy provides its own `step()` closure that decides
 /// what happens on each iteration.
-pub struct CycleSkeleton<M>
-where
-    M: agentverse::Memory,
-{
-    prompt_registry: Arc<PromptRegistry>,
-    model: Arc<ConnectionManager>,
-    tools: ToolRegistry,
-    memory: Arc<Mutex<M>>,
+pub struct CycleSkeleton {
+    pub runner: Arc<LlmRunner>,
+    pub prompts: Arc<PromptRegistry>,
+    pub tools: Arc<ToolRegistry>,
     max_iterations: usize,
-    current_iteration: usize,
-    total_usage: agentverse::UsageStats,
-    /// Set after the react preamble has been pushed to memory, so it only
-    /// happens once per agent lifetime and build_request() knows to skip
-    /// embedding tools in the system prompt.
-    react_primed: bool,
 }
 
 /// Represents the strategy's decision for the next action.
@@ -44,27 +33,19 @@ pub enum CycleAction {
     Error { message: String },
 }
 
-impl<M> CycleSkeleton<M>
-where
-    M: agentverse::Memory,
-{
+impl CycleSkeleton {
     /// Create a new cycle skeleton.
     pub fn new(
-        prompt_registry: Arc<PromptRegistry>,
-        model: Arc<ConnectionManager>,
-        tools: ToolRegistry,
-        memory: Arc<Mutex<M>>,
+        runner: Arc<LlmRunner>,
+        prompts: Arc<PromptRegistry>,
+        tools: Arc<ToolRegistry>,
         max_iterations: usize,
     ) -> Self {
         Self {
-            prompt_registry,
-            model,
+            runner,
+            prompts,
             tools,
-            memory,
             max_iterations,
-            current_iteration: 0,
-            total_usage: agentverse::UsageStats::default(),
-            react_primed: false,
         }
     }
 
@@ -79,7 +60,7 @@ where
     }
 
     /// Render tool descriptions as a human-readable string for prompt injection.
-    fn build_tools_str(&self) -> String {
+    pub fn build_tools_str(&self) -> String {
         self.tools
             .schema()
             .into_iter()
@@ -118,113 +99,46 @@ where
             .join("\n\n")
     }
 
-    /// Prime the conversation with the react preamble if a `react.j2` file was
-    /// loaded into the registry.  Called once before the first user message.
+    /// Optionally insert the ReAct preamble into a message buffer.
     ///
-    /// The rendered preamble contains tool descriptions and few-shot examples.
-    /// Because it is inserted as the first `User` message and never changes, it
-    /// stays inside the stable prefix that the penultimate-message cache
-    /// breakpoint captures on every subsequent turn — it is effectively free
-    /// after the first round-trip.
-    pub async fn prime_react_preamble(&mut self) {
-        if self.react_primed || !self.prompt_registry.has_react_template() {
-            return;
+    /// If a `react.j2` template is registered, the rendered preamble (containing
+    /// tool descriptions and few-shot examples) is inserted before the first
+    /// non-system message.  When no template is present the buffer is returned
+    /// unchanged — this keeps the method safe for non-ReAct strategies.
+    pub fn prepare_buffer(&self, messages: Vec<agentverse::Message>) -> Vec<agentverse::Message> {
+        if !self.prompts.has_react_template() {
+            return messages;
         }
 
         let tools_str = self.build_tools_str();
-
         let mut ctx = std::collections::HashMap::new();
         ctx.insert("tools".to_string(), serde_json::Value::String(tools_str));
 
         // Inject "react_examples" set if present, under the key "examples".
-        if let Some(examples) = self.prompt_registry.get_examples("react_examples") {
+        if let Some(examples) = self.prompts.get_examples("react_examples") {
             if let Ok(val) = serde_json::to_value(examples) {
                 ctx.insert("examples".to_string(), val);
             }
         }
 
-        if let Ok(preamble) = self.prompt_registry.render("react", ctx) {
+        let mut buf = messages;
+        if let Ok(preamble) = self.prompts.render("react", ctx) {
             if !preamble.trim().is_empty() {
-                self.memory.lock().await.pin(vec![agentverse::Message {
-                    role: agentverse::memory::MessageRole::User,
-                    content: preamble,
-                }]);
+                let insert_pos = buf
+                    .iter()
+                    .position(|m| !matches!(m.role, agentverse::MessageRole::System))
+                    .unwrap_or(0);
+                buf.insert(
+                    insert_pos,
+                    agentverse::Message {
+                        role: agentverse::MessageRole::User,
+                        content: preamble,
+                    },
+                );
             }
         }
 
-        self.react_primed = true;
-    }
-
-    /// Returns true after `prime_react_preamble` has run successfully.
-    pub fn is_react_primed(&self) -> bool {
-        self.react_primed
-    }
-
-    /// Build a structured GenerateRequest from the system template, memory, and tools.
-    ///
-    /// When the react preamble is active (`react_primed`), tool descriptions
-    /// live in the stable preamble message and are NOT duplicated in the system
-    /// prompt.  When there is no react preamble, tools are embedded in the
-    /// system prompt as before (backward-compatible with examples that use the
-    /// default registry).
-    pub async fn build_request(&self) -> Result<agentverse::GenerateRequest, AgentError> {
-        let mut sys_context = std::collections::HashMap::new();
-        if !self.react_primed {
-            // No react preamble — embed tools in system prompt (default behaviour).
-            sys_context.insert(
-                "tools".to_string(),
-                serde_json::Value::String(self.build_tools_str()),
-            );
-        }
-        let system = self.prompt_registry.render("system", sys_context).ok();
-
-        let messages = self
-            .memory
-            .lock()
-            .await
-            .last_n(20)
-            .await
-            .map_err(|e| AgentError::Memory(e.to_string()))?;
-
-        // ReAct uses text-based tool descriptions — do not send native tool
-        // schemas, which would cause the model to emit tool_calls instead of
-        // Thought/Action/Answer text.
-        Ok(agentverse::GenerateRequest {
-            system,
-            messages,
-            tools: None,
-        })
-    }
-
-    /// Build the request with guardrail checking on the rendered system prompt.
-    pub async fn build_request_with_guardrails(
-        &self,
-    ) -> Result<agentverse::GenerateRequest, AgentError> {
-        let request = self.build_request().await?;
-        if let Some(ref system) = request.system {
-            check_prompt(system).map_err(|e| match e {
-                agentverse_guardrails::GuardrailError::PromptInjection(msg) => {
-                    AgentError::Guardrail(agentverse::GuardrailError::PromptInjection(msg))
-                }
-                agentverse_guardrails::GuardrailError::OutputFiltered(msg) => {
-                    AgentError::Guardrail(agentverse::GuardrailError::OutputFiltered(msg))
-                }
-                _ => AgentError::Guardrail(agentverse::GuardrailError::PromptInjection(
-                    e.to_string(),
-                )),
-            })?;
-        }
-        Ok(request)
-    }
-
-    /// Accumulate usage stats from a single generate() call.
-    pub fn accumulate_usage(&mut self, usage: agentverse::UsageStats) {
-        self.total_usage += usage;
-    }
-
-    /// Return accumulated usage stats across all iterations.
-    pub fn total_usage(&self) -> agentverse::UsageStats {
-        self.total_usage
+        buf
     }
 
     /// Apply output guardrail to a model response.
@@ -245,45 +159,63 @@ where
         self.tools.len()
     }
 
-    /// Return the current iteration count.
-    pub fn current_iteration(&self) -> usize {
-        self.current_iteration
-    }
-
     /// Return max iterations.
     pub fn max_iterations(&self) -> usize {
         self.max_iterations
     }
+}
 
-    /// Return a reference to the model.
-    pub fn model(&self) -> &ConnectionManager {
-        &self.model
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentverse::{Config, LlmRunner, PromptRegistry};
+    use agentverse_tools::ToolRegistry;
+    use std::sync::Arc;
+
+    fn make_skeleton() -> CycleSkeleton {
+        let runner = Arc::new(
+            LlmRunner::from_config(Config {
+                provider: agentverse::ProviderConfig::OpenAI {
+                    model_name: "test".to_string(),
+                    api_key: "sk-test".to_string(),
+                    base_url: Some("http://127.0.0.1:1/v1".to_string()),
+                },
+                max_messages: 10,
+                tools: vec![],
+                prompts_dir: None,
+                system_prompt: None,
+            })
+            .unwrap(),
+        );
+        CycleSkeleton::new(
+            runner,
+            Arc::new(PromptRegistry::new()),
+            Arc::new(ToolRegistry::new()),
+            5,
+        )
     }
 
-    /// Return a reference to the tool registry.
-    pub fn tools(&self) -> &ToolRegistry {
-        &self.tools
+    #[test]
+    fn skeleton_tool_count_zero() {
+        let s = make_skeleton();
+        assert_eq!(s.tool_count(), 0);
     }
 
-    /// Return a reference to the memory.
-    pub fn memory(&self) -> &Arc<Mutex<M>> {
-        &self.memory
+    #[test]
+    fn skeleton_max_iterations() {
+        let s = make_skeleton();
+        assert_eq!(s.max_iterations(), 5);
     }
 
-    /// Return a reference to the prompt registry.
-    pub fn prompt_registry(&self) -> &Arc<PromptRegistry> {
-        &self.prompt_registry
-    }
-
-    /// Increment the iteration counter and return the new value.
-    pub fn next_iteration(&mut self) -> usize {
-        self.current_iteration += 1;
-        self.current_iteration
-    }
-
-    /// Reset the iteration counter to zero. Call at the start of each run()
-    /// so the limit applies per question, not across the agent's lifetime.
-    pub fn reset_iteration(&mut self) {
-        self.current_iteration = 0;
+    #[test]
+    fn skeleton_prepare_buffer_no_preamble() {
+        let s = make_skeleton();
+        let msgs = vec![agentverse::Message {
+            role: agentverse::MessageRole::User,
+            content: "hi".to_string(),
+        }];
+        let buf = s.prepare_buffer(msgs);
+        // Without a react prompt template, buffer is unchanged
+        assert_eq!(buf.len(), 1);
     }
 }

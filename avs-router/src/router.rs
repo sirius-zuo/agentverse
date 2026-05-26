@@ -3,10 +3,11 @@
 //! At runtime, the router asks the LLM which strategy to use for a given request.
 
 use agentverse::memory::{Message, MessageRole};
-use agentverse::{AgentError, ConnectionManager, GenerateRequest, PromptRegistry};
+use agentverse::{AgentError, LlmRunner, PromptRegistry};
 use agentverse_guardrails::check_prompt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Strategy names that the router can choose from.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -30,16 +31,16 @@ impl std::fmt::Display for StrategyName {
 ///
 /// At runtime, the router asks the LLM which strategy to use for a given request.
 pub struct StrategyRouter {
-    model: ConnectionManager,
+    runner: Arc<LlmRunner>,
     strategies: Vec<StrategyName>,
-    registry: Option<std::sync::Arc<PromptRegistry>>,
+    registry: Option<Arc<PromptRegistry>>,
 }
 
 impl StrategyRouter {
-    /// Create a new StrategyRouter with the given model and available strategies.
-    pub fn new(model: ConnectionManager, strategies: Vec<StrategyName>) -> Self {
+    /// Create a new StrategyRouter with the given runner and available strategies.
+    pub fn new(runner: Arc<LlmRunner>, strategies: Vec<StrategyName>) -> Self {
         Self {
-            model,
+            runner,
             strategies,
             registry: None,
         }
@@ -47,12 +48,12 @@ impl StrategyRouter {
 
     /// Create a router with prompt registry for templated prompts.
     pub fn with_registry(
-        model: ConnectionManager,
+        runner: Arc<LlmRunner>,
         strategies: Vec<StrategyName>,
-        registry: std::sync::Arc<PromptRegistry>,
+        registry: Arc<PromptRegistry>,
     ) -> Self {
         Self {
-            model,
+            runner,
             strategies,
             registry: Some(registry),
         }
@@ -111,16 +112,18 @@ impl StrategyRouter {
             )
         };
 
-        let gen_request = GenerateRequest {
-            system: Some(system),
-            messages: vec![Message {
+        let messages = vec![
+            Message {
+                role: MessageRole::System,
+                content: system,
+            },
+            Message {
                 role: MessageRole::User,
                 content: format!("Request: {}", request),
-            }],
-            tools: None,
-        };
+            },
+        ];
 
-        let response = self.model.generate(gen_request).await?;
+        let response = self.runner.invoke(messages).await?;
         let selected = response.content.trim().to_lowercase();
 
         match selected.as_str() {
@@ -178,5 +181,46 @@ mod tests {
 
         let deserialized: StrategyName = serde_json::from_str(&json).unwrap();
         assert_eq!(name, deserialized);
+    }
+}
+
+#[cfg(test)]
+mod new_tests {
+    use super::*;
+    use agentverse::{Config, LlmRunner};
+    use std::sync::Arc;
+
+    fn make_router() -> StrategyRouter {
+        let runner = Arc::new(
+            LlmRunner::from_config(Config {
+                provider: agentverse::ProviderConfig::OpenAI {
+                    model_name: "test".to_string(),
+                    api_key: "sk-test".to_string(),
+                    base_url: Some("http://127.0.0.1:1/v1".to_string()),
+                },
+                max_messages: 10,
+                tools: vec![],
+                prompts_dir: None,
+                system_prompt: None,
+            })
+            .unwrap(),
+        );
+        StrategyRouter::new(
+            runner,
+            vec![StrategyName::ReAct, StrategyName::PlanAndExecute],
+        )
+    }
+
+    #[test]
+    fn router_available_strategies_contains_react() {
+        let router = make_router();
+        assert!(router.available_strategies().contains(&StrategyName::ReAct));
+    }
+
+    #[tokio::test]
+    async fn router_route_returns_error_on_bad_port() {
+        let router = make_router();
+        let result = router.route("search for rust").await;
+        assert!(result.is_err());
     }
 }

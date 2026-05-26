@@ -13,13 +13,14 @@ members = [
     "avs-router",
     "avs-tools",
     "avs-mcp",
-    "avs-server",
+    "avs-strategy",
     "examples/hello-agent",
     "examples/slack-hr-assistant",
     "examples/react-calculator",
     "examples/web-search-agent",
     "examples/code-review-agent",
     "examples/anthropic-react",
+    "examples/http-agent",
     "avs-session",
 ]
 resolver = "2"

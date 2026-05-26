@@ -47,14 +47,6 @@ impl Memory for SimpleMemory {
         self.pinned = messages;
     }
 
-    async fn prime_from_long_term(
-        &mut self,
-        _query: &str,
-        _top_k: usize,
-    ) -> Result<(), MemoryError> {
-        Ok(())
-    }
-
     async fn flush(&mut self) -> Result<(), MemoryError> {
         Ok(())
     }
@@ -62,5 +54,40 @@ impl Memory for SimpleMemory {
     fn clear(&mut self) {
         self.pinned.clear();
         self.window.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentverse::memory::MessageRole;
+
+    #[tokio::test]
+    async fn simple_memory_append_and_last_n() {
+        let mut m = SimpleMemory::new(5);
+        for i in 0..3u32 {
+            m.append(Message {
+                role: MessageRole::User,
+                content: format!("msg {}", i),
+            });
+        }
+        let msgs = m.last_n(2).await.unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[1].content, "msg 2");
+    }
+
+    #[tokio::test]
+    async fn simple_memory_evicts_beyond_max() {
+        let mut m = SimpleMemory::new(2);
+        for i in 0..4u32 {
+            m.append(Message {
+                role: MessageRole::User,
+                content: format!("msg {}", i),
+            });
+        }
+        let msgs = m.last_n(10).await.unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].content, "msg 2");
+        assert_eq!(msgs[1].content, "msg 3");
     }
 }

@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -31,9 +32,86 @@ pub trait Memory: Send + Sync {
     fn append(&mut self, message: Message);
     async fn last_n(&mut self, n: usize) -> Result<Vec<Message>, MemoryError>;
     fn pin(&mut self, messages: Vec<Message>);
-    async fn prime_from_long_term(&mut self, query: &str, top_k: usize) -> Result<(), MemoryError>;
     async fn flush(&mut self) -> Result<(), MemoryError>;
     fn clear(&mut self);
 }
 
+#[derive(Debug, Clone)]
+pub struct LongtermRecord {
+    pub content: String,
+    /// LLM-assigned or heuristic importance score, 0.0–1.0.
+    pub importance: f32,
+    pub created_at: DateTime<Utc>,
+}
+
+impl LongtermRecord {
+    pub fn now(content: String, importance: f32) -> Self {
+        debug_assert!(
+            (0.0..=1.0).contains(&importance),
+            "importance must be in [0.0, 1.0]"
+        );
+        Self {
+            content,
+            importance,
+            created_at: Utc::now(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ScoredMemory {
+    pub content: String,
+    /// Combined score: α·recency + β·importance + γ·relevance
+    pub score: f32,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Layer 3 user-scoped long-term store. See also `LongTermBackend` for the lower-level embedding interface.
+#[async_trait]
+pub trait LongtermMemory: Send + Sync {
+    async fn write(&self, user_id: &str, record: LongtermRecord) -> Result<(), MemoryError>;
+    async fn retrieve(
+        &self,
+        user_id: &str,
+        query: &str,
+        top_k: usize,
+    ) -> Result<Vec<ScoredMemory>, MemoryError>;
+}
+
 mod short_term;
+
+#[cfg(test)]
+mod store_tests {
+    use super::*;
+
+    struct NoopMemoryStore;
+
+    #[async_trait]
+    impl LongtermMemory for NoopMemoryStore {
+        async fn write(&self, _: &str, _: LongtermRecord) -> Result<(), MemoryError> {
+            Ok(())
+        }
+        async fn retrieve(
+            &self,
+            _: &str,
+            _: &str,
+            _: usize,
+        ) -> Result<Vec<ScoredMemory>, MemoryError> {
+            Ok(vec![])
+        }
+    }
+
+    #[tokio::test]
+    async fn noop_memory_store_retrieve_returns_empty() {
+        let store = NoopMemoryStore;
+        let result = store.retrieve("alice", "test query", 5).await.unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn long_term_record_now_sets_fields() {
+        let r = LongtermRecord::now("hello".to_string(), 0.7);
+        assert_eq!(r.content, "hello");
+        assert!((r.importance - 0.7).abs() < 1e-6);
+    }
+}

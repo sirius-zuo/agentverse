@@ -50,9 +50,21 @@ impl Config {
             ProviderConfig::OpenAI {
                 model_name,
                 api_key,
-                ..
+                base_url,
+            } => {
+                if model_name.is_empty() {
+                    return Err(AgentError::Config(ConfigError::Missing(
+                        "provider.model_name is required".to_string(),
+                    )));
+                }
+                // api_key is optional when a custom base_url is set (local/self-hosted endpoints)
+                if api_key.is_empty() && base_url.is_none() {
+                    return Err(AgentError::Config(ConfigError::Missing(
+                        "provider.api_key is required".to_string(),
+                    )));
+                }
             }
-            | ProviderConfig::Anthropic {
+            ProviderConfig::Anthropic {
                 model_name,
                 api_key,
             }

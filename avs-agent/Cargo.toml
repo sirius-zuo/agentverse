@@ -4,11 +4,40 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
+[features]
+http = [
+    "dep:axum",
+    "dep:tower",
+    "dep:tower-http",
+    "dep:reqwest",
+    "dep:serde",
+    "dep:serde_json",
+    "dep:uuid",
+]
+
 [dependencies]
 agentverse = { path = "../avs-core" }
 agentverse-session = { path = "../avs-session" }
+agentverse-strategy = { path = "../avs-strategy" }
+agentverse-tools = { path = "../avs-tools" }
 thiserror.workspace = true
+tokio = { workspace = true }
+async-trait.workspace = true
+tracing.workspace = true
+chrono = { workspace = true }
+
+# Optional — only compiled with `http` feature
+axum = { workspace = true, optional = true }
+tower = { workspace = true, optional = true }
+tower-http = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
 
 [dev-dependencies]
-async-trait.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+agentverse-memory = { path = "../avs-memory" }
+agentverse-tools = { path = "../avs-tools" }
+agentverse-session = { path = "../avs-session" }
+agentverse-strategy = { path = "../avs-strategy" }

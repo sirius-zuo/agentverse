@@ -1,14 +1,14 @@
 //! Run with: cargo test -p agentverse-memory-pgvector -- --ignored
 use agentverse::memory::{Message, MessageRole};
-use agentverse_memory_pgvector::PostgresSessionStore;
-use agentverse_session::store::SessionStore;
+use agentverse_memory_pgvector::PostgresSessionMemory;
+use agentverse_session::store::SessionMemory;
 
 const TEST_DB: &str = "postgresql://localhost/agentverse_test";
 
 #[tokio::test]
 #[ignore = "requires live PostgreSQL at localhost/agentverse_test"]
 async fn postgres_create_and_get_session() {
-    let store = PostgresSessionStore::new(TEST_DB).await.unwrap();
+    let store = PostgresSessionMemory::new(TEST_DB).await.unwrap();
     let session = store.create("pg-user-1").await.unwrap();
     let fetched = store.get(session.id).await.unwrap().unwrap();
     assert_eq!(fetched.user_id, "pg-user-1");
@@ -17,7 +17,7 @@ async fn postgres_create_and_get_session() {
 #[tokio::test]
 #[ignore = "requires live PostgreSQL at localhost/agentverse_test"]
 async fn postgres_append_and_load_messages() {
-    let store = PostgresSessionStore::new(TEST_DB).await.unwrap();
+    let store = PostgresSessionMemory::new(TEST_DB).await.unwrap();
     let session = store.create("pg-user-2").await.unwrap();
     store
         .append_message(
@@ -37,7 +37,7 @@ async fn postgres_append_and_load_messages() {
 #[tokio::test]
 #[ignore = "requires live PostgreSQL at localhost/agentverse_test"]
 async fn postgres_append_turn_persists_both_in_order() {
-    let store = PostgresSessionStore::new(TEST_DB).await.unwrap();
+    let store = PostgresSessionMemory::new(TEST_DB).await.unwrap();
     let session = store.create("pg-user-3").await.unwrap();
     store
         .append_turn(

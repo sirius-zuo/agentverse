@@ -1,25 +1,26 @@
 // examples/anthropic-react/src/main.rs
 //
-// ReAct agent using AnthropicProvider with prompt caching.
+// ReAct agent using Anthropic provider with prompt caching.
 //
 // The system prompt lives in prompts/system.j2 — a substantial block that
-// intentionally exceeds Anthropic's 1 024-token cache minimum.  It is tagged
+// intentionally exceeds Anthropic's 1024-token cache minimum.  It is tagged
 // with cache_control: ephemeral on every request.  The first call writes it
 // to the cache (cache_write_tokens > 0); subsequent iterations read it back
-// at ~10 % of normal input token cost (cache_read_tokens > 0).
-// The [tokens] line at the end shows the cumulative split.
+// at ~10% of normal input token cost (cache_read_tokens > 0).
 //
 // Run:
 //   ANTHROPIC_API_KEY=sk-ant-... \
 //   cargo run -p example-anthropic-react
 
-use agentverse::{ConnectionManager, PromptConfig, PromptRegistry};
+use agentverse::{Config, LlmRunner, PromptConfig, PromptRegistry, ProviderConfig};
+use agentverse_agent::Agent;
 use agentverse_logging as avs_logging;
-use agentverse_memory::SimpleMemory;
-use agentverse_react::ReActStrategy;
+use agentverse_session::SqliteSessionMemory;
+use agentverse_strategy::{build, StrategyKind};
 use agentverse_tools::{Calculator, ToolRegistry};
+use std::io::Write;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::io::{AsyncBufReadExt, BufReader};
 
 #[tokio::main]
 async fn main() {
@@ -33,57 +34,83 @@ async fn main() {
         .unwrap_or_else(|_| "claude-haiku-4-5-20251001".to_string());
 
     tracing::info!(model = %model_name, "Anthropic ReAct Agent");
-    tracing::info!("Tool: Calculator");
-    tracing::info!("Prompt caching: enabled (system prompt + penultimate message)");
+    println!("Type an arithmetic question. Type \"exit\" or press Ctrl+C to quit.\n");
 
-    let model = Arc::new(ConnectionManager::anthropic(
-        "https://api.anthropic.com",
-        &model_name,
-        &api_key,
-    ));
+    let runner = Arc::new(
+        LlmRunner::from_config(Config {
+            provider: ProviderConfig::Anthropic {
+                model_name: model_name.clone(),
+                api_key,
+            },
+            max_messages: 50,
+            tools: vec![],
+            prompts_dir: None,
+            system_prompt: None,
+        })
+        .expect("runner config"),
+    );
 
-    // Load the system prompt from prompts/system.j2 (relative to the workspace
-    // root, where `cargo run` is invoked).
-    let registry = Arc::new(
+    let mut tool_registry = ToolRegistry::new();
+    tool_registry.register(Calculator);
+    let tools = Arc::new(tool_registry);
+
+    let prompts = Arc::new(
         PromptRegistry::from_config(&PromptConfig {
-            prompts_dir: Some("examples/anthropic-react/prompts".to_string()),
+            prompts_dir: Some(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string()),
             ..Default::default()
         })
         .expect("prompt config"),
     );
 
-    let memory = Arc::new(Mutex::new(SimpleMemory::new(50)));
-    let mut tools = ToolRegistry::new();
-    tools.register(Calculator);
-    let mut agent = ReActStrategy::new(registry, model, tools, memory, 15);
+    let strategy = build(
+        StrategyKind::React,
+        Arc::clone(&runner),
+        Arc::clone(&prompts),
+        Arc::clone(&tools),
+        15,
+    );
+    let session_memory = Arc::new(
+        SqliteSessionMemory::new("sqlite::memory:")
+            .await
+            .expect("session store"),
+    );
 
-    // Multi-step arithmetic that requires four sequential tool calls:
-    //   step 1: 137 * 48  = 6576
-    //   step 2: 256 / 4   = 64
-    //   step 3: 6576 + 64 = 6640
-    //   step 4: 6640 - 19 = 6621
-    // Each iteration re-sends the system prompt; after the first write it is
-    // served from cache, so cache_read_tokens grows with each loop iteration.
-    let question = "What is (137 * 48) + (256 / 4) - 19?";
-    println!("> {}", question);
+    let agent = Agent::new(
+        runner,
+        tools,
+        prompts,
+        session_memory,
+        strategy,
+        false,
+        None,
+    );
 
-    match agent.run(question.to_string()).await {
-        Ok(result) => {
-            println!("\nAgent: {}", result.answer);
-            println!(
-                "\n[tokens] input={} output={} cache_write={} cache_read={}",
-                result.total_usage.input_tokens,
-                result.total_usage.output_tokens,
-                result.total_usage.cache_write_tokens,
-                result.total_usage.cache_read_tokens,
-            );
-            if result.total_usage.cache_read_tokens > 0 {
-                println!(
-                    "[cache]  {} tokens served from cache across loop iterations",
-                    result.total_usage.cache_read_tokens
-                );
+    let mut lines = BufReader::new(tokio::io::stdin()).lines();
+
+    loop {
+        print!("You: ");
+        std::io::stdout().flush().ok();
+
+        let input = match lines.next_line().await {
+            Ok(Some(line)) => line,
+            _ => {
+                println!("\nGoodbye!");
+                break;
             }
+        };
+
+        let input = input.trim().to_string();
+        if input.is_empty() {
+            continue;
         }
-        Err(e) => eprintln!("Error: {}", e),
+        if input.eq_ignore_ascii_case("exit") {
+            println!("Goodbye!");
+            break;
+        }
+
+        match agent.invoke_stateless(&input).await {
+            Ok(answer) => println!("\nAgent: {}\n", answer),
+            Err(e) => eprintln!("Error: {}\n", e),
+        }
     }
 }

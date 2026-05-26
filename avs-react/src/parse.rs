@@ -40,6 +40,16 @@ pub fn parse_response(response: &str) -> CycleAction {
         }
     }
 
+    // ToolCall takes priority over Answer: if the model hallucinated a full
+    // Thought→Action→Observation→Answer trace in one shot, we still dispatch
+    // the real tool rather than returning the hallucinated answer.
+    if let Some(tool_name) = found_action {
+        let args = found_action_input
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or(Value::Null);
+        return CycleAction::ToolCall { tool_name, args };
+    }
+
     // Answer captures everything from the Answer: label to end-of-response so
     // multi-line answers (bullet lists, etc.) are not truncated.
     if let Some(idx) = answer_idx {
@@ -55,13 +65,6 @@ pub fn parse_response(response: &str) -> CycleAction {
         if !answer.is_empty() {
             return CycleAction::Done { answer };
         }
-    }
-
-    if let Some(tool_name) = found_action {
-        let args = found_action_input
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or(Value::Null);
-        return CycleAction::ToolCall { tool_name, args };
     }
 
     // Strip a leading "Thought: " prefix so the caller doesn't double-wrap it.
@@ -149,11 +152,28 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_answer_overrides_action() {
+    fn test_parse_answer_only() {
         let result = parse_response("Thought: done.\nAnswer: The answer is 42");
         match result {
             CycleAction::Done { answer } => assert_eq!(answer, "The answer is 42"),
             other => panic!("Expected Done, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_tool_call_overrides_hallucinated_answer() {
+        // Model generates a full Thought→Action→Observation→Answer trace in one
+        // shot, hallucinating the Observation.  ToolCall must win so the real
+        // tool is dispatched instead of returning the hallucinated answer.
+        let result = parse_response(
+            "Thought: I need the current time.\nAction: datetime\nAction Input: {}\nObservation: 2024-01-01 00:00:00\nAnswer: It is 2024-01-01.",
+        );
+        match result {
+            CycleAction::ToolCall { tool_name, args } => {
+                assert_eq!(tool_name, "datetime");
+                assert_eq!(args, Value::Object(serde_json::Map::new()));
+            }
+            other => panic!("Expected ToolCall, got {:?}", other),
         }
     }
 

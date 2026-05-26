@@ -81,14 +81,6 @@ async fn test_clear_resets_both_pinned_and_window() {
 }
 
 #[tokio::test]
-async fn test_prime_from_long_term_is_noop() {
-    let mut m = SimpleMemory::new(10);
-    m.prime_from_long_term("query", 5).await.unwrap();
-    let result = m.last_n(10).await.unwrap();
-    assert!(result.is_empty());
-}
-
-#[tokio::test]
 async fn test_flush_is_noop() {
     let mut m = SimpleMemory::new(10);
     m.append(user_msg("msg"));

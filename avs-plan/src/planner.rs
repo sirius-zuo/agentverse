@@ -1,5 +1,5 @@
 use agentverse::memory::{Message, MessageRole};
-use agentverse::{AgentError, ConnectionManager, GenerateRequest, PromptRegistry};
+use agentverse::{AgentError, LlmRunner, PromptRegistry};
 use agentverse_guardrails::check_prompt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -84,7 +84,7 @@ impl Plan {
 
 /// Generate a plan from the LLM using the templated prompt.
 pub async fn generate_plan(
-    model: &ConnectionManager,
+    runner: &LlmRunner,
     registry: &PromptRegistry,
     request: &str,
     tools: &str,
@@ -121,16 +121,18 @@ pub async fn generate_plan(
         })
     })?;
 
-    let request_obj = GenerateRequest {
-        system: Some(strategy_prompt),
-        messages: vec![Message {
+    let messages = vec![
+        Message {
+            role: MessageRole::System,
+            content: strategy_prompt,
+        },
+        Message {
             role: MessageRole::User,
             content: format!("Request: {}", request),
-        }],
-        tools: None,
-    };
+        },
+    ];
 
-    let response = model.generate(request_obj).await?;
+    let response = runner.invoke(messages).await?;
 
     let raw = response.content.trim();
     let raw = raw.strip_prefix("```json").unwrap_or(raw);
@@ -162,7 +164,7 @@ pub async fn generate_plan(
 
 /// Decompose a complex request into sub-goals.
 pub async fn decompose_request(
-    model: &ConnectionManager,
+    runner: &LlmRunner,
     registry: &PromptRegistry,
     request: &str,
 ) -> Result<Vec<String>, AgentError> {
@@ -193,16 +195,18 @@ pub async fn decompose_request(
         })
     })?;
 
-    let request_obj = GenerateRequest {
-        system: Some(strategy_prompt),
-        messages: vec![Message {
+    let messages = vec![
+        Message {
+            role: MessageRole::System,
+            content: strategy_prompt,
+        },
+        Message {
             role: MessageRole::User,
             content: format!("Request: {}", request),
-        }],
-        tools: None,
-    };
+        },
+    ];
 
-    let response = model.generate(request_obj).await?;
+    let response = runner.invoke(messages).await?;
 
     let raw = response.content.trim();
     let raw = raw.strip_prefix("```json").unwrap_or(raw);

@@ -1,12 +1,26 @@
 //! Integration tests for StrategyRouter.
 
+use agentverse::{Config, LlmRunner};
 use agentverse_router::{StrategyName, StrategyRouter};
+use std::sync::Arc;
 
 fn make_router() -> StrategyRouter {
-    let model =
-        agentverse::ConnectionManager::openai("https://api.openai.com/v1", "gpt-4o", "test-key");
+    let runner = Arc::new(
+        LlmRunner::from_config(Config {
+            provider: agentverse::ProviderConfig::OpenAI {
+                model_name: "gpt-4o".to_string(),
+                api_key: "test-key".to_string(),
+                base_url: Some("https://api.openai.com/v1".to_string()),
+            },
+            max_messages: 10,
+            tools: vec![],
+            prompts_dir: None,
+            system_prompt: None,
+        })
+        .unwrap(),
+    );
     StrategyRouter::new(
-        model,
+        runner,
         vec![
             StrategyName::ReAct,
             StrategyName::PlanAndExecute,

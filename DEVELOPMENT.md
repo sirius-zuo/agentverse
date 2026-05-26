@@ -14,8 +14,6 @@ Complete guide for developing, testing, and deploying agents with AgentVerse.
 - [Deploying Agents](#deploying-agents)
 - [Adding Long-Term Memory](#adding-long-term-memory)
 - [Integrating External Systems](#integrating-external-systems)
-- [Using the HTTP Server](#using-the-http-server)
-- [Aether Adapter — Stdio Mode](#aether-adapter--stdio-mode)
 - [Debugging & Observability](#debugging--observability)
 
 ---
@@ -26,8 +24,11 @@ AgentVerse is a modular Rust framework organized as a Cargo workspace:
 
 ```
 AgentVerse/
-├── avs-core/              # Core: Agent, Config, PromptRegistry, Memory, Tool traits
-├── avs-logging/           # Logging init: avs_logging::init() (RUST_LOG / LOG_FORMAT)
+├── avs-core/              # LlmRunner, Config, ProviderConfig, PromptRegistry, Memory + Tool traits
+├── avs-agent/             # Agent: single LLM access point; optional HTTP sidecar (feature = "http")
+├── avs-strategy/          # build() factory + StrategyKind enum; re-exports all strategies
+├── avs-session/           # Session model, SessionManager, SessionMemory trait, SqliteSessionMemory
+├── avs-logging/           # avs_logging::init() (RUST_LOG / LOG_FORMAT)
 ├── avs-react/             # ReAct strategy loop
 ├── avs-plan/              # Plan-and-Execute + Hierarchical strategies
 ├── avs-router/            # Dynamic strategy routing
@@ -35,31 +36,32 @@ AgentVerse/
 ├── avs-mcp/               # MCP client for external tool servers
 ├── avs-guardrails/        # Security: prompt injection, output filtering, rate limiting
 ├── avs-integration/       # IntegrationRuntime with Slack, console connectors
-├── avs-memory/            # Memory traits (Memory, ShortTermMemory)
-├── avs-memory-lancedb/    # LanceDB-backed long-term memory
-├── avs-memory-pgvector/   # pgvector-backed long-term memory
-├── avs-server/            # Standalone HTTP server
-└── examples/              # Example agents
-    ├── hello-agent/       # Interactive REPL with Calculator + DateTime
-    ├── react-calculator/  # Multi-step ReAct loop with Calculator
-    ├── web-search-agent/  # Plan-and-Execute with WebSearch (CLI args)
-    ├── anthropic-react/   # Anthropic Claude with prompt caching
-    ├── code-review-agent/ # Hierarchical planning with FileSearch + ShellTool
-    └── slack-hr-assistant/ # IntegrationRuntime Slack/console bot
+├── avs-memory/            # Layer-1 working buffer (SimpleMemory, AgentMemory) and LongTermBackend trait
+├── avs-memory-lancedb/    # LanceDB Layer-3 LongtermMemory backend
+├── avs-memory-pgvector/   # pgvector Layer-3 LongtermMemory backend + PostgresSessionMemory
+└── examples/
+    ├── hello-agent/        # Interactive REPL (ReAct + Calculator + DateTime)
+    ├── react-calculator/   # Multi-step ReAct with Calculator
+    ├── web-search-agent/   # Plan-and-Execute with WebSearch
+    ├── anthropic-react/    # Anthropic Claude with prompt caching
+    ├── code-review-agent/  # Hierarchical planning with FileSearch + ShellTool
+    ├── slack-hr-assistant/ # IntegrationRuntime Slack/console bot
+    └── http-agent/         # Agent with enable_http_server=true
 ```
 
 ### Key Concepts
 
 | Concept | Crate | Description |
 |---------|-------|-------------|
-| **Agent** | `agentverse` | Main entry point — holds config, memory, prompt registry |
-| **Config** | `agentverse` | Model settings, prompts directory, system prompt |
+| **Agent** | `agentverse-agent` | Single LLM access point — composes `LlmRunner`, strategy, `SessionManager`, and memory layers |
+| **StrategyKind** | `agentverse-strategy` | Enum selecting the orchestration loop; `build()` constructs an `Arc<dyn RunStrategy>` |
+| **LlmRunner** | `agentverse` | Renders prompts and calls model providers |
+| **Config** | `agentverse` | Provider settings (model name, API key, base URL) |
 | **PromptRegistry** | `agentverse` | Template engine (Minijinja) + example storage |
 | **Tool** | `agentverse` | `AsyncTool` trait — the single interface for all agent tools |
-| **Strategy** | `agentverse-react`, `agentverse-plan` | Orchestration loops (ReAct, Plan-and-Execute, Hierarchical) |
-| **Router** | `agentverse-router` | Dynamic strategy selection via LLM |
-| **Guardrails** | `agentverse-guardrails` | Prompt injection detection, output filtering, rate limiting |
-| **Memory** | `agentverse-memory` | Short-term memory with configurable capacity |
+| **SessionMemory** | `agentverse-session` | Layer-2 durable conversation transcript; `SessionManager` wraps it with ownership checks |
+| **LongtermMemory** | `agentverse` | Layer-3 cross-session knowledge store; opt-in via `Agent::new(..., Some(store))` |
+| **RunStrategy** | `agentverse` | Trait implemented by all strategies; pure `Vec<Message> → String`, no memory coupling |
 
 ---
 
@@ -82,16 +84,10 @@ cargo check --workspace
 cargo test --workspace
 
 # Run clippy with warnings as errors
-cargo clippy --workspace -- -D warnings
+cargo clippy --all -- -D warnings
 
 # Format all code
 cargo fmt --all
-
-# Build the server binary
-cargo build -p agentverse-server
-
-# Build all examples
-cargo build --examples
 ```
 
 ### Local LLM Development
@@ -99,59 +95,55 @@ cargo build --examples
 For local development without API costs, run llama.cpp as an OpenAI-compatible server:
 
 ```bash
-# Download llama.cpp
 git clone https://github.com/ggerganov/llama.cpp.git
 cd llama.cpp
-cmake -B build
-cmake --build build --config Release -n
-
-# Download a model (e.g., Phi-3)
-python3 models/download.py --repo-id microsoft/Phi-3-mini-4k-instruct --local-dir models/phi3
+cmake -B build && cmake --build build --config Release -n
 
 # Start the OpenAI-compatible server
-./build/bin/llama-server -m models/phi3/Phi-3-mini-4k-instruct-q4_k_M.gguf \
-  --host 127.0.0.1 \
-  --port 9090
+./build/bin/llama-server -m models/your-model.gguf --host 127.0.0.1 --port 9090
 ```
 
 Then set your environment variables:
 
 ```bash
-export MODEL_BASE_URL=http://127.0.0.1:9090
-export MODEL_API_KEY=""
-export MODEL_NAME="phi3-mini"
+export MODEL_BASE_URL=http://127.0.0.1:9090/v1
+export MODEL_NAME=your-model
+# MODEL_API_KEY is optional when MODEL_BASE_URL points to a local endpoint
 ```
 
 ---
 
 ## Creating a Custom Agent
 
-### Option 1: ReAct Agent with Tools (recommended)
+All agents follow the same pattern: construct an `Agent` with a chosen strategy via `agentverse_strategy::build`.
 
-This is the primary pattern for agents that call tools. It mirrors what `hello-agent`, `react-calculator`, and `anthropic-react` do.
+### Cargo.toml
 
-```rust
-// Cargo.toml
+```toml
 [dependencies]
 agentverse = { path = "path/to/avs-core" }
+agentverse-agent = { path = "path/to/avs-agent" }
+agentverse-strategy = { path = "path/to/avs-strategy" }
+agentverse-session = { path = "path/to/avs-session" }
 agentverse-logging = { path = "path/to/avs-logging" }
-agentverse-react = { path = "path/to/avs-react" }
 agentverse-tools = { path = "path/to/avs-tools" }
-agentverse-memory = { path = "path/to/avs-memory" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+```
 
-// src/main.rs
-use agentverse::{PromptConfig, PromptRegistry, ProviderWrapper};
+### Option 1: Console Agent (ReAct)
+
+```rust
+use agentverse::{Config, LlmRunner, PromptConfig, PromptRegistry, ProviderConfig};
+use agentverse_agent::Agent;
 use agentverse_logging as avs_logging;
-use agentverse_memory::SimpleMemory;
-use agentverse_react::ReActStrategy;
+use agentverse_session::SqliteSessionMemory;
+use agentverse_strategy::{build, StrategyKind};
 use agentverse_tools::{Calculator, DateTimeTool, ToolRegistry};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() {
-    avs_logging::init(); // reads RUST_LOG and LOG_FORMAT
+    avs_logging::init();
 
     let base_url = std::env::var("MODEL_BASE_URL")
         .unwrap_or_else(|_| "http://localhost:9090/v1".to_string());
@@ -159,229 +151,154 @@ async fn main() {
     let model_name = std::env::var("MODEL_NAME")
         .unwrap_or_else(|_| "my-model".to_string());
 
-    let model = Arc::new(ProviderWrapper::openai(&base_url, &model_name, &api_key));
+    let runner = Arc::new(LlmRunner::from_config(Config {
+        provider: ProviderConfig::OpenAI {
+            model_name,
+            api_key,
+            base_url: Some(base_url),
+        },
+        max_messages: 100,
+        tools: vec![],
+        prompts_dir: None,
+        system_prompt: None,
+    }).expect("runner"));
 
-    let registry = Arc::new(
-        PromptRegistry::from_config(&PromptConfig {
-            prompts_dir: Some(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string()),
-            ..Default::default()
-        })
-        .expect("prompt config"),
+    let mut tool_registry = ToolRegistry::new();
+    tool_registry.register_with_category(Calculator, "math");
+    tool_registry.register_with_category(DateTimeTool, "utility");
+    let tools = Arc::new(tool_registry);
+
+    let prompts = Arc::new(PromptRegistry::from_config(&PromptConfig {
+        prompts_dir: Some(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string()),
+        ..Default::default()
+    }).expect("prompts"));
+
+    let strategy = build(
+        StrategyKind::React,
+        Arc::clone(&runner),
+        Arc::clone(&prompts),
+        Arc::clone(&tools),
+        10,
     );
 
-    let mut tools = ToolRegistry::new();
-    tools.register_with_category(Calculator, "math");
-    tools.register_with_category(DateTimeTool, "utility");
+    let session_memory = Arc::new(
+        SqliteSessionMemory::new("sqlite::memory:").await.expect("session memory")
+    );
 
-    let memory = Arc::new(Mutex::new(SimpleMemory::new(50)));
-    let mut agent = ReActStrategy::new(registry, model, tools, memory, 10);
+    // enable_http_server=false: console only; None = no long-term memory
+    let agent = Agent::new(runner, tools, prompts, session_memory, strategy, false, None);
 
-    match agent.run("What is 6 * 7?".to_string()).await {
-        Ok(result) => println!("Agent: {}", result.answer),
+    // Stateless invoke (no session history)
+    match agent.invoke_stateless("What is 6 * 7?").await {
+        Ok(answer) => println!("Agent: {}", answer),
         Err(e) => eprintln!("Error: {}", e),
     }
 }
 ```
 
-### Option 2: Simple Agent without Tools
-
-For a conversational agent that doesn't use tools, `Agent::from_config` provides a simpler entry point:
+### Option 2: Agent with Session History
 
 ```rust
-use agentverse::{Agent, Config, ProviderConfig};
-use std::path::PathBuf;
+// Create a session for a user
+let session_id = agent.create_session("alice").await?;
 
-#[tokio::main]
-async fn main() {
-    let config = Config {
-        provider: ProviderConfig::OpenAI {
-            model_name: "gpt-4".to_string(),
-            api_key: std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY not set"),
-            base_url: Some("http://127.0.0.1:9090/v1".to_string()),
-        },
-        max_messages: 50,
-        tools: vec![],
-        prompts_dir: Some(PathBuf::from("prompts").to_string_lossy().to_string()),
-        system_prompt: None,
-    };
-
-    let agent = Agent::from_config(config).unwrap();
-    let result = agent.invoke("user1", "Hello, what can you do?").await.unwrap();
-    println!("Agent: {}", result);
-}
+// Invoke with session — history is loaded, persisted, and returned
+let reply = agent.invoke("alice", session_id, "What did I just say?").await?;
 ```
 
-### Option 3: ReAct Agent with Anthropic Claude
+### Option 3: HTTP Agent
 
-Same pattern as Option 1 — use the `ProviderWrapper::anthropic` factory method. Anthropic caches the system prompt automatically.
+Add `features = ["http"]` to `agentverse-agent` in Cargo.toml and pass `enable_http_server=true`:
+
+```toml
+agentverse-agent = { path = "path/to/avs-agent", features = ["http"] }
+```
 
 ```rust
-use agentverse::ProviderWrapper;
-use agentverse_tools::{Calculator, ToolRegistry};
+// enable_http_server=true: spawns HTTP server as a background task
+// reads HOST (default 0.0.0.0) and PORT (default 3000) from env
+let _agent = Agent::new(runner, tools, prompts, session_memory, strategy, true, None);
 
-let model = Arc::new(ProviderWrapper::anthropic(
-    "https://api.anthropic.com",
-    "claude-haiku-4-5-20251001",
-    &std::env::var("ANTHROPIC_API_KEY").unwrap(),
-));
-
-let mut tools = ToolRegistry::new();
-tools.register_with_category(Calculator, "math");
-
-let mut agent = ReActStrategy::new(registry, model, tools, memory, 15);
+// Keep the process alive
+tokio::signal::ctrl_c().await.unwrap();
 ```
 
-### Option 4: Programmatic Builder
+### Option 4: Anthropic Claude
 
 ```rust
-use agentverse::{Agent, AgentBuilder};
-
-let agent = Agent::builder()
-    .config(config)
-    .system_prompt("You are a specialized assistant for X.")
-    .prompt_dir("prompts/")
-    .build()?;
+let runner = Arc::new(LlmRunner::from_config(Config {
+    provider: ProviderConfig::Anthropic {
+        model_name: "claude-sonnet-4-6".to_string(),
+        api_key: std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY"),
+    },
+    max_messages: 50,
+    tools: vec![],
+    prompts_dir: None,
+    system_prompt: None,
+}).expect("runner"));
 ```
 
-### Running Your Agent
+### Choosing a Strategy
 
-```bash
-MODEL_API_KEY=sk-xxx MODEL_BASE_URL=http://localhost:9090/v1 MODEL_NAME=my-model \
-  cargo run --bin my-agent
-```
-
----
+| `StrategyKind` | Best for |
+|---|---|
+| `React` | Tool-using agents, Q&A, step-by-step reasoning |
+| `Plan` | Multi-step tasks that benefit from upfront planning |
+| `Hierarchical` | Complex tasks decomposed into independent sub-goals |
 
 ---
 
 ## Multi-LLM Provider Configuration
 
-AgentVerse supports multiple LLM providers through a unified interface. The `ProviderConfig` enum allows you to switch providers without changing agent code.
-
 ### ProviderConfig Enum
 
 | Variant | Fields | Use Case |
 |---------|--------|----------|
-| `OpenAI` | `model_name`, `api_key`, `base_url` | OpenAI-compatible endpoints (llama.cpp, Ollama, vLLM, etc.) |
+| `OpenAI` | `model_name`, `api_key`, `base_url` | OpenAI API or any OpenAI-compatible endpoint (llama.cpp, Ollama, vLLM, etc.). `api_key` is optional when `base_url` is set. |
 | `Anthropic` | `model_name`, `api_key` | Claude models via Anthropic API |
-| `Gemini` | `model_name`, `api_key` | Google Gemini models via Gemini API |
+| `Gemini` | `model_name`, `api_key` | Google Gemini models |
 
 ### Configuration Examples
 
-**OpenAI** (or any OpenAI-compatible endpoint):
-```yaml
-provider:
-  type: openai
-  model_name: "gpt-4"
-  api_key: "sk-xxx"
-  base_url: "http://127.0.0.1:9090/v1"  # llama.cpp, Ollama, etc.
-```
-
-**Anthropic**:
-```yaml
-provider:
-  type: anthropic
-  model_name: "claude-3-sonnet-20240229"
-  api_key: "sk-ant-xxx"
-```
-
-**Gemini**:
-```yaml
-provider:
-  type: gemini
-  model_name: "gemini-pro"
-  api_key: "your-gemini-api-key"
-```
-
-### ProviderWrapper: Factory Methods, Logging, and Resilience
-
-`ProviderWrapper` is the single entry point for all LLM providers. Use its factory methods — you never need to import concrete provider types (`OpenAICompatible`, `AnthropicProvider`, `GeminiProvider`) directly.
-
+**Local OpenAI-compatible endpoint:**
 ```rust
-use agentverse::ProviderWrapper;
-
-// OpenAI or any OpenAI-compatible endpoint (llama.cpp, Ollama, vLLM, etc.)
-let model = Arc::new(ProviderWrapper::openai(&base_url, &model_name, &api_key));
-
-// Anthropic Claude
-let model = Arc::new(ProviderWrapper::anthropic(
-    "https://api.anthropic.com", &model_name, &api_key,
-));
-
-// Google Gemini
-let model = Arc::new(ProviderWrapper::gemini(
-    "https://generativelanguage.googleapis.com", &model_name, &api_key,
-));
+ProviderConfig::OpenAI {
+    model_name: "my-model".to_string(),
+    api_key: String::new(),            // empty is fine for local endpoints
+    base_url: Some("http://127.0.0.1:9090/v1".to_string()),
+}
 ```
 
-**Built-in structured logging** — every `generate()` call emits:
-- `debug`: full prompt with `>>>>>>>>>> LLM PROMPT BEGIN/END <<<<<<<<<<` markers
-- `debug`: full response with `>>>>>>>>>> LLM RESPONSE BEGIN/END <<<<<<<<<<` markers
-- `warn`: each retry attempt
-- `error`: final failure after all retries
-
-**Resilience (default settings):**
-- **Retries**: 3 attempts with exponential backoff (500ms base delay)
-- **Circuit Breaker**: Opens after 5 consecutive failures, resets after 30 seconds
-- **Retryable Errors**: `RateLimited` (HTTP 429) and `ApiError` (HTTP 5xx)
-
-**Error Variants:**
-- `ModelError::RateLimited` — HTTP 429 response
-- `ModelError::CircuitOpen` — Circuit breaker is open, retry later
-- `ModelError::ApiError` — Other API errors (non-429)
-- `ModelError::InvalidResponse` — Response parsing failed
-- `ModelError::Timeout` — Request timed out
-
-### Using Providers in Code
-
+**OpenAI:**
 ```rust
-use agentverse::{Agent, Config, ProviderConfig};
+ProviderConfig::OpenAI {
+    model_name: "gpt-4o".to_string(),
+    api_key: std::env::var("OPENAI_API_KEY").unwrap(),
+    base_url: None,                    // uses OpenAI default
+}
+```
 
-// OpenAI
-let config = Config {
-    provider: ProviderConfig::OpenAI {
-        model_name: "gpt-4".to_string(),
-        api_key: std::env::var("OPENAI_API_KEY").unwrap(),
-        base_url: Some("http://127.0.0.1:9090/v1".to_string()),
-    },
-    max_messages: 50,
-    tools: vec![],
-    prompts_dir: None,
-    system_prompt: None,
-};
+**Anthropic:**
+```rust
+ProviderConfig::Anthropic {
+    model_name: "claude-sonnet-4-6".to_string(),
+    api_key: std::env::var("ANTHROPIC_API_KEY").unwrap(),
+}
+```
 
-let agent = Agent::from_config(config)?;
-
-// Anthropic
-let config = Config {
-    provider: ProviderConfig::Anthropic {
-        model_name: "claude-3-sonnet-20240229".to_string(),
-        api_key: std::env::var("ANTHROPIC_API_KEY").unwrap(),
-    },
-    max_messages: 50,
-    tools: vec![],
-    prompts_dir: None,
-    system_prompt: None,
-};
-
-// Gemini
-let config = Config {
-    provider: ProviderConfig::Gemini {
-        model_name: "gemini-pro".to_string(),
-        api_key: std::env::var("GEMINI_API_KEY").unwrap(),
-    },
-    max_messages: 50,
-    tools: vec![],
-    prompts_dir: None,
-    system_prompt: None,
-};
+**Gemini:**
+```rust
+ProviderConfig::Gemini {
+    model_name: "gemini-pro".to_string(),
+    api_key: std::env::var("GEMINI_API_KEY").unwrap(),
+}
 ```
 
 ---
 
 ## Writing Tools
 
-All tools implement `AsyncTool` — a single, consistent interface regardless of whether the tool does I/O or pure computation.
+All tools implement `AsyncTool` — a single, consistent interface.
 
 ### Implementing AsyncTool
 
@@ -411,181 +328,95 @@ impl AsyncTool for WeatherTool {
     async fn execute(&self, args: Value) -> ToolResult {
         let city = args["city"].as_str()
             .ok_or_else(|| ToolError::Execution("missing city".into()))?;
-        // Call external API, etc.
         Ok(json!({ "weather": format!("Sunny in {city}") }))
-    }
-}
-```
-
-CPU-bound tools work the same way — `async fn execute` can contain synchronous code:
-
-```rust
-#[async_trait]
-impl AsyncTool for MyCalculator {
-    fn name(&self) -> &str { "my_calculator" }
-    fn description(&self) -> &str { "Adds two numbers" }
-    fn parameters(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "a": { "type": "number" },
-                "b": { "type": "number" }
-            },
-            "required": ["a", "b"]
-        })
-    }
-    async fn execute(&self, args: Value) -> ToolResult {
-        let a = args["a"].as_f64().unwrap_or(0.0);
-        let b = args["b"].as_f64().unwrap_or(0.0);
-        Ok(json!({ "result": a + b }))
     }
 }
 ```
 
 ### ToolRegistry
 
-`ToolRegistry` is the unified async tool store. All tools implement `AsyncTool` and register directly.
-
 ```rust
 use agentverse_tools::{ToolRegistry, Calculator, DateTimeTool, ShellTool, WebSearch};
 use std::time::Duration;
 
 let mut registry = ToolRegistry::new();
-
-// Built-in tools register directly
 registry.register_with_category(Calculator, "math");
 registry.register_with_category(DateTimeTool, "utility");
-registry.register(WebSearch); // DuckDuckGo search + page fetching
-
-// Custom tools register the same way
+registry.register(WebSearch);
 registry.register_with_category(WeatherTool, "network");
 
 // Shell tool — sandboxed subprocess execution
 registry.register_with_category(
     ShellTool::new(
-        "./workspace",                    // working directory
-        Duration::from_secs(30),         // per-command timeout
-        vec!["sudo".into(), "rm".into()], // blocked commands
+        "./workspace",
+        Duration::from_secs(30),
+        vec!["sudo".into(), "rm".into()],
     ),
     "shell",
 );
-
-// Filter to a subset for a specific agent
-let math_tools = registry.filter_category("math");
-
-// Execute a tool by name
-let result = registry.execute("calculator", json!({"operation": "add", "a": 1, "b": 2})).await;
-
-// Get tool schemas for prompt injection
-let schemas: Vec<serde_json::Value> = registry.schema();
 ```
 
 ### ShellTool
 
-`ShellTool` runs arbitrary shell commands via `tokio::process::Command`. It is designed for dev-tool and local-automation agents where the model is trusted.
+`ShellTool` runs shell commands via `tokio::process::Command`.
 
 ```rust
-use agentverse_tools::ShellTool;
-use std::time::Duration;
-
 let tool = ShellTool::new(
-    "./project",                          // commands start here (not a filesystem sandbox)
-    Duration::from_secs(30),             // process killed after 30s
-    vec!["sudo".into(), "curl".into()],  // reject these binaries
+    "./project",
+    Duration::from_secs(30),
+    vec!["sudo".into(), "curl".into()],
 );
 ```
 
-The agent calls it with a `command` string:
-```json
-{ "command": "cargo test -p my-crate" }
-```
+The agent calls it with `{ "command": "cargo test -p my-crate" }`. Response is plain text: stdout + `[stderr: ...]` if non-empty + `[exit code: N]` if non-zero.
 
-The response is a plain text string: stdout, followed by `[stderr: ...]` if stderr is non-empty, and `[exit code: N]` if the exit code is non-zero. Non-zero exit codes are returned as `Ok` — the agent decides how to handle them.
-
-**Security note:** `workdir` sets the initial current directory but does not restrict filesystem access. Pair with a blocked-command list and OS-level isolation for stronger sandboxing.
-
-### Wiring tools into ReActStrategy
-
-```rust
-use agentverse_react::ReActStrategy;
-use agentverse_tools::{ToolRegistry, Calculator};
-use std::sync::Arc;
-use tokio::sync::Mutex;
-
-let mut tools = ToolRegistry::new();
-tools.register_with_category(Calculator, "math");
-
-let strategy = ReActStrategy::new(
-    prompt_registry,
-    model,
-    tools,
-    Arc::new(Mutex::new(memory)),
-    10, // max iterations
-);
-```
+**Security note:** `workdir` sets the initial directory but does not restrict filesystem access. Pair with a blocked-command list and OS-level isolation for production use.
 
 ---
 
 ## Prompt Engineering
 
-AgentVerse uses a **three-layer prompt system** designed to maximise LLM prompt cache reuse across multi-turn agent loops.
+AgentVerse uses a **three-layer prompt system** designed to maximize LLM prompt cache reuse.
 
 ### Template Roles
 
 | Layer | File | Contains | Cache behaviour |
 |---|---|---|---|
 | System | `system.j2` | Agent identity + rules | Cached in the system block — paid once per session |
-| Preamble | `react.j2` | Tool descriptions + format instructions + few-shot examples | Inserted as `messages[0]` once; sits inside the stable prefix captured by the penultimate-message cache breakpoint |
-| Conversation | *(memory)* | Thought / Action / Tool Result / Answer exchanges | Volatile; only the current message is uncharged |
-
-**Why this split matters:** Repeating tools and examples in every user message defeats prefix caching. By placing them in a stable first message that never changes, they are paid for on the first request and cached on every subsequent turn.
+| Preamble | `react.j2` | Tool descriptions + format instructions + few-shot examples | Inserted as `messages[0]`; captured by the penultimate-message cache breakpoint |
+| Conversation | *(memory)* | Thought / Action / Tool Result / Answer exchanges | Volatile |
 
 ### Directory Layout
 
 **ReAct strategy:**
 ```
 prompts/
-  system.j2              # Identity + rules only — no tool descriptions here
+  system.j2              # Identity + rules
   react.j2               # Tools + format + {% if examples %}...{% endif %}
-  react_examples.toml    # Few-shot examples for react.j2 (set name: "react_examples")
-  examples.toml          # General examples available to other strategies
+  react_examples.toml    # Few-shot examples (name: "react_examples")
 ```
 
-**Hierarchical strategy:**
+**Plan-and-Execute:**
 ```
 prompts/
-  system.j2                   # Identity + rules
-  hierarchical.j2             # Decomposition prompt (registers as "strategies.hierarchical.decompose")
-  hierarchical_examples.toml  # Decomposition few-shot (set name: "hierarchical_examples")
-  examples.toml
+  system.j2
+  plan_and_execute.j2    # → "strategies.plan_and_execute"
+  plan_examples.toml
 ```
 
-**Plan-and-Execute strategy:**
+**Hierarchical:**
 ```
 prompts/
-  system.j2             # Identity + rules
-  plan_and_execute.j2   # Planning prompt (registers as "strategies.plan_and_execute")
-  plan_examples.toml    # Planning few-shot (set name: "plan_examples")
-  examples.toml
+  system.j2
+  hierarchical.j2        # → "strategies.hierarchical.decompose"
+  hierarchical_examples.toml
 ```
-
-> **File stem → registry key mapping:** `hierarchical.j2` and `plan_and_execute.j2` are automatically mapped to their canonical strategy names (`"strategies.hierarchical.decompose"` and `"strategies.plan_and_execute"`) when loaded from a `prompts/` directory.
 
 ### Template Files (.j2)
 
-Minijinja templates. `system.j2` contains only identity and rules:
+`react.j2` example:
 
 ```jinja2
-{# prompts/system.j2 #}
-You are a precise calculator assistant that solves problems step-by-step.
-Always verify every arithmetic operation with the calculator tool.
-Never guess a result — compute it.
-```
-
-`react.j2` contains tool descriptions, format instructions, and optional examples. It is rendered **once** at agent startup and prepended to the conversation as a stable user message:
-
-```jinja2
-{# prompts/react.j2 #}
 Available tools:
 {{ tools }}
 
@@ -611,87 +442,18 @@ Assistant: {{ example.output }}
 
 ### Example Files (.toml)
 
-All example files use the `[[example]]` array-of-tables format. The file stem becomes the example-set name:
-
 ```toml
-# prompts/react_examples.toml  →  example set "react_examples"
+# prompts/react_examples.toml
 [[example]]
 input = "What is 6 * 7?"
 output = "Thought: I need to multiply.\nAction: calculator\nAction Input: {\"operation\": \"multiply\", \"a\": 6, \"b\": 7}"
-
-[[example]]
-input = "What is 100 / 4?"
-output = "Thought: I need to divide.\nAction: calculator\nAction Input: {\"operation\": \"divide\", \"a\": 100, \"b\": 4}"
 ```
-
-For decomposition examples (hierarchical), use `output` to hold the expected JSON array of sub-goals:
-
-```toml
-# prompts/hierarchical_examples.toml  →  example set "hierarchical_examples"
-[[example]]
-input = "Audit avs-core/src for security issues"
-output = "[\"Find all .rs files in avs-core/src\", \"Search for unsafe blocks\", \"Check error handling patterns\"]"
-```
-
-### Wiring the Registry
-
-```rust
-use agentverse::{PromptConfig, PromptRegistry};
-use std::sync::Arc;
-
-let registry = Arc::new(
-    PromptRegistry::from_config(&PromptConfig {
-        // CARGO_MANIFEST_DIR resolves at compile time to the crate root,
-        // so the path works regardless of where `cargo run` is invoked from.
-        prompts_dir: Some(
-            concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string(),
-        ),
-        ..Default::default()
-    })
-    .expect("prompt config"),
-);
-```
-
-Do **not** use `PromptRegistry::default()` in examples — it ignores all files in `prompts/`.
-
-### Prompt Registry API
-
-```rust
-// Render a template with context variables
-let mut context = std::collections::HashMap::new();
-context.insert("tools".to_string(), serde_json::json!("calculator"));
-let rendered = registry.render("system", context)?;
-
-// Access a named example set
-let examples = registry.get_examples("react_examples");
-
-// Check whether a react.j2 file was loaded (used internally by ReActStrategy)
-let has_preamble = registry.has_react_template();
-
-// Add templates or examples programmatically
-registry.add_template("custom", "You are {{ persona }}.");
-registry.add_examples("my_set", vec![example]);
-```
-
-### Default Templates
-
-These are always available and can be overridden by placing the corresponding file in `prompts/`:
-
-| Registry name | Override file | Used by |
-|---|---|---|
-| `system` | `system.j2` | Every strategy |
-| `react` | `react.j2` | `ReActStrategy` preamble |
-| `strategies.plan_and_execute` | `plan_and_execute.j2` | `PlanStrategy` |
-| `strategies.hierarchical.decompose` | `hierarchical.j2` | `HierarchicalStrategy` |
-| `router` | `router.j2` | `RouterStrategy` |
 
 ---
 
 ## Testing Strategies
 
 ### Unit Tests
-
-Write unit tests alongside your code:
 
 ```rust
 #[cfg(test)]
@@ -709,16 +471,14 @@ mod tests {
 
 ### Integration Tests
 
-Create `tests/` directory in your crate:
-
 ```rust
 // tests/integration_test.rs
-use agentverse::{Agent, Config};
+use agentverse::{Config, LlmRunner, ProviderConfig};
 
 #[test]
-fn test_agent_creation() {
-    let config = Config {
-        provider: agentverse::ProviderConfig::OpenAI {
+fn test_runner_creation() {
+    let runner = LlmRunner::from_config(Config {
+        provider: ProviderConfig::OpenAI {
             model_name: "gpt-4".to_string(),
             api_key: "test-key".to_string(),
             base_url: None,
@@ -727,40 +487,16 @@ fn test_agent_creation() {
         tools: vec![],
         prompts_dir: None,
         system_prompt: None,
-    };
-    assert!(Agent::from_config(config).is_ok());
-}
-```
-
-### Mock Testing
-
-Use `mockall` for mocking the `ModelProvider` trait:
-
-```rust
-use mockall::mock;
-
-mock! {
-    pub ModelProvider {}
-    #[async_trait::async_trait]
-    impl agentverse::ModelProvider for ModelProvider {
-        async fn generate(&self, prompt: &str, tools: Option<Vec<serde_json::Value>>) -> Result<String, agentverse::ModelError>;
-    }
+    });
+    assert!(runner.is_ok());
 }
 ```
 
 ### Running Tests
 
 ```bash
-# All workspace tests
 cargo test --workspace
-
-# Single crate
-cargo test -p agentverse
-
-# Single test
-cargo test -p agentverse test_agent_creation
-
-# With output
+cargo test -p agentverse-agent
 cargo test --workspace -- --nocapture
 ```
 
@@ -768,123 +504,79 @@ cargo test --workspace -- --nocapture
 
 ## Deploying Agents
 
-### Option 1: Standalone Binary
-
-Compile your agent as a standalone binary:
+### Option 1: Standalone Console Binary
 
 ```bash
-# Build release binary
 cargo build --release -p example-hello-agent
-
-# Run
-./target/release/example-hello-agent
+MODEL_BASE_URL=http://127.0.0.1:9090/v1 MODEL_NAME=my-model \
+  ./target/release/example-hello-agent
 ```
 
-### Option 2: HTTP Server
-
-Deploy the `agentverse-server` for remote access:
+### Option 2: HTTP Agent Binary
 
 ```bash
-# Build
-cargo build --release -p agentverse-server
-
-# Run with environment variables
-MODEL_BASE_URL=https://api.openai.com \
-MODEL_API_KEY=sk-xxx \
-MODEL_NAME=gpt-4 \
-API_KEY=my-secret-token \
-RUST_LOG=info \
-./target/release/agentverse-server
+cargo build --release -p example-http-agent
+ANTHROPIC_API_KEY=sk-ant-... HOST=0.0.0.0 PORT=3000 \
+  ./target/release/example-http-agent
 ```
+
+Or build your own binary with `enable_http_server=true` and `features = ["http"]` — see [Option 3 in Creating a Custom Agent](#option-3-http-agent).
 
 ### Option 3: Docker
-
-Create a `Dockerfile`:
 
 ```dockerfile
 FROM rust:1.75-slim AS builder
 WORKDIR /app
 COPY . .
-RUN cargo build --release -p agentverse-server
+RUN cargo build --release -p example-http-agent
 
 FROM debian:bookworm-slim
 WORKDIR /app
-COPY --from=builder /app/target/release/agentverse-server .
-EXPOSE 8080
-CMD ["./agentverse-server"]
+COPY --from=builder /app/target/release/example-http-agent .
+EXPOSE 3000
+CMD ["./example-http-agent"]
 ```
-
-Build and run:
 
 ```bash
-docker build -t agentverse-server .
-docker run -p 8080:8080 \
-  -e MODEL_BASE_URL=https://api.openai.com \
-  -e MODEL_API_KEY=sk-xxx \
-  -e API_KEY=my-secret-token \
-  agentverse-server
+docker build -t agentverse-http .
+docker run -p 3000:3000 \
+  -e ANTHROPIC_API_KEY=sk-ant-... \
+  -e HOST=0.0.0.0 \
+  -e PORT=3000 \
+  agentverse-http
 ```
-
-### Production Configuration
-
-```yaml
-# config.yaml
-host: "0.0.0.0"
-port: 8080
-agent:
-  provider:
-    type: openai
-    model_name: "gpt-4"
-    api_key: "sk-xxx"
-    base_url: "https://api.openai.com/v1"
-  max_iterations: 10
-guardrails:
-  enabled: true
-  max_requests_per_minute: 60
-```
-
-Run with: `CONFIG_PATH=config.yaml cargo run -p agentverse-server`
 
 ---
 
 ## Adding Long-Term Memory
 
-### LanceDB Memory
+Layer-3 `LongtermMemory` is opt-in. Pass `Some(store)` as the last argument to `Agent::new`; pass `None` to disable it entirely.
 
 ```rust
-use agentverse_lancedb::{LanceDbMemory, LanceDbConfig};
+use agentverse::memory::LongtermMemory;
+use std::sync::Arc;
 
-let config = LanceDbConfig {
-    uri: "/tmp/agentverse-vector-db".to_string(),
-    table_name: "memories".to_string(),
-};
+// Any type implementing LongtermMemory works here
+let longterm: Arc<dyn LongtermMemory> = Arc::new(MyLongtermStore::new().await?);
 
-let memory = LanceDbMemory::new(config).await?;
+let agent = Agent::new(runner, tools, prompts, session_memory, strategy, false, Some(longterm));
 ```
 
-### pgvector Memory
+On each `invoke` call the agent:
+1. Retrieves the top-k scored memories (`score = α·recency + β·importance + γ·relevance`) and injects them into the system prompt.
+2. Asynchronously writes the completed turn as a `LongtermRecord` (fire-and-forget, off the latency path).
 
-```rust
-use agentverse_pgvector::{PgVectorMemory, PgVectorConfig};
+Background workers (`ConsolidationWorker`, `CleanupWorker` in `avs-agent`) handle batch consolidation and retention-window cleanup independently of the per-turn write.
 
-let config = PgVectorConfig {
-    connection_string: "postgresql://user:pass@localhost/agentverse".to_string(),
-    table_name: "memories".to_string(),
-};
+### SQLite database location
 
-let memory = PgVectorMemory::new(config).await?;
-```
+`SqliteSessionMemory` (Layer 2) uses a file URL like `"sqlite:agent.db"`. The file is created in the working directory where `cargo run` is invoked (typically the repo root). Most examples use `"sqlite::memory:"` — an in-process database that does not write to disk and is lost when the process exits.
 
-### Memory API
-
-```rust
-use agentverse::Memory;
-
-// Store a memory
-memory.store(query, embedding).await?;
-
-// Retrieve similar memories
-let results = memory.retrieve(query, top_k).await?;
+To inspect data at runtime:
+```bash
+sqlite3 agent.db "SELECT session_id, role, content FROM messages ORDER BY sequence_num;"
+# or enable sqlx trace logging for bound parameters:
+RUST_LOG=sqlx=trace cargo run -p example-http-agent
 ```
 
 ---
@@ -893,206 +585,42 @@ let results = memory.retrieve(query, top_k).await?;
 
 ### IntegrationRuntime
 
-`IntegrationRuntime` is the unified connector host. It loads its connector config (Slack, console fallback) from a TOML file, then calls your agent closure for each incoming event.
+`IntegrationRuntime` is the unified connector host. Your agent provides a handler closure; the runtime calls it for each incoming event.
 
 ```rust
 use agentverse_integration::{Event, IntegrationRuntime};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
-// strategy is any Arc<Mutex<impl RunStrategy>>
-let runtime = IntegrationRuntime::from_config("agent.toml")
-    .await
-    .expect("integration config");
+let agent = Arc::new(Agent::new(/* ... */));
+let runtime = IntegrationRuntime::from_config("agent.toml").await?;
 
 runtime
     .run(move |event: Event| {
-        let strategy = Arc::clone(&strategy);
+        let agent = Arc::clone(&agent);
         async move {
-            let answer = strategy.lock().await.process(event.text).await?;
+            let answer = agent
+                .invoke_stateless(&event.text)
+                .await
+                .map_err(|e| agentverse::AgentError::Memory(e.to_string()))?;
             Ok::<Event, agentverse::AgentError>(Event { text: answer, ..event })
         }
     })
-    .await
-    .expect("integration failed");
+    .await?;
 ```
 
 **`agent.toml` example (Slack connector):**
 ```toml
-[connector]
-type = "slack"
-bot_token = "xoxb-..."
-signing_secret = "..."
+[integration]
+input = "slack"
+outputs = ["slack"]
+
+[connector.slack]
 port = 3000
+bot_token_env = "SLACK_BOT_TOKEN"
+signing_secret_env = "SLACK_SIGNING_SECRET"
 ```
 
-If no config file is found, or the connector type is `console`, `IntegrationRuntime` falls back to a stdin/stdout console loop — useful for local development without Slack credentials.
-
-**Required environment variables for Slack:**
-```bash
-SLACK_BOT_TOKEN=xoxb-...
-SLACK_SIGNING_SECRET=...
-```
-
----
-
-## Using the HTTP Server
-
-### API Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Server health and model info |
-| `/ready` | GET | Readiness check |
-| `/invoke` | POST | Invoke the agent |
-| `/swagger-ui` | GET | API documentation |
-
-### Invoke Endpoint
-
-```bash
-curl -X POST http://localhost:8080/invoke \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer my-secret-key" \
-  -d '{"user_id": "user1", "message": "Hello, agent!"}'
-```
-
-Response:
-
-```json
-{
-  "message": "Hello! How can I help you?",
-  "user_id": "user1"
-}
-```
-
-### Error Responses
-
-```json
-// Bad request (empty message)
-{"error": "message must not be empty"}
-
-// Too many requests (rate limited)
-{"error": "Rate limit exceeded: 60 requests per minute"}
-
-// Prompt guardrail triggered (prompt injection)
-{"error": "Prompt injection detected"}
-
-// Output guardrail triggered (unsafe output)
-{"error": "Output filtered"}
-
-// Internal error
-{"error": "Model error: API error"}
-```
-
----
-
-## Aether Adapter — Stdio Mode
-
-AgentVerse agents can be driven by [Aether](https://github.com/sirius-zuo/aether), an independent multi-agent orchestration framework. No Aether code is imported into AgentVerse — the integration is a thin transport layer in `avs-server` that speaks the Envelope wire protocol on stdin/stdout.
-
-### How it works
-
-When `agentverse --stdio` is passed, the binary skips the HTTP server and enters a protocol loop:
-
-```
-stdin  →  [read Envelope JSON line]  →  dispatch  →  [write Envelope JSON line]  →  stdout
-                                           │
-                                     agent.invoke()
-```
-
-All `tracing` logs go to **stderr** — stdout is reserved for the protocol.
-
-### Envelope protocol
-
-The wire format is newline-delimited JSON. One JSON object per line, no pretty-printing.
-
-```
-{"id":"<uuid>","kind":"invoke","payload":{"message":"..."},"metadata":{"trace_id":"..."}}\n
-{"id":"<uuid>","kind":"result","payload":{"message":"..."},"metadata":{"model":"...","provider":"openai","tokens_input":"0","tokens_output":"0"}}\n
-```
-
-**Kind values and their meaning:**
-
-| Kind | Direction | Description |
-|------|-----------|-------------|
-| `invoke` | Aether → AgentVerse | Run the agent with `payload.message` |
-| `result` | AgentVerse → Aether | Successful response in `payload.message` |
-| `error` | AgentVerse → Aether | Failure — `payload.error` contains the message |
-| `ping` | Aether → AgentVerse | Health check |
-| `pong` | AgentVerse → Aether | Health check response (same `id`, null payload) |
-
-**Response metadata fields** (always present in `result` / `error` responses):
-
-| Key | Description |
-|-----|-------------|
-| `model` | Model name from `MODEL_NAME` env var |
-| `provider` | Inferred from base URL: `openai` / `anthropic` / `gemini` |
-| `tokens_input` | Input token count (currently `"0"` — wired when `invoke()` returns usage) |
-| `tokens_output` | Output token count (currently `"0"`) |
-
-Aether sets `trace_id`, `workflow_id`, and `node` in outgoing `invoke` envelopes. AgentVerse copies these through to the `result` response so Aether's correlation table can match them.
-
-### Running manually (for debugging)
-
-You can exercise the adapter by hand without Aether:
-
-```bash
-cargo build -p agentverse-server
-
-# Start the adapter
-MODEL_API_KEY=sk-xxx MODEL_BASE_URL=http://localhost:9090/v1 MODEL_NAME=my-model \
-  ./target/debug/agentverse --stdio
-
-# In another terminal — paste JSON lines and press Enter:
-echo '{"id":"00000000-0000-0000-0000-000000000001","kind":"ping","payload":null,"metadata":{}}' | \
-  MODEL_API_KEY=sk-xxx ./target/debug/agentverse --stdio
-# → {"id":"00000000-...","kind":"pong","payload":null,"metadata":{}}
-```
-
-### Passing configuration to Aether
-
-When Aether spawns an AgentVerse node via `StdioFactory`, it passes environment variables through the `envs` map:
-
-```rust
-StdioFactory {
-    node_name: "my-agent".to_string(),
-    command: "/path/to/agentverse".to_string(),
-    args: vec!["--stdio".to_string()],
-    envs: HashMap::from([
-        ("MODEL_API_KEY".to_string(), "sk-xxx".to_string()),
-        ("MODEL_BASE_URL".to_string(), "http://localhost:9090/v1".to_string()),
-        ("MODEL_NAME".to_string(), "my-model".to_string()),
-    ]),
-}
-```
-
-To use a YAML config file instead of environment variables, pass `CONFIG_PATH`:
-
-```rust
-envs: HashMap::from([
-    ("CONFIG_PATH".to_string(), "/path/to/agent-config.yaml".to_string()),
-]),
-```
-
-### Relevant files
-
-| File | Description |
-|------|-------------|
-| `avs-server/src/envelope.rs` | `Envelope`, `EnvelopeKind`, `read_envelope`, `write_envelope` |
-| `avs-server/src/stdio_adapter.rs` | `run_stdio` loop, `dispatch` (Ping/Invoke), `response_metadata` |
-| `avs-server/src/main.rs` | `--stdio` CLI flag (clap), pre-HTTP branch |
-| `avs-server/tests/stdio_test.rs` | Integration tests: Ping→Pong, Invoke→result, EOF→clean exit |
-
-### Testing the adapter
-
-```bash
-# Unit tests (codec + config)
-cargo test -p agentverse-server envelope
-
-# Integration tests (spawns real binary)
-cargo build -p agentverse-server
-cargo test -p agentverse-server --test stdio_test
-```
+If no config file is found, `IntegrationRuntime::from_config` falls back to `ConsoleConnector` — useful for local development.
 
 ---
 
@@ -1100,7 +628,7 @@ cargo test -p agentverse-server --test stdio_test
 
 ### Logging Setup
 
-All examples and the server call `avs_logging::init()` at startup. This reads two environment variables:
+All examples call `avs_logging::init()` at startup. This reads two environment variables:
 
 | Variable | Effect |
 |----------|--------|
@@ -1108,77 +636,48 @@ All examples and the server call `avs_logging::init()` at startup. This reads tw
 | `LOG_FORMAT` | Set to `json` for structured JSON output; omit for human-readable text |
 
 ```bash
-# Human-readable debug output
 RUST_LOG=debug cargo run -p example-hello-agent
-
-# JSON structured logs (for log aggregators)
-LOG_FORMAT=json RUST_LOG=info cargo run -p agentverse-server
-
-# Filter to a single crate
+LOG_FORMAT=json RUST_LOG=info cargo run -p example-http-agent
 RUST_LOG=agentverse_react=debug cargo run -p example-hello-agent
 ```
 
 ### What Gets Logged
 
-**`ProviderWrapper`** (every LLM call, at `debug` level):
+**`LlmRunner`** (every LLM call, `debug` level):
 ```
 >>>>>>>>>> LLM PROMPT BEGIN <<<<<<<<<<
-SYSTEM  content="You are a calculator assistant..."
-MSG     index=0 role=User content="What is 6 * 7?"
->>>>>>>>>> LLM PROMPT END <<<<<<<<<<
+...
 >>>>>>>>>> LLM RESPONSE BEGIN <<<<<<<<<<
-RESPONSE content="Thought: I need to multiply..."
->>>>>>>>>> LLM RESPONSE END <<<<<<<<<<
-```
-Retry attempts log at `warn`; final failure logs at `error`.
-
-**`ToolRegistry`** (every tool call, at `debug` level):
-```
-Executing tool  tool="calculator" args="{\"operation\":\"multiply\",..."
-Tool result     tool="calculator" result="{\"result\":42}"
+...
 ```
 
-**`ReActStrategy`** (each loop iteration, at `info` level):
+**`ToolRegistry`** (every tool call, `debug` level):
 ```
-Thought only, continuing  iteration=1 action="continue"
-Tool executed             iteration=2 action="tool_call" tool="calculator"
-Strategy completed        iteration=3 action="done" total_input_tokens=... total_output_tokens=...
-```
-
-**`AgentMemory`** (store/retrieve, at `debug` level):
-```
-Memory stored    role="assistant" content_len=42 capacity=50
-Memory retrieved count=12
+Executing tool  tool="calculator" args=...
+Tool result     tool="calculator" result=...
 ```
 
-### Available Log Levels
-
-| Level | Use Case |
-|-------|----------|
-| `trace` | Detailed execution flow |
-| `debug` | LLM prompt/response, tool calls, memory ops |
-| `info` | Strategy loop steps, request/response summary, server startup |
-| `warn` | Retry attempts, guardrail warnings |
-| `error` | Final failures, API errors |
+**`ReActStrategy`** (each loop iteration, `info` level):
+```
+Thought only, continuing  iteration=1
+Tool executed             iteration=2 tool="calculator"
+Strategy completed        iteration=3
+```
 
 ### Common Debugging Scenarios
 
+**`Config(Missing("provider.api_key is required"))` at startup:**
+- This error is only raised for `ProviderConfig::OpenAI` when `base_url` is `None` (i.e., real OpenAI endpoint). Set `MODEL_API_KEY` or provide `base_url`.
+- For local endpoints, `api_key` can be empty as long as `base_url` is set.
+
 **Agent not responding:**
-1. Check `MODEL_BASE_URL` and `MODEL_API_KEY`
-2. Verify the model server is running: `curl $MODEL_BASE_URL/v1/models`
-3. Enable debug logging: `RUST_LOG=debug` — you'll see the full LLM prompt between the `BEGIN/END` markers
+1. Check `MODEL_BASE_URL` and `MODEL_API_KEY`.
+2. Verify the model server is running: `curl $MODEL_BASE_URL/models`.
+3. Enable debug logging: `RUST_LOG=debug` — you'll see the full LLM prompt.
 
 **Tool not being called:**
-1. `RUST_LOG=debug` — confirm the tool schema appears in the `TOOLS count=N` log line
-2. Check that the tool name in the prompt matches `tool.name()` exactly
-
-**Tool execution failing:**
-1. `RUST_LOG=debug` — check the `args=` value in the "Executing tool" log
-2. Verify JSON argument format matches the tool's `parameters()` schema
-
-**Guardrail blocking requests:**
-1. Check the guardrail error in logs
-2. Verify prompt doesn't contain injection patterns
+1. `RUST_LOG=debug` — confirm the tool schema appears in the prompt.
+2. Check that the tool name in the prompt matches `tool.name()` exactly.
 
 ---
 
@@ -1188,23 +687,28 @@ Memory retrieved count=12
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MODEL_BASE_URL` | `http://localhost:9090/v1` | OpenAI-compatible LLM backend endpoint |
-| `MODEL_API_KEY` | *(empty)* | API key |
-| `MODEL_NAME` | *(inferred)* | Model identifier |
-| `API_KEY` | *(empty)* | Server auth token |
-| `CONFIG_PATH` | *(none)* | YAML config file path |
-| `RUST_LOG` | `info` | Log level filter (e.g. `debug`, `agentverse_react=trace`) |
-| `LOG_FORMAT` | *(text)* | Set to `json` for structured JSON log output |
+| `MODEL_BASE_URL` | `http://localhost:9090/v1` | OpenAI-compatible LLM backend |
+| `MODEL_API_KEY` | *(empty)* | API key; optional for local `base_url` |
+| `MODEL_NAME` | model-specific | Model identifier |
+| `ANTHROPIC_API_KEY` | — | Anthropic API key |
+| `HOST` | `0.0.0.0` | HTTP server bind address |
+| `PORT` | `3000` | HTTP server port |
+| `API_KEY` | *(unset)* | Bearer token required by all HTTP routes when set |
+| `RUST_LOG` | `info` | Log level filter |
+| `LOG_FORMAT` | *(text)* | Set to `json` for structured JSON output |
 
-### Key Crates
+### Key Crates and Types
 
 | Crate | Key Types |
 |-------|-----------|
-| `agentverse` | `Agent`, `Config`, `ProviderConfig`, `ProviderWrapper`, `AgentBuilder`, `PromptRegistry`, `Example`, `AsyncTool`, `ModelError` |
+| `agentverse` | `LlmRunner`, `Config`, `ProviderConfig`, `PromptRegistry`, `RunStrategy`, `AsyncTool`, `ModelError` |
+| `agentverse-agent` | `Agent`, `AgentError` |
+| `agentverse-strategy` | `build()`, `StrategyKind` |
+| `agentverse-session` | `SqliteSessionMemory`, `SessionMemory`, `SessionManager`, `SessionId` |
 | `agentverse-logging` | `init()` |
 | `agentverse-react` | `ReActStrategy` |
 | `agentverse-plan` | `PlanStrategy`, `HierarchicalStrategy` |
-| `agentverse-router` | `StrategyRouter`, `StrategyName` |
+| `agentverse-router` | `StrategyRouter` |
 | `agentverse-guardrails` | `check_prompt`, `check_output`, `RateLimiter` |
 | `agentverse-tools` | `ToolRegistry`, `Calculator`, `DateTimeTool`, `FileSearch`, `HttpClient`, `ShellTool`, `WebSearch` |
 | `agentverse-integration` | `IntegrationRuntime`, `Event` |
@@ -1219,23 +723,16 @@ pub enum ProviderConfig {
 }
 ```
 
+`api_key` is validated as non-empty only for `OpenAI` when `base_url` is `None`.
+
 ### ModelError Variants
 
 ```rust
 pub enum ModelError {
-    ApiError(String),           // General API errors
-    Timeout(String),            // Request timeout
-    InvalidResponse(String),    // Response parsing failed
-    RateLimited(String),        // HTTP 429
-    CircuitOpen(String),        // Circuit breaker is open
+    ApiError(String),
+    Timeout(String),
+    InvalidResponse(String),
+    RateLimited(String),
+    CircuitOpen(String),
 }
 ```
-
----
-
-## Next Steps
-
-1. **Start with examples**: `cargo run -p example-hello-agent`
-2. **Read the design spec**: `docs/superpowers/specs/2026-05-09-prompt-management-design.md`
-3. **Implement a custom tool**: See `avs-tools/src/` for examples
-4. **Deploy the server**: `cargo run -p agentverse-server`

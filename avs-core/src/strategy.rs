@@ -1,10 +1,7 @@
 use crate::error::AgentError;
+use crate::memory::Message;
 
-/// Uniform interface for all agent strategies.
-///
-/// The method is named `process` rather than `run` to avoid ambiguity with
-/// `ReActStrategy::run()`, which returns `CycleResult` instead of `String`.
 #[async_trait::async_trait]
-pub trait RunStrategy: Send {
-    async fn process(&mut self, input: String) -> Result<String, AgentError>;
+pub trait RunStrategy: Send + Sync {
+    async fn run(&self, messages: Vec<Message>) -> Result<String, AgentError>;
 }

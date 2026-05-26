@@ -1,128 +1,19 @@
 //! Tests for the agentverse-react crate.
+//!
+//! NOTE: Tests that depended on the old CycleSkeleton<M> generic API (with
+//! ConnectionManager, Memory, build_request, prime_react_preamble, etc.) have
+//! been removed as part of the Task 3 refactor.  Task 4 will add new
+//! integration tests against the updated CycleSkeleton and ReActStrategy APIs.
 
-use agentverse::{
-    AsyncTool, ConnectionManager, GenerateRequest, GenerateResponse, Memory, MemoryError, Message,
-    ModelError, ModelProvider, PromptConfig, PromptRegistry, UsageStats,
-};
+use agentverse::{Config, LlmRunner, PromptConfig, PromptRegistry, RunStrategy};
 use agentverse_react::{parse::parse_response, CycleAction, CycleSkeleton, ReActStrategy};
-use agentverse_tools::{Calculator, ToolRegistry};
+use agentverse_tools::ToolRegistry;
 use async_trait::async_trait;
-use reqwest::header::HeaderMap;
 use serde_json::json;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
-// ─── Mock types ───────────────────────────────────────────────────────────────
+// ─── Mock tool ────────────────────────────────────────────────────────────────
 
-/// Minimal in-test memory that satisfies the Memory trait.
-struct TestMemory {
-    messages: Vec<Message>,
-    max_messages: usize,
-    pinned: Vec<Message>,
-}
-
-impl TestMemory {
-    fn new(max_messages: usize) -> Self {
-        Self {
-            messages: Vec::new(),
-            max_messages,
-            pinned: Vec::new(),
-        }
-    }
-}
-
-#[async_trait]
-impl Memory for TestMemory {
-    fn append(&mut self, message: Message) {
-        self.messages.push(message);
-        if self.messages.len() > self.max_messages {
-            self.messages
-                .drain(0..self.messages.len() - self.max_messages);
-        }
-    }
-
-    async fn last_n(&mut self, n: usize) -> Result<Vec<Message>, MemoryError> {
-        let mut all: Vec<Message> = self.pinned.clone();
-        all.extend(self.messages.clone());
-        let start = all.len().saturating_sub(n);
-        Ok(all[start..].to_vec())
-    }
-
-    fn pin(&mut self, messages: Vec<Message>) {
-        self.pinned.extend(messages);
-    }
-
-    async fn prime_from_long_term(
-        &mut self,
-        _query: &str,
-        _top_k: usize,
-    ) -> Result<(), MemoryError> {
-        Ok(())
-    }
-
-    async fn flush(&mut self) -> Result<(), MemoryError> {
-        Ok(())
-    }
-
-    fn clear(&mut self) {
-        self.messages.clear();
-        self.pinned.clear();
-    }
-}
-
-/// A mock model that implements the 4-method ModelProvider trait.
-struct MockModel {
-    #[allow(dead_code)]
-    responses: Vec<String>,
-    #[allow(dead_code)]
-    index: AtomicUsize,
-}
-
-impl ModelProvider for MockModel {
-    fn name(&self) -> &str {
-        "mock-model"
-    }
-
-    fn build_request(
-        &self,
-        _model: &str,
-        _request: GenerateRequest,
-    ) -> Result<serde_json::Value, ModelError> {
-        Ok(json!({}))
-    }
-
-    fn parse_response(&self, _body: &str) -> Result<GenerateResponse, ModelError> {
-        let idx = self.index.fetch_add(1, Ordering::SeqCst) % self.responses.len().max(1);
-        let content = self.responses.get(idx).cloned().unwrap_or_default();
-        Ok(GenerateResponse {
-            content,
-            usage: UsageStats::default(),
-        })
-    }
-
-    fn request_headers(&self, _api_key: &str) -> HeaderMap {
-        HeaderMap::new()
-    }
-
-    fn endpoint_path(&self, _model: &str) -> String {
-        "/mock".to_string()
-    }
-}
-
-fn make_wrapper(responses: Vec<String>) -> ConnectionManager {
-    ConnectionManager::new(
-        MockModel {
-            responses,
-            index: AtomicUsize::new(0),
-        },
-        "http://localhost",
-        "test-key",
-        "mock-model",
-    )
-}
-
-/// A mock async tool for testing.
 struct MockTool {
     name: String,
     description: String,
@@ -138,7 +29,7 @@ impl MockTool {
 }
 
 #[async_trait]
-impl AsyncTool for MockTool {
+impl agentverse::AsyncTool for MockTool {
     fn name(&self) -> &str {
         &self.name
     }
@@ -159,36 +50,27 @@ impl AsyncTool for MockTool {
     }
 }
 
-fn mock_skeleton(
-    responses: Vec<String>,
-    tools: ToolRegistry,
-    max_iter: usize,
-) -> CycleSkeleton<TestMemory> {
+fn make_skeleton() -> CycleSkeleton {
+    let runner = Arc::new(
+        LlmRunner::from_config(Config {
+            provider: agentverse::ProviderConfig::OpenAI {
+                model_name: "test".to_string(),
+                api_key: "sk-test".to_string(),
+                base_url: Some("http://127.0.0.1:1/v1".to_string()),
+            },
+            max_messages: 10,
+            tools: vec![],
+            prompts_dir: None,
+            system_prompt: None,
+        })
+        .unwrap(),
+    );
     CycleSkeleton::new(
+        runner,
         Arc::new(PromptRegistry::new()),
-        Arc::new(make_wrapper(responses)),
-        tools,
-        Arc::new(Mutex::new(TestMemory::new(10))),
-        max_iter,
+        Arc::new(ToolRegistry::new()),
+        5,
     )
-}
-
-fn mock_strategy(
-    responses: Vec<String>,
-    tools: ToolRegistry,
-    max_iter: usize,
-) -> ReActStrategy<TestMemory> {
-    ReActStrategy::new(
-        Arc::new(PromptRegistry::new()),
-        Arc::new(make_wrapper(responses)),
-        tools,
-        Arc::new(Mutex::new(TestMemory::new(10))),
-        max_iter,
-    )
-}
-
-fn empty_registry() -> ToolRegistry {
-    ToolRegistry::new()
 }
 
 // ─── Parse tests ──────────────────────────────────────────────────────────────
@@ -226,150 +108,56 @@ fn test_parse_response_thought_only() {
     }
 }
 
-// ─── Cycle skeleton tests ─────────────────────────────────────────────────────
+// ─── CycleSkeleton tests ──────────────────────────────────────────────────────
 
 #[test]
-fn test_cycle_skeleton_tool_count() {
-    let mut registry = ToolRegistry::new();
-    registry.register(MockTool::new("test_tool", "A test tool"));
-    let skeleton = mock_skeleton(vec!["Answer: done".to_string()], registry, 10);
-    assert_eq!(skeleton.tool_count(), 1);
-    assert_eq!(skeleton.max_iterations(), 10);
-    assert_eq!(skeleton.current_iteration(), 0);
+fn test_cycle_skeleton_tool_count_zero() {
+    let s = make_skeleton();
+    assert_eq!(s.tool_count(), 0);
 }
 
-#[tokio::test]
-async fn test_cycle_skeleton_execute_tool() {
-    let mut registry = ToolRegistry::new();
-    registry.register(MockTool::new("echo", "Echo back input"));
-    let skeleton = mock_skeleton(vec!["Answer: done".to_string()], registry, 10);
-
-    let result = skeleton
-        .execute_tool("echo", json!({"text": "hello"}))
-        .await
-        .unwrap();
-    assert!(result.contains("Executed echo"));
+#[test]
+fn test_cycle_skeleton_max_iterations() {
+    let s = make_skeleton();
+    assert_eq!(s.max_iterations(), 5);
 }
 
-#[tokio::test]
-async fn test_cycle_skeleton_execute_tool_not_found() {
-    let mut registry = ToolRegistry::new();
-    registry.register(MockTool::new("echo", "Echo back input"));
-    let skeleton = mock_skeleton(vec!["Answer: done".to_string()], registry, 10);
-
-    let result = skeleton.execute_tool("missing_tool", json!({})).await;
-    assert!(result.is_err());
-}
-
-#[tokio::test]
-async fn test_cycle_skeleton_build_request() {
-    let memory = Arc::new(Mutex::new(TestMemory::new(10)));
-    memory.lock().await.append(Message {
-        role: agentverse::memory::MessageRole::User,
-        content: "Hello".to_string(),
-    });
-
-    let skeleton = CycleSkeleton::new(
-        Arc::new(PromptRegistry::new()),
-        Arc::new(make_wrapper(vec!["Answer: done".to_string()])),
-        empty_registry(),
-        Arc::clone(&memory),
-        10,
+#[test]
+fn test_cycle_skeleton_tool_count_nonzero() {
+    let runner = Arc::new(
+        LlmRunner::from_config(Config {
+            provider: agentverse::ProviderConfig::OpenAI {
+                model_name: "test".to_string(),
+                api_key: "sk-test".to_string(),
+                base_url: Some("http://127.0.0.1:1/v1".to_string()),
+            },
+            max_messages: 10,
+            tools: vec![],
+            prompts_dir: None,
+            system_prompt: None,
+        })
+        .unwrap(),
     );
-
-    let request = skeleton.build_request().await.unwrap();
-    assert!(request.messages.iter().any(|m| m.content.contains("Hello")));
+    let mut tools = ToolRegistry::new();
+    tools.register(MockTool::new("echo", "Echo tool"));
+    let s = CycleSkeleton::new(runner, Arc::new(PromptRegistry::new()), Arc::new(tools), 10);
+    assert_eq!(s.tool_count(), 1);
 }
 
-// ─── ReActStrategy::run() tests — disabled (require HTTP mock wiring) ────────
-
-#[tokio::test]
-#[ignore = "requires mock HTTP server wiring; ConnectionManager now owns HTTP"]
-async fn test_react_strategy_direct_answer() {
-    let mut strategy = mock_strategy(vec!["Answer: 42".to_string()], empty_registry(), 10);
-    let result = strategy.run("What is 6*7?".to_string()).await.unwrap();
-    assert_eq!(result.answer, "42");
+#[test]
+fn test_cycle_skeleton_prepare_buffer_no_preamble() {
+    let s = make_skeleton();
+    let msgs = vec![agentverse::Message {
+        role: agentverse::MessageRole::User,
+        content: "hi".to_string(),
+    }];
+    let buf = s.prepare_buffer(msgs);
+    // Without a react prompt template, buffer is unchanged
+    assert_eq!(buf.len(), 1);
 }
 
-#[tokio::test]
-#[ignore = "requires mock HTTP server wiring; ConnectionManager now owns HTTP"]
-async fn test_react_strategy_thought_then_answer() {
-    let mut strategy = mock_strategy(
-        vec![
-            "Thought: let me think.".to_string(),
-            "Answer: 42".to_string(),
-        ],
-        empty_registry(),
-        10,
-    );
-    let result = strategy.run("What is 6*7?".to_string()).await.unwrap();
-    assert_eq!(result.answer, "42");
-}
-
-#[tokio::test]
-#[ignore = "requires mock HTTP server wiring; ConnectionManager now owns HTTP"]
-async fn test_react_strategy_tool_call_then_answer() {
-    let mut registry = ToolRegistry::new();
-    registry.register(MockTool::new("echo", "Echo back input"));
-    let mut strategy = mock_strategy(
-        vec![
-            "Thought: use tool.\nAction: echo\nAction Input: {}".to_string(),
-            "Answer: done".to_string(),
-        ],
-        registry,
-        10,
-    );
-    let result = strategy.run("use echo tool".to_string()).await.unwrap();
-    assert_eq!(result.answer, "done");
-}
-
-#[tokio::test]
-#[ignore = "requires mock HTTP server wiring; ConnectionManager now owns HTTP"]
-async fn test_react_strategy_max_iterations() {
-    let mut strategy = mock_strategy(
-        vec!["Thought: still thinking.".to_string()],
-        empty_registry(),
-        1,
-    );
-    let err = strategy.run("infinite loop".to_string()).await.unwrap_err();
-    assert!(err.to_string().contains("Max iterations"));
-}
-
-#[tokio::test]
-#[ignore = "requires mock HTTP server wiring; ConnectionManager now owns HTTP"]
-async fn test_react_strategy_empty_response_is_error() {
-    let mut strategy = mock_strategy(vec!["".to_string()], empty_registry(), 5);
-    let err = strategy.run("test".to_string()).await.unwrap_err();
-    assert!(err.to_string().contains("Empty response"));
-}
-
-#[tokio::test]
-#[ignore = "requires mock HTTP server wiring; ConnectionManager now owns HTTP"]
-async fn test_react_strategy_usage_accumulates() {
-    let mut strategy = mock_strategy(vec!["Answer: done".to_string()], empty_registry(), 5);
-    let result = strategy.run("test".to_string()).await.unwrap();
-    assert_eq!(result.total_usage.input_tokens, 0);
-}
-
-// ─── CycleSkeleton preamble and guardrail tests ────────────────────────────────
-
-#[tokio::test]
-async fn test_cycle_no_preamble_without_react_template() {
-    let memory = Arc::new(Mutex::new(TestMemory::new(10)));
-    let mut skeleton = CycleSkeleton::new(
-        Arc::new(PromptRegistry::new()),
-        Arc::new(make_wrapper(vec!["Answer: done".to_string()])),
-        empty_registry(),
-        Arc::clone(&memory),
-        10,
-    );
-    skeleton.prime_react_preamble().await;
-    assert!(!skeleton.is_react_primed());
-    assert_eq!(memory.lock().await.last_n(20).await.unwrap().len(), 0);
-}
-
-#[tokio::test]
-async fn test_cycle_preamble_inserted_when_react_template_loaded() {
+#[test]
+fn test_cycle_preamble_inserted_when_react_template_loaded() {
     let dir = tempfile::tempdir().unwrap();
     let react_path = dir.path().join("react.j2");
     std::fs::write(&react_path, "Tools: {{ tools }}\nUse ReAct format.").unwrap();
@@ -382,150 +170,107 @@ async fn test_cycle_preamble_inserted_when_react_template_loaded() {
 
     assert!(registry.has_react_template());
 
-    let mut tool_registry = ToolRegistry::new();
-    tool_registry.register(MockTool::new("test", "A test tool"));
-
-    let memory = Arc::new(Mutex::new(TestMemory::new(10)));
-    let mut skeleton = CycleSkeleton::new(
-        Arc::new(registry),
-        Arc::new(make_wrapper(vec!["Answer: done".to_string()])),
-        tool_registry,
-        Arc::clone(&memory),
-        10,
+    let runner = Arc::new(
+        LlmRunner::from_config(Config {
+            provider: agentverse::ProviderConfig::OpenAI {
+                model_name: "test".to_string(),
+                api_key: "sk-test".to_string(),
+                base_url: Some("http://127.0.0.1:1/v1".to_string()),
+            },
+            max_messages: 10,
+            tools: vec![],
+            prompts_dir: None,
+            system_prompt: None,
+        })
+        .unwrap(),
     );
+    let mut tools = ToolRegistry::new();
+    tools.register(MockTool::new("test", "A test tool"));
 
-    skeleton.prime_react_preamble().await;
-    assert!(skeleton.is_react_primed());
+    let s = CycleSkeleton::new(runner, Arc::new(registry), Arc::new(tools), 10);
 
-    let messages = memory.lock().await.last_n(20).await.unwrap();
-    assert_eq!(messages.len(), 1);
-    assert!(messages[0].content.contains("Tools:"));
-}
-
-#[tokio::test]
-async fn test_cycle_preamble_idempotent() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("react.j2"), "Tools: {{ tools }}").unwrap();
-
-    let registry = PromptRegistry::from_config(&PromptConfig {
-        prompts_dir: Some(dir.path().to_str().unwrap().to_string()),
-        ..Default::default()
-    })
-    .unwrap();
-
-    let memory = Arc::new(Mutex::new(TestMemory::new(10)));
-    let mut skeleton = CycleSkeleton::new(
-        Arc::new(registry),
-        Arc::new(make_wrapper(vec!["Answer: done".to_string()])),
-        empty_registry(),
-        Arc::clone(&memory),
-        10,
-    );
-
-    skeleton.prime_react_preamble().await;
-    skeleton.prime_react_preamble().await; // second call must be a no-op
-    assert_eq!(memory.lock().await.last_n(20).await.unwrap().len(), 1);
+    let msgs = vec![agentverse::Message {
+        role: agentverse::MessageRole::User,
+        content: "hello".to_string(),
+    }];
+    let buf = s.prepare_buffer(msgs);
+    // Preamble inserted before the user message
+    assert_eq!(buf.len(), 2);
+    assert!(buf[0].content.contains("Tools:"));
 }
 
 #[test]
-fn test_cycle_accumulate_usage() {
-    use agentverse::UsageStats;
-    let mut skeleton = mock_skeleton(vec![], empty_registry(), 5);
-    skeleton.accumulate_usage(UsageStats {
-        input_tokens: 10,
-        output_tokens: 5,
-        ..Default::default()
-    });
-    skeleton.accumulate_usage(UsageStats {
-        input_tokens: 20,
-        output_tokens: 3,
-        ..Default::default()
-    });
-    assert_eq!(skeleton.total_usage().input_tokens, 30);
-    assert_eq!(skeleton.total_usage().output_tokens, 8);
-}
-
-#[test]
-fn test_cycle_check_output_guardrail_clean() {
-    let skeleton = mock_skeleton(vec![], empty_registry(), 5);
-    assert!(skeleton
+fn test_check_output_guardrail_clean() {
+    let s = make_skeleton();
+    assert!(s
         .check_output_guardrail("This is a clean response.")
         .is_ok());
 }
 
 #[tokio::test]
-async fn test_cycle_build_request_with_guardrails_clean() {
-    let skeleton = mock_skeleton(vec![], empty_registry(), 5);
-    assert!(skeleton.build_request_with_guardrails().await.is_ok());
+async fn test_cycle_skeleton_execute_tool() {
+    let runner = Arc::new(
+        LlmRunner::from_config(Config {
+            provider: agentverse::ProviderConfig::OpenAI {
+                model_name: "test".to_string(),
+                api_key: "sk-test".to_string(),
+                base_url: Some("http://127.0.0.1:1/v1".to_string()),
+            },
+            max_messages: 10,
+            tools: vec![],
+            prompts_dir: None,
+            system_prompt: None,
+        })
+        .unwrap(),
+    );
+    let mut tools = ToolRegistry::new();
+    tools.register(MockTool::new("echo", "Echo back input"));
+    let s = CycleSkeleton::new(runner, Arc::new(PromptRegistry::new()), Arc::new(tools), 10);
+
+    let result = s
+        .execute_tool("echo", json!({"text": "hello"}))
+        .await
+        .unwrap();
+    assert!(result.contains("Executed echo"));
 }
 
 #[tokio::test]
-async fn test_cycle_build_tools_str_with_parameters() {
-    struct ParamTool;
+async fn test_cycle_skeleton_execute_tool_not_found() {
+    let s = make_skeleton();
+    let result = s.execute_tool("missing_tool", json!({})).await;
+    assert!(result.is_err());
+}
 
-    #[async_trait]
-    impl agentverse::AsyncTool for ParamTool {
-        fn name(&self) -> &str {
-            "param_tool"
-        }
-        fn description(&self) -> &str {
-            "Tool with params"
-        }
-        fn parameters(&self) -> serde_json::Value {
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Search query"},
-                    "limit": {"type": "integer", "description": "Max results"}
-                },
-                "required": ["query"]
-            })
-        }
-        async fn execute(
-            &self,
-            _args: serde_json::Value,
-        ) -> Result<serde_json::Value, agentverse::ToolError> {
-            Ok(json!({}))
-        }
-    }
+// ─── ReActStrategy tests ──────────────────────────────────────────────────────
 
-    let mut tool_registry = ToolRegistry::new();
-    tool_registry.register(ParamTool);
-
-    let skeleton = CycleSkeleton::new(
+#[tokio::test]
+async fn react_run_returns_error_on_bad_port() {
+    let runner = Arc::new(
+        LlmRunner::from_config(Config {
+            provider: agentverse::ProviderConfig::OpenAI {
+                model_name: "test".to_string(),
+                api_key: "sk-test".to_string(),
+                base_url: Some("http://127.0.0.1:1/v1".to_string()),
+            },
+            max_messages: 10,
+            tools: vec![],
+            prompts_dir: None,
+            system_prompt: None,
+        })
+        .unwrap(),
+    );
+    let strategy = ReActStrategy::new(
+        runner,
         Arc::new(PromptRegistry::new()),
-        Arc::new(make_wrapper(vec![])),
-        tool_registry,
-        Arc::new(Mutex::new(TestMemory::new(10))),
-        5,
+        Arc::new(ToolRegistry::new()),
+        3,
     );
-    let req = skeleton.build_request().await.unwrap();
-    let system = req.system.unwrap();
-    assert!(system.contains("query"));
-    assert!(system.contains("required"));
-}
 
-// ─── New test: ToolRegistry with Calculator ───────────────────────────────────
+    let messages = vec![agentverse::Message {
+        role: agentverse::MessageRole::User,
+        content: "What is 2+2?".to_string(),
+    }];
 
-#[tokio::test]
-async fn test_cycle_skeleton_execute_calculator_via_registry() {
-    let mut registry = ToolRegistry::new();
-    registry.register(Calculator);
-
-    let skeleton = mock_skeleton(vec!["Answer: done".to_string()], registry, 10);
-
-    let result = skeleton
-        .execute_tool(
-            "calculator",
-            json!({"operation": "add", "a": 3.0, "b": 4.0}),
-        )
-        .await;
-
-    assert!(result.is_ok(), "expected Ok, got {:?}", result);
-    let output = result.unwrap();
-    assert!(
-        output.contains("7"),
-        "expected result 7 in output: {}",
-        output
-    );
+    let result = strategy.run(messages).await;
+    assert!(result.is_err(), "Expected error when LLM is unreachable");
 }

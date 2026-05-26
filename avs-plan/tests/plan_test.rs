@@ -2,61 +2,29 @@
 //!
 //! Tests the PlanStep, Plan, and strategy structures.
 
-use agentverse::{
-    AsyncTool, ConnectionManager, GenerateRequest, ModelError, ModelProvider, PromptRegistry,
-};
-use agentverse_memory::SimpleMemory;
+use agentverse::{AsyncTool, Config, LlmRunner, PromptRegistry};
 use agentverse_plan::{HierarchicalStrategy, Plan, PlanStep, PlanStrategy};
 use agentverse_tools::{Calculator, ToolRegistry};
 use async_trait::async_trait;
-use reqwest::header::HeaderMap;
 use serde_json::json;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
-// ─── Mock types ───────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/// A mock model implementing the new 4-method ModelProvider trait.
-struct MockModel {
-    #[allow(dead_code)]
-    responses: Vec<String>,
-}
-
-impl ModelProvider for MockModel {
-    fn name(&self) -> &str {
-        "mock-model"
-    }
-
-    fn build_request(
-        &self,
-        _model: &str,
-        _request: GenerateRequest,
-    ) -> Result<serde_json::Value, ModelError> {
-        Ok(json!({}))
-    }
-
-    fn parse_response(&self, _body: &str) -> Result<agentverse::GenerateResponse, ModelError> {
-        Ok(agentverse::GenerateResponse {
-            content: String::new(),
-            usage: agentverse::UsageStats::default(),
+fn make_runner() -> Arc<LlmRunner> {
+    Arc::new(
+        LlmRunner::from_config(Config {
+            provider: agentverse::ProviderConfig::OpenAI {
+                model_name: "test".to_string(),
+                api_key: "sk-test".to_string(),
+                base_url: Some("http://127.0.0.1:1/v1".to_string()),
+            },
+            max_messages: 10,
+            tools: vec![],
+            prompts_dir: None,
+            system_prompt: None,
         })
-    }
-
-    fn request_headers(&self, _api_key: &str) -> HeaderMap {
-        HeaderMap::new()
-    }
-
-    fn endpoint_path(&self, _model: &str) -> String {
-        "/mock".to_string()
-    }
-}
-
-fn make_wrapper() -> ConnectionManager {
-    ConnectionManager::new(
-        MockModel { responses: vec![] },
-        "http://localhost",
-        "test-key",
-        "mock-model",
+        .unwrap(),
     )
 }
 
@@ -263,77 +231,14 @@ fn test_plan_step_complex_args() {
     assert_eq!(deserialized.args, Some(args));
 }
 
-// ─── Planner function tests — disabled (require HTTP mock server wiring) ──────
-
-#[tokio::test]
-#[ignore = "requires HTTP mock server wiring; ConnectionManager now owns HTTP"]
-async fn test_generate_plan_success() {
-    let wrapper = make_wrapper();
-    let registry = PromptRegistry::default();
-    let _plan =
-        agentverse_plan::planner::generate_plan(&wrapper, &registry, "do something", "", "")
-            .await
-            .unwrap();
-}
-
-#[tokio::test]
-#[ignore = "requires HTTP mock server wiring; ConnectionManager now owns HTTP"]
-async fn test_generate_plan_invalid_json() {
-    let wrapper = make_wrapper();
-    let registry = PromptRegistry::default();
-    let err = agentverse_plan::planner::generate_plan(&wrapper, &registry, "do something", "", "")
-        .await
-        .unwrap_err();
-    assert!(err.to_string().contains("Failed to parse plan JSON"));
-}
-
-#[tokio::test]
-#[ignore = "requires HTTP mock server wiring; ConnectionManager now owns HTTP"]
-async fn test_generate_plan_with_tools() {
-    let wrapper = make_wrapper();
-    let registry = PromptRegistry::default();
-    let _plan = agentverse_plan::planner::generate_plan(
-        &wrapper,
-        &registry,
-        "do something",
-        "echo",
-        "User: do something",
-    )
-    .await
-    .unwrap();
-}
-
-#[tokio::test]
-#[ignore = "requires HTTP mock server wiring; ConnectionManager now owns HTTP"]
-async fn test_decompose_request_success() {
-    let wrapper = make_wrapper();
-    let registry = PromptRegistry::default();
-    let _sub_goals =
-        agentverse_plan::planner::decompose_request(&wrapper, &registry, "big request")
-            .await
-            .unwrap();
-}
-
-#[tokio::test]
-#[ignore = "requires HTTP mock server wiring; ConnectionManager now owns HTTP"]
-async fn test_decompose_request_invalid_json() {
-    let wrapper = make_wrapper();
-    let registry = PromptRegistry::default();
-    let err = agentverse_plan::planner::decompose_request(&wrapper, &registry, "big request")
-        .await
-        .unwrap_err();
-    assert!(err.to_string().contains("Failed to parse decomposition"));
-}
-
 // ─── PlanStrategy and HierarchicalStrategy construction tests ─────────────────
 
 #[test]
 fn test_plan_strategy_construction() {
     let _strategy = PlanStrategy::new(
-        Arc::new(make_wrapper()),
+        make_runner(),
         Arc::new(PromptRegistry::default()),
-        ToolRegistry::new(),
-        Arc::new(Mutex::new(SimpleMemory::new(20))),
+        Arc::new(ToolRegistry::new()),
         10,
     );
 }
@@ -341,55 +246,12 @@ fn test_plan_strategy_construction() {
 #[test]
 fn test_hierarchical_strategy_construction() {
     let _strategy = HierarchicalStrategy::new(
-        Arc::new(make_wrapper()),
+        make_runner(),
         Arc::new(PromptRegistry::default()),
-        ToolRegistry::new(),
-        Arc::new(Mutex::new(SimpleMemory::new(30))),
+        Arc::new(ToolRegistry::new()),
         10,
         5,
     );
-}
-
-#[tokio::test]
-#[ignore = "requires HTTP mock server wiring; ConnectionManager now owns HTTP"]
-async fn test_plan_strategy_reasoning_steps() {
-    let mut strategy = PlanStrategy::new(
-        Arc::new(make_wrapper()),
-        Arc::new(PromptRegistry::default()),
-        ToolRegistry::new(),
-        Arc::new(Mutex::new(SimpleMemory::new(20))),
-        10,
-    );
-    let _result = strategy.run("do something".to_string()).await.unwrap();
-}
-
-#[tokio::test]
-#[ignore = "requires HTTP mock server wiring; ConnectionManager now owns HTTP"]
-async fn test_plan_strategy_tool_steps() {
-    let mut registry = ToolRegistry::new();
-    registry.register(MockTool::new("echo", "Echo tool"));
-    let mut strategy = PlanStrategy::new(
-        Arc::new(make_wrapper()),
-        Arc::new(PromptRegistry::default()),
-        registry,
-        Arc::new(Mutex::new(SimpleMemory::new(20))),
-        10,
-    );
-    let _result = strategy.run("use echo".to_string()).await.unwrap();
-}
-
-#[tokio::test]
-#[ignore = "requires HTTP mock server wiring; ConnectionManager now owns HTTP"]
-async fn test_hierarchical_strategy_run() {
-    let mut strategy = HierarchicalStrategy::new(
-        Arc::new(make_wrapper()),
-        Arc::new(PromptRegistry::default()),
-        ToolRegistry::new(),
-        Arc::new(Mutex::new(SimpleMemory::new(30))),
-        10,
-        5,
-    );
-    let _result = strategy.run("complex task".to_string()).await.unwrap();
 }
 
 #[tokio::test]
@@ -403,4 +265,39 @@ async fn test_plan_strategy_accepts_tool_registry() {
 fn plan_strategy_implements_run_strategy() {
     fn assert_run_strategy<T: agentverse::RunStrategy + ?Sized>() {}
     assert_run_strategy::<dyn agentverse::RunStrategy>();
+}
+
+#[tokio::test]
+async fn plan_run_returns_error_on_bad_port() {
+    use agentverse::RunStrategy;
+    let strategy = PlanStrategy::new(
+        make_runner(),
+        Arc::new(PromptRegistry::new()),
+        Arc::new(ToolRegistry::new()),
+        5,
+    );
+    let messages = vec![agentverse::Message {
+        role: agentverse::memory::MessageRole::User,
+        content: "Search for rust".to_string(),
+    }];
+    let result = strategy.run(messages).await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn hierarchical_run_returns_error_on_bad_port() {
+    use agentverse::RunStrategy;
+    let strategy = HierarchicalStrategy::new(
+        make_runner(),
+        Arc::new(PromptRegistry::new()),
+        Arc::new(ToolRegistry::new()),
+        5,
+        3,
+    );
+    let messages = vec![agentverse::Message {
+        role: agentverse::memory::MessageRole::User,
+        content: "complex task".to_string(),
+    }];
+    let result = strategy.run(messages).await;
+    assert!(result.is_err());
 }

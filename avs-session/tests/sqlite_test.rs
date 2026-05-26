@@ -1,14 +1,14 @@
 use agentverse::memory::{Message, MessageRole};
 use agentverse_session::session::SessionStatus;
-use agentverse_session::sqlite::SqliteSessionStore;
-use agentverse_session::store::SessionStore;
+use agentverse_session::sqlite::SqliteSessionMemory;
+use agentverse_session::store::SessionMemory;
 use tempfile::tempdir;
 
-async fn make_store() -> SqliteSessionStore {
+async fn make_store() -> SqliteSessionMemory {
     let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     std::mem::forget(dir);
-    SqliteSessionStore::new(db_path.to_str().unwrap())
+    SqliteSessionMemory::new(db_path.to_str().unwrap())
         .await
         .unwrap()
 }
@@ -24,7 +24,7 @@ async fn create_and_get_session() {
 
 #[tokio::test]
 async fn get_by_session_id_returns_session_without_user_argument() {
-    let store = SqliteSessionStore::new("sqlite::memory:").await.unwrap();
+    let store = SqliteSessionMemory::new("sqlite::memory:").await.unwrap();
     let session = store.create("alice").await.unwrap();
     let loaded = store.get(session.id).await.unwrap().unwrap();
     assert_eq!(loaded.id, session.id);
@@ -76,7 +76,7 @@ async fn append_and_load_messages_preserves_order() {
 
 #[tokio::test]
 async fn append_turn_persists_both_messages_in_order() {
-    let store = SqliteSessionStore::new("sqlite::memory:").await.unwrap();
+    let store = SqliteSessionMemory::new("sqlite::memory:").await.unwrap();
     let session = store.create("alice").await.unwrap();
 
     store
@@ -167,7 +167,7 @@ async fn session_manager_list_sessions_for_user() {
 
 #[tokio::test]
 async fn user_cannot_access_other_users_session() {
-    let store: Arc<dyn SessionStore> = Arc::new(make_store().await);
+    let store: Arc<dyn SessionMemory> = Arc::new(make_store().await);
     let alice_session = store.create("alice").await.unwrap();
 
     store
@@ -193,7 +193,7 @@ async fn user_cannot_access_other_users_session() {
         .await
         .unwrap_err();
     assert!(
-        matches!(err, agentverse_session::SessionStoreError::NotFound(id) if id == alice_session.id),
+        matches!(err, agentverse_session::SessionMemoryError::NotFound(id) if id == alice_session.id),
         "bob should not own alice's session"
     );
 }

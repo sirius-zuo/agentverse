@@ -9,14 +9,15 @@
 //   MODEL_BASE_URL=http://localhost:9090/v1 \
 //   MODEL_NAME=your-model \
 //   cargo run -p example-slack-hr-assistant
-use agentverse::{ConnectionManager, PromptConfig, PromptRegistry, RunStrategy};
+
+use agentverse::{Config, LlmRunner, PromptConfig, PromptRegistry, ProviderConfig};
+use agentverse_agent::Agent;
 use agentverse_integration::{Event, IntegrationRuntime};
 use agentverse_logging as avs_logging;
-use agentverse_memory::SimpleMemory;
-use agentverse_plan::PlanStrategy;
+use agentverse_session::SqliteSessionMemory;
+use agentverse_strategy::{build, StrategyKind};
 use agentverse_tools::ToolRegistry;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() {
@@ -27,19 +28,53 @@ async fn main() {
     let model_name = std::env::var("MODEL_NAME").unwrap_or_else(|_| "gpt-4".into());
     let api_key = std::env::var("MODEL_API_KEY").unwrap_or_default();
 
-    let model = Arc::new(ConnectionManager::openai(&base_url, &model_name, &api_key));
-    let registry = Arc::new(
+    let runner = Arc::new(
+        LlmRunner::from_config(Config {
+            provider: ProviderConfig::OpenAI {
+                model_name: model_name.clone(),
+                api_key,
+                base_url: Some(base_url.clone()),
+            },
+            max_messages: 100,
+            tools: vec![],
+            prompts_dir: None,
+            system_prompt: None,
+        })
+        .expect("runner"),
+    );
+
+    let tools = Arc::new(ToolRegistry::new());
+
+    let prompts = Arc::new(
         PromptRegistry::from_config(&PromptConfig {
             prompts_dir: Some(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string()),
             ..Default::default()
         })
         .expect("prompt config"),
     );
-    let memory = Arc::new(Mutex::new(SimpleMemory::new(50)));
-    let tools = ToolRegistry::new();
-    let strategy = Arc::new(Mutex::new(PlanStrategy::new(
-        model, registry, tools, memory, 10,
-    )));
+
+    let strategy = build(
+        StrategyKind::Plan,
+        Arc::clone(&runner),
+        Arc::clone(&prompts),
+        Arc::clone(&tools),
+        10,
+    );
+    let session_memory = Arc::new(
+        SqliteSessionMemory::new("sqlite::memory:")
+            .await
+            .expect("session store"),
+    );
+
+    let agent = Agent::new(
+        runner,
+        tools,
+        prompts,
+        session_memory,
+        strategy,
+        false,
+        None,
+    );
 
     let config_path = concat!(env!("CARGO_MANIFEST_DIR"), "/agent.toml");
     let runtime = IntegrationRuntime::from_config(config_path)
@@ -49,9 +84,12 @@ async fn main() {
     tracing::info!(model = %model_name, base_url = %base_url, "HR assistant ready");
     runtime
         .run(move |event: Event| {
-            let strategy = Arc::clone(&strategy);
+            let agent = Arc::clone(&agent);
             async move {
-                let answer = strategy.lock().await.process(event.text).await?;
+                let answer = agent
+                    .invoke_stateless(&event.text)
+                    .await
+                    .map_err(|e| agentverse::AgentError::Memory(e.to_string()))?;
                 Ok::<Event, agentverse::AgentError>(Event {
                     text: answer,
                     ..event

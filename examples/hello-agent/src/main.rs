@@ -6,15 +6,15 @@
 //   MODEL_NAME=Qwen3.6-35B-A3B-GGUF \
 //   cargo run -p example-hello-agent
 
-use agentverse::{ConnectionManager, PromptConfig, PromptRegistry};
+use agentverse::{Config, LlmRunner, PromptConfig, PromptRegistry, ProviderConfig};
+use agentverse_agent::Agent;
 use agentverse_logging as avs_logging;
-use agentverse_memory::SimpleMemory;
-use agentverse_react::ReActStrategy;
+use agentverse_session::SqliteSessionMemory;
+use agentverse_strategy::{build, StrategyKind};
 use agentverse_tools::{Calculator, DateTimeTool, ToolRegistry};
 use std::io::Write;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() {
@@ -29,19 +29,58 @@ async fn main() {
     tracing::info!(model = %model_name, base_url = %base_url, "Hello Agent");
     println!("Type your question and press Enter. Type \"exit\" or press Ctrl+C to quit.\n");
 
-    let model = Arc::new(ConnectionManager::openai(&base_url, &model_name, &api_key));
-    let registry = Arc::new(
+    let runner = Arc::new(
+        LlmRunner::from_config(Config {
+            provider: ProviderConfig::OpenAI {
+                model_name: model_name.clone(),
+                api_key,
+                base_url: Some(base_url),
+            },
+            max_messages: 100,
+            tools: vec![],
+            prompts_dir: None,
+            system_prompt: None,
+        })
+        .expect("failed to build runner"),
+    );
+
+    let mut tool_registry = ToolRegistry::new();
+    tool_registry.register_with_category(Calculator, "math");
+    tool_registry.register_with_category(DateTimeTool, "utility");
+    let tools = Arc::new(tool_registry);
+
+    let prompts = Arc::new(
         PromptRegistry::from_config(&PromptConfig {
             prompts_dir: Some(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string()),
             ..Default::default()
         })
         .expect("prompt config"),
     );
-    let memory = Arc::new(Mutex::new(SimpleMemory::new(50)));
-    let mut tools = ToolRegistry::new();
-    tools.register_with_category(Calculator, "math");
-    tools.register_with_category(DateTimeTool, "utility");
-    let mut agent = ReActStrategy::new(registry, model, tools, memory, 10);
+
+    let strategy = build(
+        StrategyKind::React,
+        Arc::clone(&runner),
+        Arc::clone(&prompts),
+        Arc::clone(&tools),
+        10,
+    );
+    let session_memory = Arc::new(
+        SqliteSessionMemory::new("sqlite::memory:")
+            .await
+            .expect("session store"),
+    );
+
+    let agent = Agent::new(
+        runner,
+        tools,
+        prompts,
+        session_memory,
+        strategy,
+        false,
+        None,
+    );
+
+    let session_id = agent.create_session("user").await.expect("create session");
 
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
 
@@ -66,17 +105,8 @@ async fn main() {
             break;
         }
 
-        match agent.run(input).await {
-            Ok(result) => {
-                println!("\nAgent: {}", result.answer);
-                println!(
-                    "[tokens] input={} output={} cache_read={} cache_write={}\n",
-                    result.total_usage.input_tokens,
-                    result.total_usage.output_tokens,
-                    result.total_usage.cache_read_tokens,
-                    result.total_usage.cache_write_tokens,
-                );
-            }
+        match agent.invoke("user", session_id, &input).await {
+            Ok(answer) => println!("\nAgent: {}\n", answer),
             Err(e) => eprintln!("Error: {}\n", e),
         }
     }
