@@ -32,7 +32,7 @@ pub struct Agent {
     strategy: Arc<dyn RunStrategy>,
     cache_memory: Mutex<HashMap<(String, SessionId), CacheMemory>>,
     buffer_ttl: Duration,
-    memory_store: Option<Arc<dyn LongtermMemory>>,
+    longterm_memory: Option<Arc<dyn LongtermMemory>>,
 }
 
 impl Agent {
@@ -40,20 +40,20 @@ impl Agent {
         runner: Arc<LlmRunner>,
         tools: Arc<ToolRegistry>,
         prompts: Arc<PromptRegistry>,
-        store: Arc<dyn SessionMemory>,
+        session_memory: Arc<dyn SessionMemory>,
         strategy: Arc<dyn RunStrategy>,
         enable_http_server: bool,
-        memory_store: Option<Arc<dyn LongtermMemory>>,
+        longterm_memory: Option<Arc<dyn LongtermMemory>>,
     ) -> Arc<Self> {
         let agent = Arc::new(Self {
             runner,
             tools,
             prompts,
-            sessions: Arc::new(SessionManager::new(store)),
+            sessions: Arc::new(SessionManager::new(session_memory)),
             strategy,
             cache_memory: Mutex::new(HashMap::new()),
             buffer_ttl: Duration::from_secs(300),
-            memory_store,
+            longterm_memory,
         });
 
         #[cfg(feature = "http")]
@@ -195,7 +195,7 @@ impl Agent {
         let history = self.get_cache_memory(user_id, session_id).await?;
 
         // Layer 3: retrieve scored memories and inject into system prompt
-        let long_term_text = if let Some(ref ms) = self.memory_store {
+        let long_term_text = if let Some(ref ms) = self.longterm_memory {
             let memories = ms.retrieve(user_id, input, 5)
                 .await
                 .unwrap_or_else(|e| {
@@ -240,7 +240,7 @@ impl Agent {
             .await;
 
         // Layer 3: async fire-and-forget consolidation
-        if let Some(ms) = self.memory_store.clone() {
+        if let Some(ms) = self.longterm_memory.clone() {
             let uid = user_id.to_string();
             // TODO: replace 0.5 with heuristic or LLM-assigned importance scorer
             let record = LongtermRecord::now(format!("User: {input}\nAssistant: {response}"), 0.5);
@@ -343,9 +343,17 @@ mod lt_tests {
             Arc::clone(&tools),
             3,
         );
-        let store = Arc::new(SqliteSessionMemory::new("sqlite::memory:").await.unwrap());
+        let session_memory = Arc::new(SqliteSessionMemory::new("sqlite::memory:").await.unwrap());
         let ms: Arc<dyn LongtermMemory> = Arc::new(NoopMemoryStore);
-        let agent = Agent::new(runner, tools, prompts, store, strategy, false, Some(ms));
+        let agent = Agent::new(
+            runner,
+            tools,
+            prompts,
+            session_memory,
+            strategy,
+            false,
+            Some(ms),
+        );
         let sid = agent.create_session("alice").await.unwrap();
         assert!(agent.get_session("alice", sid).await.unwrap().is_some());
     }
@@ -384,8 +392,16 @@ mod tests {
             Arc::clone(&tools),
             3,
         );
-        let store = Arc::new(SqliteSessionMemory::new("sqlite::memory:").await.unwrap());
-        Agent::new(runner, tools, prompts, store, strategy, false, None)
+        let session_memory = Arc::new(SqliteSessionMemory::new("sqlite::memory:").await.unwrap());
+        Agent::new(
+            runner,
+            tools,
+            prompts,
+            session_memory,
+            strategy,
+            false,
+            None,
+        )
     }
 
     #[tokio::test]

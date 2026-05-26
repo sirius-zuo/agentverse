@@ -52,14 +52,14 @@ async fn main() {
         Arc::clone(&tools),
         10,
     );
-    let store = Arc::new(
+    let session_memory = Arc::new(
         SqliteSessionMemory::new("sqlite:agent.db")
             .await
             .expect("session store"),
     );
 
     // enable_http_server=true: Agent reads HOST/PORT from env and spawns HTTP server internally
-    let _agent = Agent::new(runner, tools, prompts, store, strategy, true, None);
+    let _agent = Agent::new(runner, tools, prompts, session_memory, strategy, true, None);
 
     tracing::info!("Agent started. Press Ctrl-C to stop.");
     tokio::signal::ctrl_c()

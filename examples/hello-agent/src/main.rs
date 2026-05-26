@@ -64,13 +64,21 @@ async fn main() {
         Arc::clone(&tools),
         10,
     );
-    let store = Arc::new(
+    let session_memory = Arc::new(
         SqliteSessionMemory::new("sqlite::memory:")
             .await
             .expect("session store"),
     );
 
-    let agent = Agent::new(runner, tools, prompts, store, strategy, false, None);
+    let agent = Agent::new(
+        runner,
+        tools,
+        prompts,
+        session_memory,
+        strategy,
+        false,
+        None,
+    );
 
     let session_id = agent.create_session("user").await.expect("create session");
 

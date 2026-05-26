@@ -60,13 +60,21 @@ async fn main() {
         Arc::clone(&tools),
         10,
     );
-    let store = Arc::new(
+    let session_memory = Arc::new(
         SqliteSessionMemory::new("sqlite::memory:")
             .await
             .expect("session store"),
     );
 
-    let agent = Agent::new(runner, tools, prompts, store, strategy, false, None);
+    let agent = Agent::new(
+        runner,
+        tools,
+        prompts,
+        session_memory,
+        strategy,
+        false,
+        None,
+    );
 
     let config_path = concat!(env!("CARGO_MANIFEST_DIR"), "/agent.toml");
     let runtime = IntegrationRuntime::from_config(config_path)

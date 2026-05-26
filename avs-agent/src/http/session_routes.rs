@@ -165,7 +165,7 @@ mod tests {
     use tower::ServiceExt;
 
     async fn make_agent() -> Arc<Agent> {
-        let store = Arc::new(SqliteSessionMemory::new("sqlite::memory:").await.unwrap());
+        let session_memory = Arc::new(SqliteSessionMemory::new("sqlite::memory:").await.unwrap());
         let runner = Arc::new(
             LlmRunner::from_config(Config {
                 provider: ProviderConfig::OpenAI {
@@ -189,7 +189,15 @@ mod tests {
             Arc::clone(&tools),
             5,
         );
-        Agent::new(runner, tools, prompts, store, strategy, false, None)
+        Agent::new(
+            runner,
+            tools,
+            prompts,
+            session_memory,
+            strategy,
+            false,
+            None,
+        )
     }
 
     fn make_app(agent: Arc<Agent>) -> Router {

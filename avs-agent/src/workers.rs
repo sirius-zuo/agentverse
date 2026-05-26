@@ -39,20 +39,20 @@ impl Default for CleanupConfig {
 }
 
 pub struct ConsolidationWorker {
-    store: Arc<dyn SessionMemory>,
-    memory_store: Arc<dyn LongtermMemory>,
+    session_memory: Arc<dyn SessionMemory>,
+    longterm_memory: Arc<dyn LongtermMemory>,
     config: ConsolidationConfig,
 }
 
 impl ConsolidationWorker {
     pub fn new(
-        store: Arc<dyn SessionMemory>,
-        memory_store: Arc<dyn LongtermMemory>,
+        session_memory: Arc<dyn SessionMemory>,
+        longterm_memory: Arc<dyn LongtermMemory>,
         config: ConsolidationConfig,
     ) -> Self {
         Self {
-            store,
-            memory_store,
+            session_memory,
+            longterm_memory,
             config,
         }
     }
@@ -70,9 +70,12 @@ impl ConsolidationWorker {
     }
 
     async fn tick(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let sessions = self.store.list_all_active_sessions().await?;
+        let sessions = self.session_memory.list_all_active_sessions().await?;
         for session in sessions {
-            let msgs = self.store.load_messages_above_watermark(session.id).await?;
+            let msgs = self
+                .session_memory
+                .load_messages_above_watermark(session.id)
+                .await?;
             if msgs.is_empty() {
                 continue;
             }
@@ -86,9 +89,11 @@ impl ConsolidationWorker {
             for (seq, msg) in &msgs {
                 // TODO: replace with LLM summarizer once wired in
                 let record = LongtermRecord::now(msg.content.clone(), 0.5);
-                self.memory_store.write(&session.user_id, record).await?;
+                self.longterm_memory.write(&session.user_id, record).await?;
                 // Advance watermark after each successful write to prevent duplicate writes on retry
-                self.store.advance_watermark(session.id, *seq).await?;
+                self.session_memory
+                    .advance_watermark(session.id, *seq)
+                    .await?;
             }
         }
         Ok(())
@@ -96,13 +101,16 @@ impl ConsolidationWorker {
 }
 
 pub struct CleanupWorker {
-    store: Arc<dyn SessionMemory>,
+    session_memory: Arc<dyn SessionMemory>,
     config: CleanupConfig,
 }
 
 impl CleanupWorker {
-    pub fn new(store: Arc<dyn SessionMemory>, config: CleanupConfig) -> Self {
-        Self { store, config }
+    pub fn new(session_memory: Arc<dyn SessionMemory>, config: CleanupConfig) -> Self {
+        Self {
+            session_memory,
+            config,
+        }
     }
 
     /// Run the worker loop. Call via `tokio::spawn(worker.run())`.
@@ -119,11 +127,11 @@ impl CleanupWorker {
     async fn tick(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let cutoff_ts =
             chrono::Utc::now().timestamp() - self.config.retention_window.as_secs() as i64;
-        let sessions = self.store.list_all_active_sessions().await?;
+        let sessions = self.session_memory.list_all_active_sessions().await?;
         for session in sessions {
-            let wm = self.store.get_watermark(session.id).await?;
+            let wm = self.session_memory.get_watermark(session.id).await?;
             let deleted = self
-                .store
+                .session_memory
                 .cleanup_expired_messages(session.id, cutoff_ts, wm)
                 .await?;
             if deleted > 0 {

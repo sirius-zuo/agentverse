@@ -78,13 +78,21 @@ async fn main() {
         Arc::clone(&tools),
         5,
     );
-    let store = Arc::new(
+    let session_memory = Arc::new(
         SqliteSessionMemory::new("sqlite::memory:")
             .await
             .expect("store"),
     );
 
-    let agent = Agent::new(runner, tools, prompts, store, strategy, false, None);
+    let agent = Agent::new(
+        runner,
+        tools,
+        prompts,
+        session_memory,
+        strategy,
+        false,
+        None,
+    );
 
     let question = format!(
         "Search for '{}' and summarize the top {} results.",

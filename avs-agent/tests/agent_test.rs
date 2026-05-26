@@ -146,9 +146,9 @@ impl SessionMemory for FakeStore {
 
 #[tokio::test]
 async fn session_manager_rejects_wrong_user_before_llm_call() {
-    let store = Arc::new(FakeStore::default());
-    let session = store.create("alice").await.unwrap();
-    let manager = agentverse_session::SessionManager::new(store);
+    let session_memory = Arc::new(FakeStore::default());
+    let session = session_memory.create("alice").await.unwrap();
+    let manager = agentverse_session::SessionManager::new(session_memory);
 
     let err = manager.assert_owner("bob", session.id).await.unwrap_err();
     assert!(matches!(err, SessionMemoryError::NotFound(id) if id == session.id));
@@ -156,10 +156,10 @@ async fn session_manager_rejects_wrong_user_before_llm_call() {
 
 #[tokio::test]
 async fn append_turn_contract_preserves_user_then_assistant_order() {
-    let store = Arc::new(FakeStore::default());
-    let session = store.create("alice").await.unwrap();
+    let session_memory = Arc::new(FakeStore::default());
+    let session = session_memory.create("alice").await.unwrap();
 
-    store
+    session_memory
         .append_turn(
             session.id,
             Message {
@@ -174,7 +174,7 @@ async fn append_turn_contract_preserves_user_then_assistant_order() {
         .await
         .unwrap();
 
-    let messages = store.load_messages(session.id).await.unwrap();
+    let messages = session_memory.load_messages(session.id).await.unwrap();
     assert_eq!(messages[0].content, "hello");
     assert_eq!(messages[1].content, "hi");
 }

@@ -139,8 +139,16 @@ mod tests {
             Arc::clone(&tools),
             3,
         );
-        let store = Arc::new(SqliteSessionMemory::new("sqlite::memory:").await.unwrap());
-        Agent::new(runner, tools, prompts, store, strategy, false, None)
+        let session_memory = Arc::new(SqliteSessionMemory::new("sqlite::memory:").await.unwrap());
+        Agent::new(
+            runner,
+            tools,
+            prompts,
+            session_memory,
+            strategy,
+            false,
+            None,
+        )
     }
 
     fn make_app(agent: Arc<Agent>) -> Router {
