@@ -1,9 +1,9 @@
-use std::sync::Arc;
 use crate::registry::ToolRegistry;
 use agentverse::{Tool, ToolResult};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
+use std::sync::Arc;
 
 #[derive(Deserialize, JsonSchema)]
 pub struct FindToolsArgs {
@@ -13,6 +13,7 @@ pub struct FindToolsArgs {
     #[serde(default = "default_limit")]
     pub limit: u8,
 }
+
 fn default_limit() -> u8 {
     5
 }
@@ -30,14 +31,28 @@ impl FindToolsTool {
 #[async_trait::async_trait]
 impl Tool for FindToolsTool {
     type Args = FindToolsArgs;
+
     fn name(&self) -> &str {
         "find_tools"
     }
+
     fn description(&self) -> &str {
-        "Search the tool registry by keyword to discover available tools"
+        "Search the tool registry by keyword to discover available tools and their capabilities"
     }
+
     async fn execute(&self, args: FindToolsArgs) -> ToolResult {
-        // Stub — full implementation in Task 4
-        Ok(json!({ "tools": [], "query": args.query }))
+        let limit = args.limit as usize;
+        let results = self.registry.search(&args.query, limit);
+        let tools: Vec<serde_json::Value> = results
+            .into_iter()
+            .map(|info| {
+                json!({
+                    "name": info.name,
+                    "description": info.description,
+                    "score": info.score,
+                })
+            })
+            .collect();
+        Ok(json!({ "query": args.query, "tools": tools }))
     }
 }
