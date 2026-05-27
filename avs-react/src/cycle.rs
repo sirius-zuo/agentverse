@@ -3,9 +3,9 @@
 //! Provides the fixed loop structure; each strategy only implements
 //! its own `step()` logic via a closure.
 
-use agentverse::{AgentError, LlmRunner, PromptRegistry};
+use agentverse::{AgentError, LlmRunner, PromptRegistry, ToolCall, ToolCallResult};
 use agentverse_guardrails::check_output;
-use agentverse_tools::ToolRegistry;
+use agentverse_tools::{ActiveToolSet, ToolRegistry};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -25,8 +25,10 @@ pub struct CycleSkeleton {
 pub enum CycleAction {
     /// LLM said "think" — continue the loop with a thought.
     Continue { thought: String },
-    /// LLM decided to call a tool.
+    /// LLM decided to call a single tool.
     ToolCall { tool_name: String, args: Value },
+    /// LLM decided to call multiple tools in parallel.
+    ToolCalls { calls: Vec<ToolCall> },
     /// LLM provided a final answer.
     Done { answer: String },
     /// LLM indicated an error.
@@ -157,6 +159,54 @@ impl CycleSkeleton {
     /// Return the number of registered tools.
     pub fn tool_count(&self) -> usize {
         self.tools.len()
+    }
+
+    /// Execute multiple tool calls concurrently.
+    pub async fn execute_many(
+        &self,
+        calls: Vec<ToolCall>,
+    ) -> Result<Vec<ToolCallResult>, AgentError> {
+        Ok(self.tools.execute_many(calls).await)
+    }
+
+    /// Build tools string scoped to an ActiveToolSet.
+    pub fn build_tools_str_active(&self, active: &ActiveToolSet) -> String {
+        active
+            .schemas(&self.tools)
+            .into_iter()
+            .map(|schema| {
+                let name = schema["name"].as_str().unwrap_or("");
+                let description = schema["description"].as_str().unwrap_or("");
+                let input = &schema["input_schema"];
+                let props = input["properties"].as_object();
+                let required: Vec<&str> = input["required"]
+                    .as_array()
+                    .map(|r| r.iter().filter_map(|v| v.as_str()).collect())
+                    .unwrap_or_default();
+                if let Some(props) = props {
+                    let param_lines = props
+                        .iter()
+                        .map(|(k, v)| {
+                            let req = if required.contains(&k.as_str()) {
+                                "required"
+                            } else {
+                                "optional"
+                            };
+                            let desc = v["description"].as_str().unwrap_or("");
+                            format!("    - {} ({}): {}", k, req, desc)
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    format!(
+                        "- {}: {}\n  Parameters:\n{}",
+                        name, description, param_lines
+                    )
+                } else {
+                    format!("- {}: {}", name, description)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
     }
 
     /// Return max iterations.
