@@ -62,6 +62,9 @@ async fn server_executes_tool() {
         headers: Default::default(),
     };
     let client = McpClient::connect(transport).await.unwrap();
-    let result = client.call_tool("echo", json!({"msg": "hello"})).await.unwrap();
+    let result = client
+        .call_tool("echo", json!({"msg": "hello"}))
+        .await
+        .unwrap();
     assert_eq!(result, json!({ "echo": "hello" }).to_string());
 }

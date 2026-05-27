@@ -51,7 +51,13 @@ async fn main() {
     );
 
     let tools = ToolRegistry::new();
-    tools.register_with_options(FileSearch, ToolOptions { category: Some("filesystem".into()), ..Default::default() });
+    tools.register_with_options(
+        FileSearch,
+        ToolOptions {
+            category: Some("filesystem".into()),
+            ..Default::default()
+        },
+    );
     // ShellTool lets the agent read file contents with `cat` or search with
     // `grep`. It runs commands in `project_dir` with a 30-second timeout.
     //
@@ -73,7 +79,10 @@ async fn main() {
                 "chown".into(),
             ],
         ),
-        ToolOptions { category: Some("filesystem".into()), ..Default::default() },
+        ToolOptions {
+            category: Some("filesystem".into()),
+            ..Default::default()
+        },
     );
 
     let prompts = Arc::new(

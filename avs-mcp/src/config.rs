@@ -54,10 +54,7 @@ impl McpServerConfig {
             }
             TransportKind::StreamableHttp => {
                 let url = self.url.as_deref().ok_or_else(|| {
-                    McpError::Config(format!(
-                        "{}: streamable_http requires 'url'",
-                        self.name
-                    ))
+                    McpError::Config(format!("{}: streamable_http requires 'url'", self.name))
                 })?;
                 let url = expand_env(url)?;
                 let endpoint = url
@@ -66,12 +63,10 @@ impl McpServerConfig {
                 let mut header_map = reqwest::header::HeaderMap::new();
                 if let Some(headers) = &self.headers {
                     for (k, v) in headers {
-                        let name =
-                            reqwest::header::HeaderName::from_bytes(k.as_bytes())
-                                .map_err(|e| McpError::Config(e.to_string()))?;
-                        let value =
-                            reqwest::header::HeaderValue::from_str(&expand_env(v)?)
-                                .map_err(|e| McpError::Config(e.to_string()))?;
+                        let name = reqwest::header::HeaderName::from_bytes(k.as_bytes())
+                            .map_err(|e| McpError::Config(e.to_string()))?;
+                        let value = reqwest::header::HeaderValue::from_str(&expand_env(v)?)
+                            .map_err(|e| McpError::Config(e.to_string()))?;
                         header_map.insert(name, value);
                     }
                 }

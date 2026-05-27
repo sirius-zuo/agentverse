@@ -125,7 +125,12 @@ impl agentverse::RunStrategy for ReActStrategy {
                         content: response.content.clone(),
                     });
                     let results = self.skeleton.execute_many(calls).await?;
-                    info!(iteration, action = "tool_calls", count = results.len(), "Parallel tools executed");
+                    info!(
+                        iteration,
+                        action = "tool_calls",
+                        count = results.len(),
+                        "Parallel tools executed"
+                    );
                     let observation = results
                         .iter()
                         .map(|r| {

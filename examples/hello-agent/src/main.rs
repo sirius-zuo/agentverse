@@ -45,8 +45,20 @@ async fn main() {
     );
 
     let tools = ToolRegistry::new();
-    tools.register_with_options(Calculator, ToolOptions { category: Some("math".into()), ..Default::default() });
-    tools.register_with_options(DateTimeTool, ToolOptions { category: Some("utility".into()), ..Default::default() });
+    tools.register_with_options(
+        Calculator,
+        ToolOptions {
+            category: Some("math".into()),
+            ..Default::default()
+        },
+    );
+    tools.register_with_options(
+        DateTimeTool,
+        ToolOptions {
+            category: Some("utility".into()),
+            ..Default::default()
+        },
+    );
 
     let prompts = Arc::new(
         PromptRegistry::from_config(&PromptConfig {

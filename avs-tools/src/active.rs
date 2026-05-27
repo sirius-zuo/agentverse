@@ -1,6 +1,6 @@
-use std::collections::HashSet;
-use serde_json::Value;
 use crate::registry::ToolRegistry;
+use serde_json::Value;
+use std::collections::HashSet;
 
 /// Per-invocation set of tool names whose schemas are included in the LLM prompt.
 /// All tools remain executable via ToolRegistry regardless of the active set.

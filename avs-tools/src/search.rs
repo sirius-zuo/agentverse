@@ -18,14 +18,20 @@ pub struct BM25Index {
     b: f32,
 }
 
-impl BM25Index {
-    pub fn new() -> Self {
+impl Default for BM25Index {
+    fn default() -> Self {
         Self {
             docs: vec![],
             df: HashMap::new(),
             k1: 1.5,
             b: 0.75,
         }
+    }
+}
+
+impl BM25Index {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn insert(&mut self, id: &str, text: &str) {
@@ -129,7 +135,10 @@ mod tests {
     fn limit_is_respected() {
         let mut idx = BM25Index::new();
         for i in 0..10 {
-            idx.insert(&format!("tool_{i}"), &format!("tool number {i} search query"));
+            idx.insert(
+                &format!("tool_{i}"),
+                &format!("tool number {i} search query"),
+            );
         }
         let results = idx.search("tool search", 3);
         assert!(results.len() <= 3);

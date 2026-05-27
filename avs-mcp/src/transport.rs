@@ -1,6 +1,6 @@
+use reqwest::header::HeaderMap;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use reqwest::header::HeaderMap;
 
 #[derive(Debug, Clone)]
 pub enum McpTransport {

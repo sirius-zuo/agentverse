@@ -6,6 +6,9 @@ use std::sync::{Arc, RwLock};
 use crate::find_tools::FindToolsTool;
 use crate::search::{BM25Index, ToolInfo};
 
+type ToolEntry = (Arc<dyn ErasedTool>, ToolOptions);
+type ToolMap = HashMap<String, ToolEntry>;
+
 #[derive(Default, Clone)]
 pub struct ToolOptions {
     pub category: Option<String>,
@@ -31,7 +34,7 @@ fn safe_truncate(s: &str, max_bytes: usize) -> &str {
 }
 
 pub struct ToolRegistry {
-    tools: RwLock<HashMap<String, (Arc<dyn ErasedTool>, ToolOptions)>>,
+    tools: RwLock<ToolMap>,
     index: RwLock<BM25Index>,
 }
 
@@ -56,7 +59,10 @@ impl ToolRegistry {
         let name = tool.name().to_string();
         let text = format!("{} {}", tool.name(), tool.description());
         let erased: Arc<dyn ErasedTool> = Arc::new(tool);
-        self.tools.write().unwrap().insert(name.clone(), (erased, opts));
+        self.tools
+            .write()
+            .unwrap()
+            .insert(name.clone(), (erased, opts));
         self.index.write().unwrap().insert(&name, &text);
     }
 
@@ -64,7 +70,10 @@ impl ToolRegistry {
     pub fn register_erased(&self, tool: Arc<dyn ErasedTool>, opts: ToolOptions) {
         let name = tool.name().to_string();
         let text = format!("{} {}", tool.name(), tool.description());
-        self.tools.write().unwrap().insert(name.clone(), (tool, opts));
+        self.tools
+            .write()
+            .unwrap()
+            .insert(name.clone(), (tool, opts));
         self.index.write().unwrap().insert(&name, &text);
     }
 
@@ -81,7 +90,9 @@ impl ToolRegistry {
         tracing::debug!(tool_name = %name, args = %safe_truncate(&args.to_string(), 200), "Tool call");
         let result = tool.execute_raw(args).await;
         match &result {
-            Ok(v) => tracing::info!(tool_name = %name, result = %safe_truncate(&v.to_string(), 200), "Tool ok"),
+            Ok(v) => {
+                tracing::info!(tool_name = %name, result = %safe_truncate(&v.to_string(), 200), "Tool ok")
+            }
             Err(e) => tracing::warn!(tool_name = %name, error = %e, "Tool error"),
         }
         result
@@ -227,10 +238,8 @@ impl ToolRegistry {
                         .iter()
                         .filter_map(|k| {
                             props.get(*k).map(|v| {
-                                let desc = v
-                                    .get("description")
-                                    .and_then(|d| d.as_str())
-                                    .unwrap_or("");
+                                let desc =
+                                    v.get("description").and_then(|d| d.as_str()).unwrap_or("");
                                 format!("\"{k}\": \"{desc}\"")
                             })
                         })

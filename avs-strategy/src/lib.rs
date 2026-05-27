@@ -86,11 +86,7 @@ mod tests {
             })
             .unwrap(),
         );
-        (
-            runner,
-            Arc::new(PromptRegistry::new()),
-            ToolRegistry::new(),
-        )
+        (runner, Arc::new(PromptRegistry::new()), ToolRegistry::new())
     }
 
     #[test]

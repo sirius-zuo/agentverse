@@ -43,8 +43,8 @@ impl Tool for HttpClient {
     }
 
     async fn execute(&self, args: HttpClientArgs) -> ToolResult {
-        let parsed = Url::parse(&args.url)
-            .map_err(|e| ToolError::Execution(format!("Invalid URL: {e}")))?;
+        let parsed =
+            Url::parse(&args.url).map_err(|e| ToolError::Execution(format!("Invalid URL: {e}")))?;
         if !"http".eq_ignore_ascii_case(parsed.scheme())
             && !"https".eq_ignore_ascii_case(parsed.scheme())
         {

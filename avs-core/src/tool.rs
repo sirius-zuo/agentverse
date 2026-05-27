@@ -50,8 +50,8 @@ impl<T: Tool> ErasedTool for T {
     }
 
     async fn execute_raw(&self, args: Value) -> ToolResult {
-        let typed: T::Args = serde_json::from_value(args)
-            .map_err(|e| ToolError::InvalidArgs(e.to_string()))?;
+        let typed: T::Args =
+            serde_json::from_value(args).map_err(|e| ToolError::InvalidArgs(e.to_string()))?;
         Tool::execute(self, typed).await
     }
 }
@@ -126,6 +126,9 @@ mod trait_tests {
         let tool = EchoTool;
         let erased: &dyn ErasedTool = &tool;
         let result = erased.execute_raw(json!({"wrong_key": 42})).await;
-        assert!(matches!(result, Err(crate::error::ToolError::InvalidArgs(_))));
+        assert!(matches!(
+            result,
+            Err(crate::error::ToolError::InvalidArgs(_))
+        ));
     }
 }
