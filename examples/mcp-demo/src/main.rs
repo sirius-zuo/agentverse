@@ -40,10 +40,7 @@ async fn main() {
     server_registry.register(Calculator);
     server_registry.register(DateTimeTool);
 
-    tracing::info!(
-        tools = server_registry.len(),
-        "Server registry ready"
-    );
+    tracing::info!(tools = server_registry.len(), "Server registry ready");
 
     // ── 2. Start the MCP server ───────────────────────────────────────────────
     let mut server = McpServer::new(Arc::clone(&server_registry));
