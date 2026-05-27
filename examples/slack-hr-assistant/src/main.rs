@@ -43,7 +43,7 @@ async fn main() {
         .expect("runner"),
     );
 
-    let tools = Arc::new(ToolRegistry::new());
+    let tools = ToolRegistry::new();
 
     let prompts = Arc::new(
         PromptRegistry::from_config(&PromptConfig {

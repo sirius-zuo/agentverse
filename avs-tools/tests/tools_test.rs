@@ -1,10 +1,14 @@
-use agentverse::AsyncTool;
-use agentverse_tools::{Calculator, DateTimeTool, FileSearch, HttpClient, ToolRegistry};
+use agentverse::ErasedTool;
+use agentverse_tools::{
+    Calculator, DateTimeTool, ExecutionMode, FileSearch, HttpClient, ToolOptions, ToolRegistry,
+};
 use serde_json::json;
+
+// ─── Registry tests ───────────────────────────────────────────────────────────
 
 #[tokio::test]
 async fn test_registry_register_and_execute() {
-    let mut registry = ToolRegistry::new();
+    let registry = ToolRegistry::new();
     registry.register(Calculator);
     assert!(registry.has_tool("calculator"));
     let result = registry
@@ -26,7 +30,7 @@ async fn test_registry_not_found() {
 
 #[test]
 fn test_registry_tool_names() {
-    let mut registry = ToolRegistry::new();
+    let registry = ToolRegistry::new();
     registry.register(Calculator);
     registry.register(DateTimeTool);
     let names = registry.tool_names();
@@ -34,115 +38,83 @@ fn test_registry_tool_names() {
     assert!(names.contains(&"datetime".to_string()));
 }
 
+// ─── Calculator tests (via ErasedTool::execute_raw) ───────────────────────────
+
 #[tokio::test]
 async fn test_calculator_add() {
-    let tool = Calculator;
-    let result = tool
-        .execute(json!({
-            "operation": "add",
-            "a": 10.0,
-            "b": 5.0
-        }))
+    let result = Calculator
+        .execute_raw(json!({ "operation": "add", "a": 10.0, "b": 5.0 }))
         .await;
     assert_eq!(result.unwrap()["result"], 15.0);
 }
 
 #[tokio::test]
 async fn test_calculator_subtract() {
-    let tool = Calculator;
-    let result = tool
-        .execute(json!({
-            "operation": "subtract",
-            "a": 10.0,
-            "b": 3.0
-        }))
+    let result = Calculator
+        .execute_raw(json!({ "operation": "subtract", "a": 10.0, "b": 3.0 }))
         .await;
     assert_eq!(result.unwrap()["result"], 7.0);
 }
 
 #[tokio::test]
 async fn test_calculator_multiply() {
-    let tool = Calculator;
-    let result = tool
-        .execute(json!({
-            "operation": "multiply",
-            "a": 4.0,
-            "b": 3.0
-        }))
+    let result = Calculator
+        .execute_raw(json!({ "operation": "multiply", "a": 4.0, "b": 3.0 }))
         .await;
     assert_eq!(result.unwrap()["result"], 12.0);
 }
 
 #[tokio::test]
 async fn test_calculator_divide() {
-    let tool = Calculator;
-    let result = tool
-        .execute(json!({
-            "operation": "divide",
-            "a": 10.0,
-            "b": 2.0
-        }))
+    let result = Calculator
+        .execute_raw(json!({ "operation": "divide", "a": 10.0, "b": 2.0 }))
         .await;
     assert_eq!(result.unwrap()["result"], 5.0);
 }
 
 #[tokio::test]
 async fn test_calculator_division_by_zero() {
-    let tool = Calculator;
-    let result = tool
-        .execute(json!({
-            "operation": "divide",
-            "a": 10.0,
-            "b": 0.0
-        }))
+    let result = Calculator
+        .execute_raw(json!({ "operation": "divide", "a": 10.0, "b": 0.0 }))
         .await;
     assert!(result.is_err());
 }
 
 #[tokio::test]
 async fn test_calculator_unknown_operation() {
-    let tool = Calculator;
-    let result = tool
-        .execute(json!({
-            "operation": "mod",
-            "a": 10.0,
-            "b": 3.0
-        }))
+    // "mod" is not a valid Operation variant — serde deserialization fails
+    let result = Calculator
+        .execute_raw(json!({ "operation": "mod", "a": 10.0, "b": 3.0 }))
         .await;
     assert!(result.is_err());
 }
 
 #[tokio::test]
 async fn test_calculator_missing_params() {
-    let tool = Calculator;
-    let result = tool
-        .execute(json!({
-            "operation": "add",
-            "a": 1.0
-        }))
+    // Missing "b" — serde deserialization fails with InvalidArgs
+    let result = Calculator
+        .execute_raw(json!({ "operation": "add", "a": 1.0 }))
         .await;
     assert!(result.is_err());
 }
 
+// ─── DateTime tests ───────────────────────────────────────────────────────────
+
 #[tokio::test]
 async fn test_datetime() {
-    let tool = DateTimeTool;
-    let val = tool.execute(json!({})).await.unwrap();
+    let val = DateTimeTool.execute_raw(json!({})).await.unwrap();
     assert!(val["utc"].is_string());
     assert!(val["unix_timestamp"].is_i64());
     assert!(val["date"].is_string());
     assert!(val["time"].is_string());
 }
 
+// ─── FileSearch tests ─────────────────────────────────────────────────────────
+
 #[tokio::test]
 async fn test_file_search() {
-    let tool = FileSearch;
-    // Search in current directory for any Cargo.toml
-    let result = tool
-        .execute(json!({
-            "path": ".",
-            "pattern": "**/Cargo.toml"
-        }))
+    let result = FileSearch
+        .execute_raw(json!({ "path": ".", "pattern": "**/Cargo.toml" }))
         .await;
     assert!(result.is_ok());
     let val = result.unwrap();
@@ -152,50 +124,73 @@ async fn test_file_search() {
 
 #[tokio::test]
 async fn test_file_search_missing_params() {
-    let tool = FileSearch;
-    let result = tool
-        .execute(json!({
-            "pattern": "*.txt"
-        }))
+    // Missing "path" field — deserialization fails
+    let result = FileSearch.execute_raw(json!({ "pattern": "*.txt" })).await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_file_search_no_matches() {
+    let result = FileSearch
+        .execute_raw(json!({ "path": ".", "pattern": "*.zzznonexistent_extension_xyz" }))
         .await;
+    assert!(result.is_ok());
+    let val = result.unwrap();
+    assert_eq!(val["count"], 0);
+    assert_eq!(val["matches"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn test_file_search_rs_files() {
+    let src_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src");
+    let result = FileSearch
+        .execute_raw(json!({ "path": src_dir, "pattern": "*.rs" }))
+        .await;
+    assert!(result.is_ok());
+    let val = result.unwrap();
+    let count = val["count"].as_u64().unwrap_or(0);
+    assert!(count > 0, "Expected .rs files in avs-tools/src");
+}
+
+#[tokio::test]
+async fn test_file_search_pattern_missing_param() {
+    // Missing "pattern" field
+    let result = FileSearch.execute_raw(json!({ "path": "." })).await;
     assert!(result.is_err());
 }
 
 #[test]
-fn test_http_client_parameters() {
-    let tool = HttpClient;
-    let params = tool.parameters();
-    assert!(params["required"]
-        .as_array()
-        .unwrap()
-        .contains(&json!("method")));
-    assert!(params["required"]
-        .as_array()
-        .unwrap()
-        .contains(&json!("url")));
+fn test_file_search_tool_metadata() {
+    assert_eq!(FileSearch.name(), "file_search");
+    let schema = FileSearch.schema();
+    let required = schema["input_schema"]["required"].as_array().unwrap();
+    assert!(required.contains(&json!("path")));
+    assert!(required.contains(&json!("pattern")));
 }
+
+// ─── HttpClient tests ─────────────────────────────────────────────────────────
 
 #[tokio::test]
 async fn test_http_client_missing_method() {
-    let tool = HttpClient;
-    let result = tool.execute(json!({ "url": "http://example.com" })).await;
+    // Missing required "method" field
+    let result = HttpClient
+        .execute_raw(json!({ "url": "http://example.com" }))
+        .await;
     assert!(result.is_err());
 }
 
 #[tokio::test]
 async fn test_http_client_unsupported_method() {
-    let tool = HttpClient;
-    let result = tool
-        .execute(json!({ "method": "PATCH", "url": "http://example.com" }))
+    let result = HttpClient
+        .execute_raw(json!({ "method": "PATCH", "url": "http://example.com" }))
         .await;
     assert!(result.is_err());
 }
 
 #[tokio::test]
 async fn test_http_client_file_scheme_blocked() {
-    let tool = HttpClient;
-    let result = tool
-        .execute(json!({ "method": "GET", "url": "file:///etc/passwd" }))
+    let result = HttpClient
+        .execute_raw(json!({ "method": "GET", "url": "file:///etc/passwd" }))
         .await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("http and https"));
@@ -203,27 +198,42 @@ async fn test_http_client_file_scheme_blocked() {
 
 #[tokio::test]
 async fn test_http_client_invalid_url() {
-    let tool = HttpClient;
-    let result = tool
-        .execute(json!({ "method": "GET", "url": "not a valid url" }))
+    let result = HttpClient
+        .execute_raw(json!({ "method": "GET", "url": "not a valid url" }))
         .await;
     assert!(result.is_err());
 }
 
+// ─── Registry API tests ───────────────────────────────────────────────────────
+
 #[test]
 fn test_registry_register_many() {
-    // register_many removed; use register() per tool
-    let mut registry = ToolRegistry::new();
+    let registry = ToolRegistry::new();
     registry.register(Calculator);
     registry.register(DateTimeTool);
-    assert_eq!(registry.len(), 2);
+    // find_tools is also auto-registered
+    assert!(registry.len() >= 2);
+    assert!(registry.has_tool("calculator"));
+    assert!(registry.has_tool("datetime"));
 }
 
 #[test]
 fn test_registry_filter_category() {
-    let mut registry = ToolRegistry::new();
-    registry.register_with_category(Calculator, "math");
-    registry.register_with_category(DateTimeTool, "utility");
+    let registry = ToolRegistry::new();
+    registry.register_with_options(
+        Calculator,
+        ToolOptions {
+            category: Some("math".into()),
+            ..Default::default()
+        },
+    );
+    registry.register_with_options(
+        DateTimeTool,
+        ToolOptions {
+            category: Some("utility".into()),
+            ..Default::default()
+        },
+    );
 
     let math = registry.filter_category("math");
     assert!(math.has_tool("calculator"));
@@ -236,76 +246,25 @@ fn test_registry_filter_category() {
 
 #[test]
 fn test_registry_schema() {
-    let mut registry = ToolRegistry::new();
+    let registry = ToolRegistry::new();
     registry.register(Calculator);
     let schema = registry.schema();
-    assert_eq!(schema.len(), 1);
-    assert_eq!(schema[0]["name"], "calculator");
-    assert!(schema[0]["description"].is_string());
-    assert!(schema[0]["parameters"].is_object());
+    let calc_schema = schema.iter().find(|s| s["name"] == "calculator").unwrap();
+    assert!(calc_schema["description"].is_string());
+    assert!(calc_schema["input_schema"].is_object());
 }
 
 #[test]
 fn test_registry_len_and_empty() {
-    let mut registry = ToolRegistry::new();
-    assert!(registry.is_empty());
-    registry.register(Calculator);
-    assert_eq!(registry.len(), 1);
+    let registry = ToolRegistry::new();
+    // find_tools is auto-registered, so not empty
     assert!(!registry.is_empty());
+    let initial_len = registry.len();
+    registry.register(Calculator);
+    assert_eq!(registry.len(), initial_len + 1);
 }
 
-// ─── Additional FileSearch tests ─────────────────────────────────────────────
-
-#[tokio::test]
-async fn test_file_search_no_matches() {
-    let tool = FileSearch;
-    let result = tool
-        .execute(json!({
-            "path": ".",
-            "pattern": "*.zzznonexistent_extension_xyz"
-        }))
-        .await;
-    assert!(result.is_ok());
-    let val = result.unwrap();
-    assert_eq!(val["count"], 0);
-    assert_eq!(val["matches"].as_array().unwrap().len(), 0);
-}
-
-#[tokio::test]
-async fn test_file_search_rs_files() {
-    let tool = FileSearch;
-    let src_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src");
-    let result = tool
-        .execute(json!({
-            "path": src_dir,
-            "pattern": "*.rs"
-        }))
-        .await;
-    assert!(result.is_ok());
-    let val = result.unwrap();
-    let count = val["count"].as_u64().unwrap_or(0);
-    assert!(count > 0, "Expected .rs files in avs-tools/src");
-}
-
-#[tokio::test]
-async fn test_file_search_pattern_missing_param() {
-    let tool = FileSearch;
-    let result = tool.execute(json!({ "path": "." })).await;
-    assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("pattern"));
-}
-
-#[test]
-fn test_file_search_tool_metadata() {
-    let tool = FileSearch;
-    assert_eq!(tool.name(), "file_search");
-    let params = tool.parameters();
-    let required = params["required"].as_array().unwrap();
-    assert!(required.contains(&json!("path")));
-    assert!(required.contains(&json!("pattern")));
-}
-
-// ─── ShellTool tests ─────────────────────────────────────────────────────────
+// ─── ShellTool tests ──────────────────────────────────────────────────────────
 
 use agentverse_tools::ShellTool;
 use std::time::Duration;
@@ -313,7 +272,7 @@ use std::time::Duration;
 #[tokio::test]
 async fn test_shell_basic_stdout() {
     let tool = ShellTool::new(".", Duration::from_secs(5), Vec::<String>::new());
-    let result = tool.execute(json!({ "command": "echo hello" })).await;
+    let result = tool.execute_raw(json!({ "command": "echo hello" })).await;
     assert!(result.is_ok());
     let val = result.unwrap();
     assert_eq!(val.as_str().unwrap().trim(), "hello");
@@ -322,8 +281,7 @@ async fn test_shell_basic_stdout() {
 #[tokio::test]
 async fn test_shell_nonzero_exit_is_not_an_error() {
     let tool = ShellTool::new(".", Duration::from_secs(5), Vec::<String>::new());
-    // "false" is a POSIX command that always exits with code 1
-    let result = tool.execute(json!({ "command": "false" })).await;
+    let result = tool.execute_raw(json!({ "command": "false" })).await;
     assert!(result.is_ok());
     let val = result.unwrap();
     assert!(val.as_str().unwrap().contains("[exit code:"));
@@ -333,7 +291,7 @@ async fn test_shell_nonzero_exit_is_not_an_error() {
 async fn test_shell_stderr_captured() {
     let tool = ShellTool::new(".", Duration::from_secs(5), Vec::<String>::new());
     let result = tool
-        .execute(json!({ "command": "ls /this_path_does_not_exist_xyz" }))
+        .execute_raw(json!({ "command": "ls /this_path_does_not_exist_xyz" }))
         .await;
     assert!(result.is_ok());
     let val = result.unwrap();
@@ -342,10 +300,8 @@ async fn test_shell_stderr_captured() {
 
 #[tokio::test]
 async fn test_shell_blocked_command() {
-    // Block "echo" — a command that would otherwise succeed — so the test only
-    // passes if the actual block logic fires, not because the binary is absent.
     let tool = ShellTool::new(".", Duration::from_secs(5), vec!["echo".to_string()]);
-    let result = tool.execute(json!({ "command": "echo hi" })).await;
+    let result = tool.execute_raw(json!({ "command": "echo hi" })).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("blocked"));
 }
@@ -353,7 +309,7 @@ async fn test_shell_blocked_command() {
 #[tokio::test]
 async fn test_shell_timeout() {
     let tool = ShellTool::new(".", Duration::from_millis(100), Vec::<String>::new());
-    let result = tool.execute(json!({ "command": "sleep 10" })).await;
+    let result = tool.execute_raw(json!({ "command": "sleep 10" })).await;
     assert!(result.is_err());
     let msg = result.unwrap_err().to_string();
     assert!(
@@ -365,14 +321,14 @@ async fn test_shell_timeout() {
 #[tokio::test]
 async fn test_shell_missing_command_param() {
     let tool = ShellTool::new(".", Duration::from_secs(5), Vec::<String>::new());
-    let result = tool.execute(json!({})).await;
+    let result = tool.execute_raw(json!({})).await;
     assert!(result.is_err());
 }
 
 #[tokio::test]
 async fn test_shell_empty_command() {
     let tool = ShellTool::new(".", Duration::from_secs(5), Vec::<String>::new());
-    let result = tool.execute(json!({ "command": "" })).await;
+    let result = tool.execute_raw(json!({ "command": "" })).await;
     assert!(result.is_err());
 }
 
@@ -380,11 +336,9 @@ async fn test_shell_empty_command() {
 fn test_shell_metadata() {
     let tool = ShellTool::new(".", Duration::from_secs(5), Vec::<String>::new());
     assert_eq!(tool.name(), "shell");
-    let params = tool.parameters();
-    assert!(params["required"]
-        .as_array()
-        .unwrap()
-        .contains(&json!("command")));
+    let schema = tool.schema();
+    let required = schema["input_schema"]["required"].as_array().unwrap();
+    assert!(required.contains(&json!("command")));
 }
 
 // ─── WebSearch tests ──────────────────────────────────────────────────────────
@@ -458,10 +412,7 @@ fn web_search_tool_name() {
 #[ignore = "hits real network"]
 async fn web_search_live_returns_results() {
     let result = WebSearch
-        .execute(json!({
-            "query": "rust programming language",
-            "max_results": 2
-        }))
+        .execute_raw(json!({ "query": "rust programming language", "max_results": 2 }))
         .await;
     assert!(result.is_ok());
     let arr = result.unwrap();

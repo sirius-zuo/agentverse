@@ -14,7 +14,7 @@ use agentverse_agent::Agent;
 use agentverse_logging as avs_logging;
 use agentverse_session::SqliteSessionMemory;
 use agentverse_strategy::{build, StrategyKind};
-use agentverse_tools::{Calculator, ToolRegistry};
+use agentverse_tools::{Calculator, ToolOptions, ToolRegistry};
 use std::io::Write;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -47,9 +47,14 @@ async fn main() {
         .expect("runner config"),
     );
 
-    let mut tool_registry = ToolRegistry::new();
-    tool_registry.register_with_category(Calculator, "math");
-    let tools = Arc::new(tool_registry);
+    let tools = ToolRegistry::new();
+    tools.register_with_options(
+        Calculator,
+        ToolOptions {
+            category: Some("math".into()),
+            ..Default::default()
+        },
+    );
 
     let prompts = Arc::new(
         PromptRegistry::from_config(&PromptConfig {

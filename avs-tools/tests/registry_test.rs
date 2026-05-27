@@ -1,0 +1,171 @@
+use agentverse::{ErasedTool, Tool, ToolCall, ToolResult};
+use agentverse_tools::{ToolOptions, ToolRegistry};
+use schemars::JsonSchema;
+use serde::Deserialize;
+use serde_json::json;
+use std::sync::Arc;
+
+#[derive(Deserialize, JsonSchema)]
+struct AddArgs {
+    a: f64,
+    b: f64,
+}
+
+struct AddTool;
+
+#[async_trait::async_trait]
+impl Tool for AddTool {
+    type Args = AddArgs;
+    fn name(&self) -> &str {
+        "add"
+    }
+    fn description(&self) -> &str {
+        "Add two numbers"
+    }
+    async fn execute(&self, args: AddArgs) -> ToolResult {
+        Ok(json!({ "result": args.a + args.b }))
+    }
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct MulArgs {
+    a: f64,
+    b: f64,
+}
+
+struct MulTool;
+
+#[async_trait::async_trait]
+impl Tool for MulTool {
+    type Args = MulArgs;
+    fn name(&self) -> &str {
+        "mul"
+    }
+    fn description(&self) -> &str {
+        "Multiply two numbers"
+    }
+    async fn execute(&self, args: MulArgs) -> ToolResult {
+        Ok(json!({ "result": args.a * args.b }))
+    }
+}
+
+#[test]
+fn registry_new_returns_arc() {
+    let r: Arc<ToolRegistry> = ToolRegistry::new();
+    // find_tools is auto-registered
+    assert!(r.has_tool("find_tools"));
+}
+
+#[test]
+fn register_and_has_tool() {
+    let r = ToolRegistry::new();
+    r.register(AddTool);
+    assert!(r.has_tool("add"));
+}
+
+#[test]
+fn schema_contains_registered_tools() {
+    let r = ToolRegistry::new();
+    r.register(AddTool);
+    let schemas = r.schema();
+    assert!(schemas.iter().any(|s| s["name"] == "add"));
+}
+
+#[tokio::test]
+async fn execute_known_tool() {
+    let r = ToolRegistry::new();
+    r.register(AddTool);
+    let result = r.execute("add", json!({"a": 3.0, "b": 4.0})).await.unwrap();
+    assert_eq!(result["result"], 7.0);
+}
+
+#[tokio::test]
+async fn execute_unknown_tool_returns_not_found() {
+    let r = ToolRegistry::new();
+    let result = r.execute("nope", json!({})).await;
+    assert!(matches!(result, Err(agentverse::ToolError::NotFound(_))));
+}
+
+#[tokio::test]
+async fn execute_many_runs_in_parallel() {
+    use std::time::{Duration, Instant};
+
+    #[derive(Deserialize, JsonSchema)]
+    struct SlowArgs {}
+
+    struct SlowTool {
+        millis: u64,
+        tool_name: &'static str,
+    }
+
+    #[async_trait::async_trait]
+    impl Tool for SlowTool {
+        type Args = SlowArgs;
+        fn name(&self) -> &str {
+            self.tool_name
+        }
+        fn description(&self) -> &str {
+            "slow"
+        }
+        async fn execute(&self, _: SlowArgs) -> ToolResult {
+            tokio::time::sleep(Duration::from_millis(self.millis)).await;
+            Ok(json!({"done": true}))
+        }
+    }
+
+    let r = ToolRegistry::new();
+    r.register(SlowTool {
+        millis: 100,
+        tool_name: "slow_a",
+    });
+    r.register(SlowTool {
+        millis: 100,
+        tool_name: "slow_b",
+    });
+
+    let calls = vec![
+        ToolCall {
+            name: "slow_a".into(),
+            args: json!({}),
+        },
+        ToolCall {
+            name: "slow_b".into(),
+            args: json!({}),
+        },
+    ];
+
+    let start = Instant::now();
+    let results = r.execute_many(calls).await;
+    let elapsed = start.elapsed();
+
+    assert_eq!(results.len(), 2);
+    assert!(results.iter().all(|r| r.result.is_ok()));
+    // Should complete in ~100ms (parallel), not ~200ms (sequential)
+    assert!(
+        elapsed < Duration::from_millis(180),
+        "elapsed: {:?}",
+        elapsed
+    );
+}
+
+#[test]
+fn filter_category_returns_subset() {
+    let r = ToolRegistry::new();
+    r.register_with_options(
+        AddTool,
+        ToolOptions {
+            category: Some("math".into()),
+            ..Default::default()
+        },
+    );
+    r.register_with_options(
+        MulTool,
+        ToolOptions {
+            category: Some("math".into()),
+            ..Default::default()
+        },
+    );
+    let math = r.filter_category("math");
+    assert!(math.has_tool("add"));
+    assert!(math.has_tool("mul"));
+}

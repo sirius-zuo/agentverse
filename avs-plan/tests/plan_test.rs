@@ -2,10 +2,11 @@
 //!
 //! Tests the PlanStep, Plan, and strategy structures.
 
-use agentverse::{AsyncTool, Config, LlmRunner, PromptRegistry};
+use agentverse::{Config, LlmRunner, PromptRegistry, Tool, ToolResult};
 use agentverse_plan::{HierarchicalStrategy, Plan, PlanStep, PlanStrategy};
 use agentverse_tools::{Calculator, ToolRegistry};
-use async_trait::async_trait;
+use schemars::JsonSchema;
+use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
 
@@ -28,7 +29,7 @@ fn make_runner() -> Arc<LlmRunner> {
     )
 }
 
-/// A mock async tool.
+/// A mock tool.
 struct MockTool {
     name: String,
     description: String,
@@ -43,8 +44,15 @@ impl MockTool {
     }
 }
 
-#[async_trait]
-impl AsyncTool for MockTool {
+#[derive(Debug, Deserialize, JsonSchema)]
+struct MockArgs {
+    text: Option<String>,
+}
+
+#[async_trait::async_trait]
+impl Tool for MockTool {
+    type Args = MockArgs;
+
     fn name(&self) -> &str {
         &self.name
     }
@@ -53,14 +61,7 @@ impl AsyncTool for MockTool {
         &self.description
     }
 
-    fn parameters(&self) -> serde_json::Value {
-        json!({"type": "object", "properties": {}})
-    }
-
-    async fn execute(
-        &self,
-        args: serde_json::Value,
-    ) -> Result<serde_json::Value, agentverse::ToolError> {
+    async fn execute(&self, args: MockArgs) -> ToolResult {
         Ok(json!({"result": format!("Executed {} with args {:?}", self.name, args)}))
     }
 }
@@ -165,8 +166,9 @@ fn test_mock_tool() {
 
 #[tokio::test]
 async fn test_mock_tool_execute() {
+    use agentverse::ErasedTool;
     let tool = MockTool::new("test_tool", "A test tool");
-    let result = tool.execute(json!({"key": "value"})).await.unwrap();
+    let result = tool.execute_raw(json!({"text": "hello"})).await.unwrap();
     assert!(result.is_object());
 }
 
@@ -238,7 +240,7 @@ fn test_plan_strategy_construction() {
     let _strategy = PlanStrategy::new(
         make_runner(),
         Arc::new(PromptRegistry::default()),
-        Arc::new(ToolRegistry::new()),
+        ToolRegistry::new(),
         10,
     );
 }
@@ -248,7 +250,7 @@ fn test_hierarchical_strategy_construction() {
     let _strategy = HierarchicalStrategy::new(
         make_runner(),
         Arc::new(PromptRegistry::default()),
-        Arc::new(ToolRegistry::new()),
+        ToolRegistry::new(),
         10,
         5,
     );
@@ -256,7 +258,7 @@ fn test_hierarchical_strategy_construction() {
 
 #[tokio::test]
 async fn test_plan_strategy_accepts_tool_registry() {
-    let mut tools = ToolRegistry::new();
+    let tools = ToolRegistry::new();
     tools.register(Calculator);
     assert!(tools.has_tool("calculator"));
 }
@@ -273,7 +275,7 @@ async fn plan_run_returns_error_on_bad_port() {
     let strategy = PlanStrategy::new(
         make_runner(),
         Arc::new(PromptRegistry::new()),
-        Arc::new(ToolRegistry::new()),
+        ToolRegistry::new(),
         5,
     );
     let messages = vec![agentverse::Message {
@@ -290,7 +292,7 @@ async fn hierarchical_run_returns_error_on_bad_port() {
     let strategy = HierarchicalStrategy::new(
         make_runner(),
         Arc::new(PromptRegistry::new()),
-        Arc::new(ToolRegistry::new()),
+        ToolRegistry::new(),
         5,
         3,
     );

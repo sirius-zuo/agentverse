@@ -1,20 +1,15 @@
-use agentverse::{AsyncTool, ToolError, ToolResult};
-use async_trait::async_trait;
-use serde_json::{json, Value};
+use agentverse::{Tool, ToolError, ToolResult};
+use schemars::JsonSchema;
+use serde::Deserialize;
+use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use tokio::process::Command;
 use tokio::time::timeout;
 
-/// Shell tool that runs commands with a fixed starting working directory.
-///
-/// Enforces: (1) commands start in `workdir`, (2) per-call timeout, (3) a
-/// caller-supplied blocked-command list.
+/// Shell tool that runs commands via `sh -c` with a fixed working directory.
 ///
 /// **Security note:** `workdir` is NOT a filesystem sandbox — absolute paths,
-/// symlinks, and `cd` commands inside the shell can still access the full
-/// filesystem. Pair with a blocked list and/or OS-level isolation (e.g.
-/// containers, seccomp) for stronger security.
+/// symlinks, and `cd` commands can still access the full filesystem.
 pub struct ShellTool {
     workdir: PathBuf,
     timeout_duration: Duration,
@@ -22,13 +17,6 @@ pub struct ShellTool {
 }
 
 impl ShellTool {
-    /// Create a new ShellTool.
-    ///
-    /// - `workdir`: commands start here; this is NOT a filesystem sandbox —
-    ///   absolute paths, symlinks, and `cd` can still reach the full filesystem.
-    /// - `timeout_duration`: process is killed after this duration.
-    /// - `blocked`: binary names the agent may not invoke (e.g. `["sudo", "rm"]`).
-    ///   Pass an empty vec for no blocking.
     pub fn new(
         workdir: impl AsRef<Path>,
         timeout_duration: Duration,
@@ -42,8 +30,16 @@ impl ShellTool {
     }
 }
 
-#[async_trait]
-impl AsyncTool for ShellTool {
+#[derive(Deserialize, JsonSchema)]
+pub struct ShellArgs {
+    /// Shell command to execute (supports pipes, redirections, variables)
+    pub command: String,
+}
+
+#[async_trait::async_trait]
+impl Tool for ShellTool {
+    type Args = ShellArgs;
+
     fn name(&self) -> &str {
         "shell"
     }
@@ -52,32 +48,14 @@ impl AsyncTool for ShellTool {
         "Execute a shell command in the configured working directory."
     }
 
-    fn parameters(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "command": {
-                    "type": "string",
-                    "description": "Shell command to run (e.g. 'ls -la src/')"
-                }
-            },
-            "required": ["command"]
-        })
-    }
-
-    async fn execute(&self, args: Value) -> ToolResult {
-        let command = args["command"]
-            .as_str()
-            .ok_or_else(|| ToolError::Execution("Missing 'command' parameter".to_string()))?;
-
-        let parts = shell_words::split(command)
+    async fn execute(&self, args: ShellArgs) -> ToolResult {
+        let parts = shell_words::split(&args.command)
             .map_err(|e| ToolError::Execution(format!("Invalid command syntax: {e}")))?;
 
         if parts.is_empty() {
             return Err(ToolError::Execution("Command is empty".to_string()));
         }
 
-        // Best-effort blocked-command check on the first token.
         let binary = &parts[0];
         if self.blocked.iter().any(|b| b == binary) {
             return Err(ToolError::Execution(format!(
@@ -86,8 +64,8 @@ impl AsyncTool for ShellTool {
         }
 
         // Run via `sh -c` so pipes, redirections, and variables work.
-        let child = Command::new("sh")
-            .args(["-c", command])
+        let child = tokio::process::Command::new("sh")
+            .args(["-c", &args.command])
             .current_dir(&self.workdir)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())

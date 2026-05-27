@@ -50,9 +50,9 @@ async fn main() {
         .expect("runner config"),
     );
 
-    let mut tool_registry = ToolRegistry::new();
+    let tool_registry = ToolRegistry::new();
     tool_registry.register(Calculator);
-    let tools = Arc::new(tool_registry);
+    let tools = tool_registry;
 
     let prompts = Arc::new(
         PromptRegistry::from_config(&PromptConfig {

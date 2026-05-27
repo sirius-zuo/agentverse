@@ -34,6 +34,8 @@ pub enum ToolError {
     Execution(String),
     #[error("Not found: {0}")]
     NotFound(String),
+    #[error("Invalid arguments: {0}")]
+    InvalidArgs(String),
 }
 
 #[derive(Error, Debug)]

@@ -39,10 +39,10 @@ async fn main() {
         .expect("runner"),
     );
 
-    let mut tool_registry = ToolRegistry::new();
+    let tool_registry = ToolRegistry::new();
     tool_registry.register(Calculator);
     tool_registry.register(DateTimeTool);
-    let tools = Arc::new(tool_registry);
+    let tools = tool_registry;
 
     let prompts = Arc::new(PromptRegistry::new());
     let strategy = build(

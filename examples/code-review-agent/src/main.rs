@@ -17,7 +17,7 @@ use agentverse_agent::Agent;
 use agentverse_logging as avs_logging;
 use agentverse_session::SqliteSessionMemory;
 use agentverse_strategy::{build, StrategyKind};
-use agentverse_tools::{FileSearch, ShellTool, ToolRegistry};
+use agentverse_tools::{FileSearch, ShellTool, ToolOptions, ToolRegistry};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -50,8 +50,14 @@ async fn main() {
         .expect("runner config"),
     );
 
-    let mut tool_registry = ToolRegistry::new();
-    tool_registry.register_with_category(FileSearch, "filesystem");
+    let tools = ToolRegistry::new();
+    tools.register_with_options(
+        FileSearch,
+        ToolOptions {
+            category: Some("filesystem".into()),
+            ..Default::default()
+        },
+    );
     // ShellTool lets the agent read file contents with `cat` or search with
     // `grep`. It runs commands in `project_dir` with a 30-second timeout.
     //
@@ -59,7 +65,7 @@ async fn main() {
     // symlinks, and `cd` can still reach the full filesystem. The blocked
     // list below prevents the most destructive commands, but for production
     // use consider running the agent inside a container or seccomp sandbox.
-    tool_registry.register_with_category(
+    tools.register_with_options(
         ShellTool::new(
             &project_dir,
             Duration::from_secs(30),
@@ -73,9 +79,11 @@ async fn main() {
                 "chown".into(),
             ],
         ),
-        "filesystem",
+        ToolOptions {
+            category: Some("filesystem".into()),
+            ..Default::default()
+        },
     );
-    let tools = Arc::new(tool_registry);
 
     let prompts = Arc::new(
         PromptRegistry::from_config(&PromptConfig {

@@ -13,16 +13,17 @@
 use super::cycle::CycleAction;
 use serde_json::Value;
 
-/// Parse the LLM response to extract thought, action, or answer.
+/// Parse the LLM response to extract thought, action(s), or answer.
 ///
 /// Scans line-by-line (trimming each line) so indented output from models
 /// that follow an indented format example is handled correctly.
-/// Answer takes priority over Action when both appear.
+/// ToolCall(s) take priority over Answer to prevent returning hallucinated answers.
+/// Multiple Action/Action Input pairs produce a ToolCalls batch for parallel dispatch.
 pub fn parse_response(response: &str) -> CycleAction {
     let lines: Vec<&str> = response.lines().collect();
     let mut answer_idx: Option<usize> = None;
-    let mut found_action: Option<String> = None;
-    let mut found_action_input: Option<String> = None;
+    let mut tool_calls: Vec<agentverse::ToolCall> = Vec::new();
+    let mut pending_action: Option<String> = None;
 
     for (i, &line) in lines.iter().enumerate() {
         let trimmed = line.trim();
@@ -30,24 +31,47 @@ pub fn parse_response(response: &str) -> CycleAction {
 
         if lower.starts_with("answer:") && answer_idx.is_none() {
             answer_idx = Some(i);
-        } else if lower.starts_with("action input:") && found_action_input.is_none() {
-            found_action_input = Some(trimmed["Action Input:".len()..].trim().to_string());
-        } else if lower.starts_with("action:") && found_action.is_none() {
+        } else if lower.starts_with("action input:") {
+            let raw = trimmed["Action Input:".len()..].trim().to_string();
+            let args = serde_json::from_str(&raw).unwrap_or(Value::Null);
+            if let Some(name) = pending_action.take() {
+                tool_calls.push(agentverse::ToolCall { name, args });
+            }
+        } else if lower.starts_with("action:") {
+            // Flush unpaired action (no Action Input line following)
+            if let Some(name) = pending_action.take() {
+                tool_calls.push(agentverse::ToolCall {
+                    name,
+                    args: Value::Null,
+                });
+            }
             let val = trimmed["Action:".len()..].trim().to_string();
             if !val.is_empty() {
-                found_action = Some(val);
+                pending_action = Some(val);
             }
         }
     }
+    // Flush trailing unpaired action
+    if let Some(name) = pending_action.take() {
+        tool_calls.push(agentverse::ToolCall {
+            name,
+            args: Value::Null,
+        });
+    }
 
-    // ToolCall takes priority over Answer: if the model hallucinated a full
+    // ToolCall(s) take priority over Answer: if the model hallucinated a full
     // Thought→Action→Observation→Answer trace in one shot, we still dispatch
     // the real tool rather than returning the hallucinated answer.
-    if let Some(tool_name) = found_action {
-        let args = found_action_input
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or(Value::Null);
-        return CycleAction::ToolCall { tool_name, args };
+    if !tool_calls.is_empty() {
+        return if tool_calls.len() == 1 {
+            let c = tool_calls.remove(0);
+            CycleAction::ToolCall {
+                tool_name: c.name,
+                args: c.args,
+            }
+        } else {
+            CycleAction::ToolCalls { calls: tool_calls }
+        };
     }
 
     // Answer captures everything from the Answer: label to end-of-response so
@@ -209,6 +233,39 @@ mod tests {
         match result {
             CycleAction::Done { answer } => assert_eq!(answer, "1569"),
             other => panic!("Expected Done, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_multiple_tool_calls() {
+        let response = "Thought: I need two things.\n\
+                        Action: calculator\n\
+                        Action Input: {\"operation\": \"add\", \"a\": 1, \"b\": 2}\n\
+                        Action: datetime\n\
+                        Action Input: {}";
+        let action = parse_response(response);
+        match action {
+            CycleAction::ToolCalls { calls } => {
+                assert_eq!(calls.len(), 2);
+                assert_eq!(calls[0].name, "calculator");
+                assert_eq!(calls[1].name, "datetime");
+            }
+            other => panic!("Expected ToolCalls, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_single_tool_still_works() {
+        let response =
+            "Action: calculator\nAction Input: {\"operation\": \"add\", \"a\": 1, \"b\": 2}";
+        let action = parse_response(response);
+        match action {
+            CycleAction::ToolCall { tool_name, .. } => assert_eq!(tool_name, "calculator"),
+            CycleAction::ToolCalls { calls } => {
+                assert_eq!(calls.len(), 1);
+                assert_eq!(calls[0].name, "calculator");
+            }
+            other => panic!("Expected tool call, got {:?}", other),
         }
     }
 

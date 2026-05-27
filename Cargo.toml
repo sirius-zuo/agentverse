@@ -21,6 +21,7 @@ members = [
     "examples/code-review-agent",
     "examples/anthropic-react",
     "examples/http-agent",
+    "examples/mcp-demo",
     "avs-session",
 ]
 resolver = "2"

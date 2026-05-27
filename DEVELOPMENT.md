@@ -9,6 +9,7 @@ Complete guide for developing, testing, and deploying agents with AgentVerse.
 - [Creating a Custom Agent](#creating-a-custom-agent)
 - [Multi-LLM Provider Configuration](#multi-llm-provider-configuration)
 - [Writing Tools](#writing-tools)
+- [Using MCP (Model Context Protocol)](#using-mcp-model-context-protocol)
 - [Prompt Engineering](#prompt-engineering)
 - [Testing Strategies](#testing-strategies)
 - [Deploying Agents](#deploying-agents)
@@ -46,7 +47,8 @@ AgentVerse/
     ├── anthropic-react/    # Anthropic Claude with prompt caching
     ├── code-review-agent/  # Hierarchical planning with FileSearch + ShellTool
     ├── slack-hr-assistant/ # IntegrationRuntime Slack/console bot
-    └── http-agent/         # Agent with enable_http_server=true
+    ├── http-agent/         # Agent with enable_http_server=true
+    └── mcp-demo/           # Full MCP round-trip: McpServer + McpCatalogSource + agent
 ```
 
 ### Key Concepts
@@ -58,7 +60,7 @@ AgentVerse/
 | **LlmRunner** | `agentverse` | Renders prompts and calls model providers |
 | **Config** | `agentverse` | Provider settings (model name, API key, base URL) |
 | **PromptRegistry** | `agentverse` | Template engine (Minijinja) + example storage |
-| **Tool** | `agentverse` | `AsyncTool` trait — the single interface for all agent tools |
+| **Tool** | `agentverse` | `Tool` trait with associated `type Args: JsonSchema + DeserializeOwned`; `ErasedTool` for object-safe registry dispatch |
 | **SessionMemory** | `agentverse-session` | Layer-2 durable conversation transcript; `SessionManager` wraps it with ownership checks |
 | **LongtermMemory** | `agentverse` | Layer-3 cross-session knowledge store; opt-in via `Agent::new(..., Some(store))` |
 | **RunStrategy** | `agentverse` | Trait implemented by all strategies; pure `Vec<Message> → String`, no memory coupling |
@@ -138,7 +140,7 @@ use agentverse_agent::Agent;
 use agentverse_logging as avs_logging;
 use agentverse_session::SqliteSessionMemory;
 use agentverse_strategy::{build, StrategyKind};
-use agentverse_tools::{Calculator, DateTimeTool, ToolRegistry};
+use agentverse_tools::{Calculator, DateTimeTool, ToolOptions, ToolRegistry};
 use std::sync::Arc;
 
 #[tokio::main]
@@ -163,10 +165,9 @@ async fn main() {
         system_prompt: None,
     }).expect("runner"));
 
-    let mut tool_registry = ToolRegistry::new();
-    tool_registry.register_with_category(Calculator, "math");
-    tool_registry.register_with_category(DateTimeTool, "utility");
-    let tools = Arc::new(tool_registry);
+    let tools = ToolRegistry::new();  // returns Arc<ToolRegistry>
+    tools.register_with_options(Calculator, ToolOptions { category: Some("math".into()), ..Default::default() });
+    tools.register_with_options(DateTimeTool, ToolOptions { category: Some("utility".into()), ..Default::default() });
 
     let prompts = Arc::new(PromptRegistry::from_config(&PromptConfig {
         prompts_dir: Some(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string()),
@@ -298,67 +299,110 @@ ProviderConfig::Gemini {
 
 ## Writing Tools
 
-All tools implement `AsyncTool` — a single, consistent interface.
+All tools implement the `Tool` trait, which requires a strongly-typed `Args` struct. The JSON schema is derived automatically from the struct via `schemars` — no manual `parameters()` JSON needed.
 
-### Implementing AsyncTool
+### Implementing Tool
 
 ```rust
-use agentverse::{AsyncTool, ToolError, ToolResult};
-use async_trait::async_trait;
-use serde_json::{json, Value};
+use agentverse::{Tool, ToolResult};
+use schemars::JsonSchema;
+use serde::Deserialize;
+use serde_json::json;
 
 pub struct WeatherTool;
 
-#[async_trait]
-impl AsyncTool for WeatherTool {
-    fn name(&self) -> &str { "weather" }
+#[derive(Deserialize, JsonSchema)]
+pub struct WeatherArgs {
+    /// City name
+    city: String,
+}
 
+#[async_trait::async_trait]
+impl Tool for WeatherTool {
+    type Args = WeatherArgs;
+
+    fn name(&self) -> &str { "weather" }
     fn description(&self) -> &str { "Get current weather for a city" }
 
-    fn parameters(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "city": { "type": "string", "description": "City name" }
-            },
-            "required": ["city"]
-        })
-    }
-
-    async fn execute(&self, args: Value) -> ToolResult {
-        let city = args["city"].as_str()
-            .ok_or_else(|| ToolError::Execution("missing city".into()))?;
-        Ok(json!({ "weather": format!("Sunny in {city}") }))
+    async fn execute(&self, args: WeatherArgs) -> ToolResult {
+        Ok(json!({ "weather": format!("Sunny in {}", args.city) }))
     }
 }
 ```
 
+Field doc-comments become the parameter descriptions in the schema passed to the LLM. Mark optional fields with `Option<T>` — they are automatically excluded from the `required` list.
+
+### ErasedTool and dynamic dispatch
+
+`Tool` is not object-safe (it has an associated type). The registry stores tools as `Arc<dyn ErasedTool>`, which provides `schema() -> Value` and `execute_raw(&self, args: Value) -> ToolResult`. The blanket impl `impl<T: Tool> ErasedTool for T` is provided automatically, so you never need to implement `ErasedTool` directly (except for MCP adapters that use server-supplied schemas).
+
 ### ToolRegistry
 
+`ToolRegistry::new()` returns `Arc<ToolRegistry>` and auto-registers `FindToolsTool`. Registration takes `&self`, so no `mut` binding is needed.
+
 ```rust
-use agentverse_tools::{ToolRegistry, Calculator, DateTimeTool, ShellTool, WebSearch};
+use agentverse_tools::{Calculator, DateTimeTool, ShellTool, ToolOptions, ToolRegistry, WebSearch};
 use std::time::Duration;
 
-let mut registry = ToolRegistry::new();
-registry.register_with_category(Calculator, "math");
-registry.register_with_category(DateTimeTool, "utility");
-registry.register(WebSearch);
-registry.register_with_category(WeatherTool, "network");
+let registry = ToolRegistry::new();
+registry.register(WeatherTool);
+registry.register_with_options(Calculator, ToolOptions {
+    category: Some("math".into()),
+    ..Default::default()
+});
+registry.register_with_options(DateTimeTool, ToolOptions {
+    category: Some("utility".into()),
+    ..Default::default()
+});
 
 // Shell tool — sandboxed subprocess execution
-registry.register_with_category(
-    ShellTool::new(
-        "./workspace",
-        Duration::from_secs(30),
-        vec!["sudo".into(), "rm".into()],
-    ),
-    "shell",
+registry.register_with_options(
+    ShellTool::new("./workspace", Duration::from_secs(30), vec!["sudo".into(), "rm".into()]),
+    ToolOptions { category: Some("shell".into()), ..Default::default() },
 );
 ```
 
+### ActiveToolSet
+
+`ActiveToolSet` controls which tool schemas appear in the LLM prompt for a given invocation, without removing tools from the registry (they remain executable).
+
+```rust
+use agentverse_tools::ActiveToolSet;
+
+let mut active = ActiveToolSet::all(&registry);   // start with everything
+active.deactivate(&["find_tools", "web_search"]); // hide from this turn's prompt
+let schemas = active.schemas(&registry);           // filtered schema list
+```
+
+### Parallel tool dispatch
+
+The registry executes multiple tool calls concurrently:
+
+```rust
+use agentverse::{ToolCall};
+
+let results = registry.execute_many(vec![
+    ToolCall { name: "calculator".into(), args: json!({"operation":"add","a":1,"b":2}) },
+    ToolCall { name: "datetime".into(),   args: json!({}) },
+]).await;
+```
+
+The ReAct strategy does this automatically when the LLM emits multiple `Action:` / `Action Input:` blocks in one response.
+
+### BM25 keyword search
+
+```rust
+let hits = registry.search("arithmetic math", 3);
+for info in hits {
+    println!("{}: score={:.2}", info.name, info.score);
+}
+```
+
+`FindToolsTool` wraps this for the LLM: the model can call `find_tools` with a natural-language query to discover tools dynamically.
+
 ### ShellTool
 
-`ShellTool` runs shell commands via `tokio::process::Command`.
+`ShellTool` runs shell commands via `sh -c`, supporting pipes and redirections.
 
 ```rust
 let tool = ShellTool::new(
@@ -371,6 +415,76 @@ let tool = ShellTool::new(
 The agent calls it with `{ "command": "cargo test -p my-crate" }`. Response is plain text: stdout + `[stderr: ...]` if non-empty + `[exit code: N]` if non-zero.
 
 **Security note:** `workdir` sets the initial directory but does not restrict filesystem access. Pair with a blocked-command list and OS-level isolation for production use.
+
+---
+
+## Using MCP (Model Context Protocol)
+
+`agentverse-mcp` lets you both consume tools from external MCP servers and expose your own tools as an MCP server.
+
+### Consuming an MCP server
+
+```rust
+use agentverse_mcp::{McpCatalogSource, McpClient, McpTransport};
+
+// Streamable HTTP (MCP spec 2025-03-26)
+let transport = McpTransport::StreamableHttp {
+    endpoint: "https://tools.example.com/mcp".parse().unwrap(),
+    headers: Default::default(),
+};
+// Stdio — spawn a subprocess
+let transport = McpTransport::Stdio {
+    command: "npx".into(),
+    args: vec!["-y".into(), "@modelcontextprotocol/server-github".into()],
+    env: [("GITHUB_TOKEN".into(), token)].into(),
+};
+
+let client = McpClient::connect(transport).await?;
+let registry = ToolRegistry::new();
+let n = McpCatalogSource::populate(&registry, &client).await?;
+// registry now has n tools backed by the remote server
+```
+
+Discovered tools are stored as `McpToolAdapter` which implements `ErasedTool` directly using the server-supplied schema.
+
+### Loading from TOML config
+
+`McpServerConfig` maps directly to a TOML table. `${VAR}` placeholders in strings are expanded from environment variables at load time.
+
+```toml
+[[mcp_servers]]
+name = "github"
+transport = "stdio"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-github"]
+env = { GITHUB_TOKEN = "${GITHUB_TOKEN}" }
+
+[[mcp_servers]]
+name = "remote"
+transport = "streamable_http"
+url = "https://tools.example.com/mcp"
+headers = { Authorization = "Bearer ${API_KEY}" }
+```
+
+```rust
+use agentverse_mcp::{McpLoader, McpServerConfig};
+
+let configs: Vec<McpServerConfig> = toml::from_str(&config_toml)?;
+McpLoader::load(&registry, &configs).await?;
+```
+
+### Serving your tools as MCP
+
+```rust
+use agentverse_mcp::McpServer;
+
+let mut server = McpServer::new(Arc::clone(&registry));
+let port = server.bind_random_port().await?;
+tokio::spawn(async move { server.run().await });
+// POST http://127.0.0.1:{port}/mcp accepts initialize / tools/list / tools/call
+```
+
+See `examples/mcp-demo` for a self-contained round-trip demonstration.
 
 ---
 
@@ -701,7 +815,7 @@ Strategy completed        iteration=3
 
 | Crate | Key Types |
 |-------|-----------|
-| `agentverse` | `LlmRunner`, `Config`, `ProviderConfig`, `PromptRegistry`, `RunStrategy`, `AsyncTool`, `ModelError` |
+| `agentverse` | `LlmRunner`, `Config`, `ProviderConfig`, `PromptRegistry`, `RunStrategy`, `Tool`, `ErasedTool`, `ToolCall`, `ToolResult`, `ModelError` |
 | `agentverse-agent` | `Agent`, `AgentError` |
 | `agentverse-strategy` | `build()`, `StrategyKind` |
 | `agentverse-session` | `SqliteSessionMemory`, `SessionMemory`, `SessionManager`, `SessionId` |
@@ -710,7 +824,8 @@ Strategy completed        iteration=3
 | `agentverse-plan` | `PlanStrategy`, `HierarchicalStrategy` |
 | `agentverse-router` | `StrategyRouter` |
 | `agentverse-guardrails` | `check_prompt`, `check_output`, `RateLimiter` |
-| `agentverse-tools` | `ToolRegistry`, `Calculator`, `DateTimeTool`, `FileSearch`, `HttpClient`, `ShellTool`, `WebSearch` |
+| `agentverse-tools` | `ToolRegistry`, `ActiveToolSet`, `ToolOptions`, `ExecutionMode`, `FindToolsTool`, `Calculator`, `DateTimeTool`, `FileSearch`, `HttpClient`, `ShellTool`, `WebSearch` |
+| `agentverse-mcp` | `McpClient`, `McpServer`, `McpTransport`, `McpCatalogSource`, `McpLoader`, `McpServerConfig`, `McpToolAdapter`, `McpError` |
 | `agentverse-integration` | `IntegrationRuntime`, `Event` |
 
 ### ProviderConfig Enum

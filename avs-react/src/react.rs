@@ -6,7 +6,7 @@
 use super::cycle::{CycleAction, CycleSkeleton};
 use super::parse::parse_response;
 use agentverse::{AgentError, LlmRunner, Message, ModelError, PromptRegistry};
-use agentverse_tools::ToolRegistry;
+use agentverse_tools::{ActiveToolSet, ToolRegistry};
 use std::sync::Arc;
 use tracing::info;
 
@@ -29,12 +29,48 @@ impl ReActStrategy {
             skeleton: CycleSkeleton::new(runner, prompts, tools, max_iterations),
         }
     }
+
+    fn prepare_buffer_with_active(
+        &self,
+        messages: Vec<Message>,
+        active: &ActiveToolSet,
+    ) -> Vec<Message> {
+        if !self.skeleton.prompts.has_react_template() {
+            return messages;
+        }
+        let tools_str = self.skeleton.build_tools_str_active(active);
+        let mut ctx = std::collections::HashMap::new();
+        ctx.insert("tools".to_string(), serde_json::Value::String(tools_str));
+        if let Some(examples) = self.skeleton.prompts.get_examples("react_examples") {
+            if let Ok(val) = serde_json::to_value(examples) {
+                ctx.insert("examples".to_string(), val);
+            }
+        }
+        let mut buf = messages;
+        if let Ok(preamble) = self.skeleton.prompts.render("react", ctx) {
+            if !preamble.trim().is_empty() {
+                let insert_pos = buf
+                    .iter()
+                    .position(|m| !matches!(m.role, agentverse::MessageRole::System))
+                    .unwrap_or(0);
+                buf.insert(
+                    insert_pos,
+                    Message {
+                        role: agentverse::MessageRole::User,
+                        content: preamble,
+                    },
+                );
+            }
+        }
+        buf
+    }
 }
 
 #[async_trait::async_trait]
 impl agentverse::RunStrategy for ReActStrategy {
     async fn run(&self, messages: Vec<Message>) -> Result<String, AgentError> {
-        let mut buf = self.skeleton.prepare_buffer(messages);
+        let active = ActiveToolSet::all(&self.skeleton.tools);
+        let mut buf = self.prepare_buffer_with_active(messages, &active);
         let mut iteration = 0usize;
         let mut pending_answer: Option<String> = None;
 
@@ -80,6 +116,35 @@ impl agentverse::RunStrategy for ReActStrategy {
                     buf.push(Message {
                         role: agentverse::MessageRole::User,
                         content: format!("Tool: {}\nResult: {}", tool_name, result),
+                    });
+                }
+                CycleAction::ToolCalls { calls } => {
+                    pending_answer = None;
+                    buf.push(Message {
+                        role: agentverse::MessageRole::Assistant,
+                        content: response.content.clone(),
+                    });
+                    let results = self.skeleton.execute_many(calls).await?;
+                    info!(
+                        iteration,
+                        action = "tool_calls",
+                        count = results.len(),
+                        "Parallel tools executed"
+                    );
+                    let observation = results
+                        .iter()
+                        .map(|r| {
+                            let v = match &r.result {
+                                Ok(v) => v.to_string(),
+                                Err(e) => format!("Error: {e}"),
+                            };
+                            format!("Tool: {}\nResult: {}", r.name, v)
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n\n");
+                    buf.push(Message {
+                        role: agentverse::MessageRole::User,
+                        content: observation,
                     });
                 }
                 CycleAction::Done { answer } => {

@@ -1,15 +1,21 @@
+pub mod active;
 pub mod calculator;
 pub mod datetime;
 pub mod file_search;
+pub mod find_tools;
 pub mod http_client;
 pub mod registry;
+pub mod search;
 pub mod shell;
 pub mod web_search;
 
+pub use active::ActiveToolSet;
 pub use calculator::Calculator;
 pub use datetime::DateTimeTool;
 pub use file_search::FileSearch;
+pub use find_tools::FindToolsTool;
 pub use http_client::HttpClient;
-pub use registry::ToolRegistry;
+pub use registry::{ExecutionMode, ToolOptions, ToolRegistry};
+pub use search::ToolInfo;
 pub use shell::ShellTool;
 pub use web_search::WebSearch;
