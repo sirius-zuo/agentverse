@@ -232,14 +232,71 @@ let strategy = build(StrategyKind::React, runner, prompts, tools, 10);
 
 Underlying strategy crates:
 
-- `agentverse-react`: ReAct loop
+- `agentverse-react`: ReAct loop (supports parallel tool dispatch via `ToolCalls`)
 - `agentverse-plan`: Plan-and-Execute and hierarchical planning
 - `agentverse-router`: dynamic strategy routing
 
 Built-in tools in `agentverse-tools`:
 
-- Calculator, DateTime, FileSearch, HttpClient, ShellTool, WebSearch
-- MCP tool adapter via `agentverse-mcp`
+- `Calculator`, `DateTimeTool`, `FileSearch`, `HttpClient`, `ShellTool`, `WebSearch`
+- `FindToolsTool` — auto-registered meta-tool; BM25 keyword search over the registry
+- `ActiveToolSet` — per-invocation filter controlling which tool schemas appear in the LLM prompt
+
+Tools implement the `Tool` trait with a strongly-typed `Args` struct (schema derived automatically via `schemars`). The registry stores them as `Arc<dyn ErasedTool>` for object-safe dispatch.
+
+## MCP (Model Context Protocol)
+
+`agentverse-mcp` supports both sides of the MCP protocol:
+
+**Client** — discover and use tools from any MCP server:
+
+```rust
+use agentverse_mcp::{McpCatalogSource, McpClient, McpTransport};
+
+let transport = McpTransport::StreamableHttp {
+    endpoint: "https://tools.example.com/mcp".parse().unwrap(),
+    headers: Default::default(),
+};
+let client = McpClient::connect(transport).await?;
+McpCatalogSource::populate(&registry, &client).await?;
+// registry now contains all tools from the remote server
+```
+
+**Server** — expose a `ToolRegistry` over HTTP as an MCP endpoint:
+
+```rust
+use agentverse_mcp::McpServer;
+
+let mut server = McpServer::new(Arc::clone(&registry));
+let port = server.bind_random_port().await?;
+tokio::spawn(async move { server.run().await });
+```
+
+**TOML config** — load multiple MCP servers at startup via `McpLoader`:
+
+```toml
+# agent.toml (excerpt)
+[[mcp_servers]]
+name = "github"
+transport = "stdio"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-github"]
+env = { GITHUB_TOKEN = "${GITHUB_TOKEN}" }
+
+[[mcp_servers]]
+name = "remote"
+transport = "streamable_http"
+url = "https://tools.example.com/mcp"
+```
+
+```rust
+use agentverse_mcp::{McpLoader, McpServerConfig};
+
+let configs: Vec<McpServerConfig> = toml::from_str(&config_str)?;
+McpLoader::load(&registry, &configs).await?;
+```
+
+Stdio transport spawns a subprocess; Streamable HTTP uses the MCP 2025-03-26 spec.
 
 ## Prompt Templates
 
@@ -277,8 +334,8 @@ let registry = Arc::new(PromptRegistry::from_config(&PromptConfig {
 | `avs-react` | `agentverse-react` | ReAct strategy loop |
 | `avs-plan` | `agentverse-plan` | Plan-and-Execute and hierarchical strategies |
 | `avs-router` | `agentverse-router` | Strategy router |
-| `avs-tools` | `agentverse-tools` | Built-in tools and async `ToolRegistry` |
-| `avs-mcp` | `agentverse-mcp` | MCP client and tool adapter |
+| `avs-tools` | `agentverse-tools` | Built-in tools, `ToolRegistry` with BM25 search, `ActiveToolSet`, parallel dispatch |
+| `avs-mcp` | `agentverse-mcp` | MCP client (stdio + Streamable HTTP), `McpServer`, `McpCatalogSource`, `McpLoader` |
 | `avs-memory` | `agentverse-memory` | Layer-1 working buffer (`SimpleMemory`, `AgentMemory`) and `LongTermBackend` trait |
 | `avs-memory-lancedb` | `agentverse-memory-lancedb` | LanceDB long-term memory backend |
 | `avs-memory-pgvector` | `agentverse-memory-pgvector` | pgvector memory backend and Postgres session store |
@@ -296,6 +353,7 @@ let registry = Arc::new(PromptRegistry::from_config(&PromptConfig {
 | `example-code-review-agent` | Hierarchical code-review agent with file and shell tools |
 | `example-slack-hr-assistant` | IntegrationRuntime-backed Slack/console assistant |
 | `example-http-agent` | Agent with `enable_http_server=true`; demonstrates the HTTP sidecar |
+| `example-mcp-demo` | Full MCP round-trip: `McpServer` exposes tools; `McpCatalogSource` discovers them into a second registry; agent uses them transparently |
 
 Run examples with `cargo run -p <package>`.
 
