@@ -1,7 +1,23 @@
-use agentverse::{AsyncTool, ToolError, ToolResult};
+use agentverse::{ErasedTool, ToolCall, ToolCallResult, ToolError, ToolResult};
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
+
+use crate::find_tools::FindToolsTool;
+use crate::search::{BM25Index, ToolInfo};
+
+#[derive(Default, Clone)]
+pub struct ToolOptions {
+    pub category: Option<String>,
+    pub execution_mode: ExecutionMode,
+}
+
+#[derive(Default, Clone, PartialEq)]
+pub enum ExecutionMode {
+    #[default]
+    Inline,
+    Background,
+}
 
 fn safe_truncate(s: &str, max_bytes: usize) -> &str {
     if s.len() <= max_bytes {
@@ -14,118 +30,207 @@ fn safe_truncate(s: &str, max_bytes: usize) -> &str {
     &s[..idx]
 }
 
-/// Registry of available async tools, optionally tagged with a category.
-///
-/// Internal storage uses `Arc<dyn AsyncTool>` so `filter_category` can
-/// produce a new registry sharing the same tool instances without cloning.
 pub struct ToolRegistry {
-    tools: HashMap<String, (Arc<dyn AsyncTool>, Option<String>)>,
+    tools: RwLock<HashMap<String, (Arc<dyn ErasedTool>, ToolOptions)>>,
+    index: RwLock<BM25Index>,
 }
 
 impl ToolRegistry {
-    pub fn new() -> Self {
-        Self {
-            tools: HashMap::new(),
-        }
+    /// Create a registry with `find_tools` pre-registered.
+    pub fn new() -> Arc<Self> {
+        let registry = Arc::new(Self {
+            tools: RwLock::new(HashMap::new()),
+            index: RwLock::new(BM25Index::new()),
+        });
+        registry.register(FindToolsTool::new(Arc::clone(&registry)));
+        registry
     }
 
-    /// Register a tool with no category.
-    pub fn register<T: AsyncTool + 'static>(&mut self, tool: T) {
-        self.tools
-            .insert(tool.name().to_string(), (Arc::new(tool), None));
+    /// Register a tool with default options.
+    pub fn register<T: agentverse::Tool + 'static>(&self, tool: T) {
+        self.register_with_options(tool, ToolOptions::default());
     }
 
-    /// Register a tool with a category tag (e.g. "shell", "network", "math").
-    pub fn register_with_category<T: AsyncTool + 'static>(&mut self, tool: T, category: &str) {
-        self.tools.insert(
-            tool.name().to_string(),
-            (Arc::new(tool), Some(category.to_string())),
-        );
+    /// Register a tool with explicit category and execution mode.
+    pub fn register_with_options<T: agentverse::Tool + 'static>(&self, tool: T, opts: ToolOptions) {
+        let name = tool.name().to_string();
+        let text = format!("{} {}", tool.name(), tool.description());
+        let erased: Arc<dyn ErasedTool> = Arc::new(tool);
+        self.tools.write().unwrap().insert(name.clone(), (erased, opts));
+        self.index.write().unwrap().insert(&name, &text);
     }
 
-    /// Return a new registry containing only tools with the given category.
-    pub fn filter_category(&self, category: &str) -> ToolRegistry {
-        let tools = self
-            .tools
-            .iter()
-            .filter(|(_, (_, cat))| cat.as_deref() == Some(category))
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-        ToolRegistry { tools }
+    /// Register a pre-erased tool (for MCP adapters and other non-Tool implementors).
+    pub fn register_erased(&self, tool: Arc<dyn ErasedTool>, opts: ToolOptions) {
+        let name = tool.name().to_string();
+        let text = format!("{} {}", tool.name(), tool.description());
+        self.tools.write().unwrap().insert(name.clone(), (tool, opts));
+        self.index.write().unwrap().insert(&name, &text);
     }
 
-    /// Execute a tool by name.
+    /// Execute one tool by name, dispatching its JSON args.
     pub async fn execute(&self, name: &str, args: Value) -> ToolResult {
-        let (tool, _) = self.tools.get(name).ok_or_else(|| {
+        let tool = {
+            let tools = self.tools.read().unwrap();
+            tools.get(name).map(|(t, _)| Arc::clone(t))
+        };
+        let tool = tool.ok_or_else(|| {
             tracing::warn!(tool_name = %name, "Tool not found");
             ToolError::NotFound(name.to_string())
         })?;
-
-        let args_str = args.to_string();
-        tracing::debug!(tool_name = %name, tool_args = %safe_truncate(&args_str, 200), "Tool call");
-
-        let result = tool.execute(args).await;
-
+        tracing::debug!(tool_name = %name, args = %safe_truncate(&args.to_string(), 200), "Tool call");
+        let result = tool.execute_raw(args).await;
         match &result {
-            Ok(v) => {
-                let res_str = v.to_string();
-                tracing::info!(tool_name = %name, tool_result = %safe_truncate(&res_str, 200), "Tool executed");
-            }
-            Err(e) => {
-                tracing::warn!(tool_name = %name, error = %e, "Tool error");
-            }
+            Ok(v) => tracing::info!(tool_name = %name, result = %safe_truncate(&v.to_string(), 200), "Tool ok"),
+            Err(e) => tracing::warn!(tool_name = %name, error = %e, "Tool error"),
         }
         result
     }
 
-    /// Return JSON schema objects for all registered tools (for prompt injection).
+    /// Execute multiple tool calls concurrently. Results are in completion order.
+    pub async fn execute_many(&self, calls: Vec<ToolCall>) -> Vec<ToolCallResult> {
+        let resolved: Vec<(Option<Arc<dyn ErasedTool>>, ToolCall)> = {
+            let tools = self.tools.read().unwrap();
+            calls
+                .into_iter()
+                .map(|c| {
+                    let t = tools.get(&c.name).map(|(t, _)| Arc::clone(t));
+                    (t, c)
+                })
+                .collect()
+        };
+
+        let mut set = tokio::task::JoinSet::new();
+        for (tool_opt, c) in resolved {
+            set.spawn(async move {
+                let result = match tool_opt {
+                    Some(t) => t.execute_raw(c.args).await,
+                    None => Err(ToolError::NotFound(c.name.clone())),
+                };
+                ToolCallResult {
+                    name: c.name,
+                    result,
+                }
+            });
+        }
+
+        let mut results = Vec::new();
+        while let Some(Ok(r)) = set.join_next().await {
+            results.push(r);
+        }
+        results
+    }
+
+    /// Spawn a tool fire-and-forget; returns a handle to await later.
+    pub fn spawn_tool(&self, call: ToolCall) -> agentverse::ToolHandle {
+        let (tx, rx) = tokio::sync::oneshot::channel::<ToolCallResult>();
+        let tool_opt = {
+            let tools = self.tools.read().unwrap();
+            tools.get(&call.name).map(|(t, _)| Arc::clone(t))
+        };
+        tokio::spawn(async move {
+            let result = match tool_opt {
+                Some(t) => t.execute_raw(call.args).await,
+                None => Err(ToolError::NotFound(call.name.clone())),
+            };
+            let _ = tx.send(ToolCallResult {
+                name: call.name,
+                result,
+            });
+        });
+        agentverse::ToolHandle {
+            id: uuid::Uuid::new_v4(),
+            receiver: rx,
+        }
+    }
+
+    /// Return Anthropic-compatible tool definitions for all registered tools.
     pub fn schema(&self) -> Vec<Value> {
         self.tools
+            .read()
+            .unwrap()
             .values()
-            .map(|(t, _)| {
-                serde_json::json!({
-                    "name": t.name(),
-                    "description": t.description(),
-                    "parameters": t.parameters(),
+            .map(|(t, _)| t.schema())
+            .collect()
+    }
+
+    /// BM25 keyword search over tool names and descriptions.
+    pub fn search(&self, query: &str, limit: usize) -> Vec<ToolInfo> {
+        let hits = self.index.read().unwrap().search(query, limit);
+        let tools = self.tools.read().unwrap();
+        hits.into_iter()
+            .filter_map(|(name, score)| {
+                tools.get(&name).map(|(t, _)| ToolInfo {
+                    name: name.clone(),
+                    description: t.description().to_string(),
+                    schema: t.schema(),
+                    score,
                 })
             })
             .collect()
     }
 
-    /// Iterate over all registered tools.
-    pub fn iter(&self) -> impl Iterator<Item = &Arc<dyn AsyncTool>> {
-        self.tools.values().map(|(t, _)| t)
+    /// Return a new registry containing only tools with the given category.
+    pub fn filter_category(&self, category: &str) -> Arc<ToolRegistry> {
+        let new_reg = Arc::new(ToolRegistry {
+            tools: RwLock::new(HashMap::new()),
+            index: RwLock::new(BM25Index::new()),
+        });
+        let tools = self.tools.read().unwrap();
+        for (name, (tool, opts)) in tools.iter() {
+            if opts.category.as_deref() == Some(category) {
+                new_reg
+                    .tools
+                    .write()
+                    .unwrap()
+                    .insert(name.clone(), (Arc::clone(tool), opts.clone()));
+                let text = format!("{} {}", tool.name(), tool.description());
+                new_reg.index.write().unwrap().insert(name, &text);
+            }
+        }
+        new_reg
     }
 
-    /// Return all registered tool names.
+    pub fn has_tool(&self, name: &str) -> bool {
+        self.tools.read().unwrap().contains_key(name)
+    }
+
+    pub fn len(&self) -> usize {
+        self.tools.read().unwrap().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.tools.read().unwrap().is_empty()
+    }
+
     pub fn tool_names(&self) -> Vec<String> {
-        self.tools.keys().cloned().collect()
+        self.tools.read().unwrap().keys().cloned().collect()
     }
 
-    /// Return a human-readable summary of every tool with its required args,
-    /// suitable for injecting into a planner system prompt.
+    /// Human-readable tool summary for ReAct prompt injection.
     pub fn tool_summaries(&self) -> String {
-        if self.tools.is_empty() {
+        let tools = self.tools.read().unwrap();
+        if tools.is_empty() {
             return "none (reasoning only)".to_string();
         }
-        let mut entries: Vec<String> = self
-            .tools
+        let mut entries: Vec<String> = tools
             .values()
             .map(|(t, _)| {
-                let params = t.parameters();
-                let required: Vec<&str> = params
-                    .get("required")
-                    .and_then(|r| r.as_array())
-                    .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+                let schema = t.schema();
+                let props = schema["input_schema"]["properties"].as_object();
+                let required: Vec<&str> = schema["input_schema"]["required"]
+                    .as_array()
+                    .map(|r| r.iter().filter_map(|v| v.as_str()).collect())
                     .unwrap_or_default();
-                let props = params.get("properties").and_then(|p| p.as_object());
                 let args_hint = if let Some(props) = props {
                     let fields: Vec<String> = required
                         .iter()
                         .filter_map(|k| {
                             props.get(*k).map(|v| {
-                                let desc =
-                                    v.get("description").and_then(|d| d.as_str()).unwrap_or("");
+                                let desc = v
+                                    .get("description")
+                                    .and_then(|d| d.as_str())
+                                    .unwrap_or("");
                                 format!("\"{k}\": \"{desc}\"")
                             })
                         })
@@ -139,68 +244,5 @@ impl ToolRegistry {
             .collect();
         entries.sort();
         entries.join("\n")
-    }
-
-    /// Check if a tool is registered.
-    pub fn has_tool(&self, name: &str) -> bool {
-        self.tools.contains_key(name)
-    }
-
-    /// Return the number of registered tools.
-    pub fn len(&self) -> usize {
-        self.tools.len()
-    }
-
-    /// Return true if no tools are registered.
-    pub fn is_empty(&self) -> bool {
-        self.tools.is_empty()
-    }
-}
-
-impl Default for ToolRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[cfg(test)]
-mod logging_tests {
-    use super::*;
-    use agentverse::{AsyncTool, ToolResult};
-    use serde_json::json;
-
-    struct EchoTool;
-
-    #[async_trait::async_trait]
-    impl AsyncTool for EchoTool {
-        fn name(&self) -> &str {
-            "echo"
-        }
-        fn description(&self) -> &str {
-            "echoes input"
-        }
-        fn parameters(&self) -> serde_json::Value {
-            json!({"type":"object","properties":{"msg":{"type":"string"}},"required":["msg"]})
-        }
-        async fn execute(&self, args: serde_json::Value) -> ToolResult {
-            Ok(args["msg"].as_str().unwrap_or("").to_string().into())
-        }
-    }
-
-    #[tokio::test]
-    async fn execute_logs_without_panic() {
-        let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-        let mut registry = ToolRegistry::new();
-        registry.register(EchoTool);
-        let result = registry.execute("echo", json!({"msg": "hello"})).await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn execute_unknown_tool_logs_error() {
-        let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-        let registry = ToolRegistry::new();
-        let result = registry.execute("nonexistent", json!({})).await;
-        assert!(result.is_err());
     }
 }

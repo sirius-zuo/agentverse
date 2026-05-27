@@ -9,6 +9,7 @@ async-trait = { workspace = true }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+schemars = { version = "0.8", features = ["derive"] }
 glob = "0.3"
 chrono.workspace = true
 url = "2"
@@ -16,7 +17,9 @@ shell-words = "1"
 tokio = { workspace = true, features = ["process", "time"] }
 scraper = "0.22"
 tracing.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }
 async-trait = { workspace = true }
+schemars = { version = "0.8", features = ["derive"] }

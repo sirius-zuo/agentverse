@@ -67,9 +67,9 @@ impl CycleSkeleton {
             .map(|schema| {
                 let name = schema["name"].as_str().unwrap_or("");
                 let description = schema["description"].as_str().unwrap_or("");
-                let params = &schema["parameters"];
-                let props = params["properties"].as_object();
-                let required: Vec<&str> = params["required"]
+                let input = &schema["input_schema"];
+                let props = input["properties"].as_object();
+                let required: Vec<&str> = input["required"]
                     .as_array()
                     .map(|r| r.iter().filter_map(|v| v.as_str()).collect())
                     .unwrap_or_default();
@@ -190,15 +190,16 @@ mod tests {
         CycleSkeleton::new(
             runner,
             Arc::new(PromptRegistry::new()),
-            Arc::new(ToolRegistry::new()),
+            ToolRegistry::new(),
             5,
         )
     }
 
     #[test]
-    fn skeleton_tool_count_zero() {
+    fn skeleton_tool_count_has_find_tools() {
         let s = make_skeleton();
-        assert_eq!(s.tool_count(), 0);
+        // find_tools is auto-registered, so count is at least 1
+        assert!(s.tool_count() >= 1);
     }
 
     #[test]

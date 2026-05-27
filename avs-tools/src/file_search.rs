@@ -1,13 +1,23 @@
-use agentverse::{AsyncTool, ToolResult};
-use async_trait::async_trait;
+use agentverse::{Tool, ToolError, ToolResult};
 use glob::glob;
-use serde_json::{json, Value};
+use schemars::JsonSchema;
+use serde::Deserialize;
+use serde_json::json;
 
-/// Search files by pattern.
+#[derive(Deserialize, JsonSchema)]
+pub struct FileSearchArgs {
+    /// Directory to search in
+    pub path: String,
+    /// Glob pattern (e.g. "*.txt", "**/*.rs")
+    pub pattern: String,
+}
+
 pub struct FileSearch;
 
-#[async_trait]
-impl AsyncTool for FileSearch {
+#[async_trait::async_trait]
+impl Tool for FileSearch {
+    type Args = FileSearchArgs;
+
     fn name(&self) -> &str {
         "file_search"
     }
@@ -16,35 +26,10 @@ impl AsyncTool for FileSearch {
         "Search for files matching a pattern in a directory"
     }
 
-    fn parameters(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Directory to search in"
-                },
-                "pattern": {
-                    "type": "string",
-                    "description": "Glob pattern (e.g., '*.txt', '**/*.rs')"
-                }
-            },
-            "required": ["path", "pattern"]
-        })
-    }
-
-    async fn execute(&self, args: Value) -> ToolResult {
-        let path = args["path"].as_str().ok_or_else(|| {
-            agentverse::ToolError::Execution("Missing or invalid 'path' parameter".to_string())
-        })?;
-
-        let pattern = args["pattern"].as_str().ok_or_else(|| {
-            agentverse::ToolError::Execution("Missing or invalid 'pattern' parameter".to_string())
-        })?;
-
-        let full_pattern = format!("{}/{}", path, pattern);
+    async fn execute(&self, args: FileSearchArgs) -> ToolResult {
+        let full_pattern = format!("{}/{}", args.path, args.pattern);
         let matches: Vec<String> = glob(&full_pattern)
-            .map_err(|e| agentverse::ToolError::Execution(e.to_string()))?
+            .map_err(|e| ToolError::Execution(e.to_string()))?
             .filter_map(|entry| entry.ok())
             .filter_map(|p| p.to_str().map(String::from))
             .collect();

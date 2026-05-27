@@ -1,13 +1,18 @@
-use agentverse::{AsyncTool, ToolResult};
-use async_trait::async_trait;
+use agentverse::{Tool, ToolResult};
 use chrono::Utc;
-use serde_json::{json, Value};
+use schemars::JsonSchema;
+use serde::Deserialize;
+use serde_json::json;
 
-/// Current date and time tool.
+#[derive(Deserialize, JsonSchema)]
+pub struct DateTimeArgs {}
+
 pub struct DateTimeTool;
 
-#[async_trait]
-impl AsyncTool for DateTimeTool {
+#[async_trait::async_trait]
+impl Tool for DateTimeTool {
+    type Args = DateTimeArgs;
+
     fn name(&self) -> &str {
         "datetime"
     }
@@ -16,11 +21,7 @@ impl AsyncTool for DateTimeTool {
         "Get the current date and time in UTC"
     }
 
-    fn parameters(&self) -> Value {
-        json!({ "type": "object", "properties": {} })
-    }
-
-    async fn execute(&self, _args: Value) -> ToolResult {
+    async fn execute(&self, _args: DateTimeArgs) -> ToolResult {
         let now = Utc::now();
         Ok(json!({
             "utc": now.to_rfc3339(),

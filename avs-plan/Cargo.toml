@@ -20,3 +20,5 @@ async-trait = { workspace = true }
 agentverse-memory = { path = "../avs-memory" }
 agentverse-tools = { path = "../avs-tools" }
 reqwest = { workspace = true }
+schemars = { version = "0.8", features = ["derive"] }
+serde = { workspace = true, features = ["derive"] }

@@ -89,7 +89,7 @@ mod tests {
         (
             runner,
             Arc::new(PromptRegistry::new()),
-            Arc::new(ToolRegistry::new()),
+            ToolRegistry::new(),
         )
     }
 

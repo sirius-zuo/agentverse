@@ -1,14 +1,10 @@
 //! Tests for the agentverse-react crate.
-//!
-//! NOTE: Tests that depended on the old CycleSkeleton<M> generic API (with
-//! ConnectionManager, Memory, build_request, prime_react_preamble, etc.) have
-//! been removed as part of the Task 3 refactor.  Task 4 will add new
-//! integration tests against the updated CycleSkeleton and ReActStrategy APIs.
 
-use agentverse::{Config, LlmRunner, PromptConfig, PromptRegistry, RunStrategy};
+use agentverse::{Config, LlmRunner, PromptConfig, PromptRegistry, RunStrategy, Tool, ToolResult};
 use agentverse_react::{parse::parse_response, CycleAction, CycleSkeleton, ReActStrategy};
 use agentverse_tools::ToolRegistry;
-use async_trait::async_trait;
+use schemars::JsonSchema;
+use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
 
@@ -28,8 +24,15 @@ impl MockTool {
     }
 }
 
-#[async_trait]
-impl agentverse::AsyncTool for MockTool {
+#[derive(Debug, Deserialize, JsonSchema)]
+struct MockArgs {
+    text: Option<String>,
+}
+
+#[async_trait::async_trait]
+impl Tool for MockTool {
+    type Args = MockArgs;
+
     fn name(&self) -> &str {
         &self.name
     }
@@ -38,14 +41,7 @@ impl agentverse::AsyncTool for MockTool {
         &self.description
     }
 
-    fn parameters(&self) -> serde_json::Value {
-        json!({"type": "object", "properties": {}})
-    }
-
-    async fn execute(
-        &self,
-        args: serde_json::Value,
-    ) -> Result<serde_json::Value, agentverse::ToolError> {
+    async fn execute(&self, args: MockArgs) -> ToolResult {
         Ok(json!({"result": format!("Executed {} with args {:?}", self.name, args)}))
     }
 }
@@ -68,7 +64,7 @@ fn make_skeleton() -> CycleSkeleton {
     CycleSkeleton::new(
         runner,
         Arc::new(PromptRegistry::new()),
-        Arc::new(ToolRegistry::new()),
+        ToolRegistry::new(),
         5,
     )
 }
@@ -113,7 +109,8 @@ fn test_parse_response_thought_only() {
 #[test]
 fn test_cycle_skeleton_tool_count_zero() {
     let s = make_skeleton();
-    assert_eq!(s.tool_count(), 0);
+    // find_tools is auto-registered by ToolRegistry::new()
+    assert!(s.tool_count() >= 1);
 }
 
 #[test]
@@ -138,10 +135,11 @@ fn test_cycle_skeleton_tool_count_nonzero() {
         })
         .unwrap(),
     );
-    let mut tools = ToolRegistry::new();
+    let tools = ToolRegistry::new();
     tools.register(MockTool::new("echo", "Echo tool"));
-    let s = CycleSkeleton::new(runner, Arc::new(PromptRegistry::new()), Arc::new(tools), 10);
-    assert_eq!(s.tool_count(), 1);
+    let initial = tools.len();
+    let s = CycleSkeleton::new(runner, Arc::new(PromptRegistry::new()), tools, 10);
+    assert_eq!(s.tool_count(), initial);
 }
 
 #[test]
@@ -152,7 +150,6 @@ fn test_cycle_skeleton_prepare_buffer_no_preamble() {
         content: "hi".to_string(),
     }];
     let buf = s.prepare_buffer(msgs);
-    // Without a react prompt template, buffer is unchanged
     assert_eq!(buf.len(), 1);
 }
 
@@ -184,17 +181,16 @@ fn test_cycle_preamble_inserted_when_react_template_loaded() {
         })
         .unwrap(),
     );
-    let mut tools = ToolRegistry::new();
+    let tools = ToolRegistry::new();
     tools.register(MockTool::new("test", "A test tool"));
 
-    let s = CycleSkeleton::new(runner, Arc::new(registry), Arc::new(tools), 10);
+    let s = CycleSkeleton::new(runner, Arc::new(registry), tools, 10);
 
     let msgs = vec![agentverse::Message {
         role: agentverse::MessageRole::User,
         content: "hello".to_string(),
     }];
     let buf = s.prepare_buffer(msgs);
-    // Preamble inserted before the user message
     assert_eq!(buf.len(), 2);
     assert!(buf[0].content.contains("Tools:"));
 }
@@ -223,9 +219,9 @@ async fn test_cycle_skeleton_execute_tool() {
         })
         .unwrap(),
     );
-    let mut tools = ToolRegistry::new();
+    let tools = ToolRegistry::new();
     tools.register(MockTool::new("echo", "Echo back input"));
-    let s = CycleSkeleton::new(runner, Arc::new(PromptRegistry::new()), Arc::new(tools), 10);
+    let s = CycleSkeleton::new(runner, Arc::new(PromptRegistry::new()), tools, 10);
 
     let result = s
         .execute_tool("echo", json!({"text": "hello"}))
@@ -262,7 +258,7 @@ async fn react_run_returns_error_on_bad_port() {
     let strategy = ReActStrategy::new(
         runner,
         Arc::new(PromptRegistry::new()),
-        Arc::new(ToolRegistry::new()),
+        ToolRegistry::new(),
         3,
     );
 

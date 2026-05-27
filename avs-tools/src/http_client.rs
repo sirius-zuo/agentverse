@@ -1,7 +1,9 @@
-use agentverse::{AsyncTool, ToolError, ToolResult};
-use async_trait::async_trait;
+use agentverse::{Tool, ToolError, ToolResult};
 use reqwest::Client;
+use schemars::JsonSchema;
+use serde::Deserialize;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::sync::LazyLock;
 use std::time::Duration;
 use url::Url;
@@ -13,11 +15,25 @@ static HTTP_CLIENT: LazyLock<Client> = LazyLock::new(|| {
         .expect("failed to build HTTP client")
 });
 
-/// HTTP client tool for making REST API calls.
+#[derive(Deserialize, JsonSchema)]
+pub struct HttpClientArgs {
+    /// HTTP method (GET, POST, PUT, DELETE)
+    pub method: String,
+    /// Full URL including scheme (http/https only)
+    pub url: String,
+    /// Optional request headers as key-value pairs
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+    /// Optional request body (for POST/PUT)
+    pub body: Option<Value>,
+}
+
 pub struct HttpClient;
 
-#[async_trait]
-impl AsyncTool for HttpClient {
+#[async_trait::async_trait]
+impl Tool for HttpClient {
+    type Args = HttpClientArgs;
+
     fn name(&self) -> &str {
         "http_client"
     }
@@ -26,43 +42,9 @@ impl AsyncTool for HttpClient {
         "Make HTTP requests (GET, POST, PUT, DELETE)"
     }
 
-    fn parameters(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "method": {
-                    "type": "string",
-                    "enum": ["GET", "POST", "PUT", "DELETE"],
-                    "description": "HTTP method"
-                },
-                "url": {
-                    "type": "string",
-                    "description": "Request URL"
-                },
-                "headers": {
-                    "type": "object",
-                    "description": "Optional request headers"
-                },
-                "body": {
-                    "type": "string",
-                    "description": "Optional request body (for POST/PUT)"
-                }
-            },
-            "required": ["method", "url"]
-        })
-    }
-
-    async fn execute(&self, args: Value) -> ToolResult {
-        let method = args["method"]
-            .as_str()
-            .ok_or_else(|| ToolError::Execution("Missing 'method' parameter".to_string()))?;
-
-        let url = args["url"]
-            .as_str()
-            .ok_or_else(|| ToolError::Execution("Missing 'url' parameter".to_string()))?;
-
-        let parsed =
-            Url::parse(url).map_err(|e| ToolError::Execution(format!("Invalid URL: {e}")))?;
+    async fn execute(&self, args: HttpClientArgs) -> ToolResult {
+        let parsed = Url::parse(&args.url)
+            .map_err(|e| ToolError::Execution(format!("Invalid URL: {e}")))?;
         if !"http".eq_ignore_ascii_case(parsed.scheme())
             && !"https".eq_ignore_ascii_case(parsed.scheme())
         {
@@ -71,24 +53,20 @@ impl AsyncTool for HttpClient {
             ));
         }
 
-        let mut request = match method.to_uppercase().as_str() {
-            "GET" => HTTP_CLIENT.get(url),
-            "POST" => HTTP_CLIENT.post(url),
-            "PUT" => HTTP_CLIENT.put(url),
-            "DELETE" => HTTP_CLIENT.delete(url),
+        let mut request = match args.method.to_uppercase().as_str() {
+            "GET" => HTTP_CLIENT.get(&args.url),
+            "POST" => HTTP_CLIENT.post(&args.url),
+            "PUT" => HTTP_CLIENT.put(&args.url),
+            "DELETE" => HTTP_CLIENT.delete(&args.url),
             other => return Err(ToolError::Execution(format!("Unsupported method: {other}"))),
         };
 
-        if let Some(headers) = args["headers"].as_object() {
-            for (k, v) in headers {
-                if let Some(v_str) = v.as_str() {
-                    request = request.header(k, v_str);
-                }
-            }
+        for (k, v) in &args.headers {
+            request = request.header(k, v);
         }
 
-        if let Some(body) = args["body"].as_str() {
-            request = request.body(body.to_string());
+        if let Some(body) = args.body {
+            request = request.json(&body);
         }
 
         let response = request

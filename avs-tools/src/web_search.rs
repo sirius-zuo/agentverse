@@ -1,9 +1,9 @@
-use agentverse::{AsyncTool, ToolError, ToolResult};
-use async_trait::async_trait;
+use agentverse::{Tool, ToolError, ToolResult};
 use reqwest::Client;
+use schemars::JsonSchema;
 use scraper::{Html, Selector};
-use serde::Serialize;
-use serde_json::{json, Value};
+use serde::Deserialize;
+use serde_json::json;
 use std::sync::LazyLock;
 use std::time::Duration;
 use url::Url;
@@ -18,16 +18,18 @@ static CLIENT: LazyLock<Client> = LazyLock::new(|| {
 
 pub struct WebSearch;
 
-#[derive(Serialize)]
-struct SearchResult {
-    title: String,
-    url: String,
-    snippet: String,
-    content: Option<String>,
+#[derive(Deserialize, JsonSchema)]
+pub struct WebSearchArgs {
+    /// The search query
+    pub query: String,
+    /// Number of results to fetch and return (1-10)
+    pub max_results: u8,
 }
 
-#[async_trait]
-impl AsyncTool for WebSearch {
+#[async_trait::async_trait]
+impl Tool for WebSearch {
+    type Args = WebSearchArgs;
+
     fn name(&self) -> &str {
         "web_search"
     }
@@ -36,35 +38,12 @@ impl AsyncTool for WebSearch {
         "Search the web via DuckDuckGo and fetch the content of the top N results"
     }
 
-    fn parameters(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The search query"
-                },
-                "max_results": {
-                    "type": "integer",
-                    "description": "Number of results to fetch and return (1-10)"
-                }
-            },
-            "required": ["query", "max_results"]
-        })
-    }
-
-    async fn execute(&self, args: Value) -> ToolResult {
-        let query = args["query"]
-            .as_str()
-            .ok_or_else(|| ToolError::Execution("Missing 'query' parameter".to_string()))?;
-        let max_results = args["max_results"]
-            .as_u64()
-            .ok_or_else(|| ToolError::Execution("Missing 'max_results' parameter".to_string()))?;
-        let max_results = (max_results as usize).clamp(1, 10);
+    async fn execute(&self, args: WebSearchArgs) -> ToolResult {
+        let max_results = (args.max_results as usize).clamp(1, 10);
 
         let html = CLIENT
             .post("https://html.duckduckgo.com/html/")
-            .form(&[("q", query)])
+            .form(&[("q", &args.query)])
             .send()
             .await
             .map_err(|e| ToolError::Execution(format!("DDG search request failed: {e}")))?
@@ -77,21 +56,19 @@ impl AsyncTool for WebSearch {
         let mut results = Vec::with_capacity(candidates.len());
         for (title, url, snippet) in candidates {
             let content = fetch_page_text(&url).await;
-            results.push(SearchResult {
-                title,
-                url,
-                snippet,
-                content,
-            });
+            results.push(json!({
+                "title": title,
+                "url": url,
+                "snippet": snippet,
+                "content": content,
+            }));
         }
 
-        serde_json::to_value(results)
-            .map_err(|e| ToolError::Execution(format!("Serialization failed: {e}")))
+        Ok(json!(results))
     }
 }
 
 /// Parse DDG HTML and return up to `max` results as `(title, url, snippet)`.
-/// Exported for unit testing.
 pub fn parse_ddg_html(html: &str, max: usize) -> Vec<(String, String, String)> {
     let document = Html::parse_document(html);
     let result_sel = Selector::parse("div.result").unwrap();
@@ -127,9 +104,6 @@ pub fn parse_ddg_html(html: &str, max: usize) -> Vec<(String, String, String)> {
     out
 }
 
-/// Extract a usable URL from a DDG result href.
-/// DDG sometimes wraps URLs as `//duckduckgo.com/l/?uddg=<encoded>&rut=...`;
-/// other times it returns the destination URL directly. Handle both.
 fn extract_url(href: &str) -> String {
     let full = if href.starts_with("//") {
         format!("https:{href}")
@@ -139,18 +113,15 @@ fn extract_url(href: &str) -> String {
     let Ok(u) = Url::parse(&full) else {
         return String::new();
     };
-    // DDG redirect format — decode the real destination
     if let Some((_, v)) = u.query_pairs().find(|(k, _)| k == "uddg") {
         return v.into_owned();
     }
-    // Direct URL — return as-is if http(s)
     if matches!(u.scheme(), "http" | "https") {
         return full;
     }
     String::new()
 }
 
-/// Fetch a URL and extract readable text from `<p>` tags, capped at 2000 chars.
 async fn fetch_page_text(url: &str) -> Option<String> {
     let html = CLIENT.get(url).send().await.ok()?.text().await.ok()?;
     let document = Html::parse_document(&html);

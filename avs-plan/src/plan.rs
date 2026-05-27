@@ -176,7 +176,7 @@ mod tests {
         PlanStrategy::new(
             runner,
             Arc::new(PromptRegistry::new()),
-            Arc::new(ToolRegistry::new()),
+            ToolRegistry::new(),
             5,
         )
     }

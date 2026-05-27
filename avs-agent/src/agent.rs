@@ -334,7 +334,7 @@ mod lt_tests {
             })
             .unwrap(),
         );
-        let tools = Arc::new(ToolRegistry::new());
+        let tools = ToolRegistry::new();
         let prompts = Arc::new(PromptRegistry::new());
         let strategy = build(
             StrategyKind::React,
@@ -383,7 +383,7 @@ mod tests {
             })
             .unwrap(),
         );
-        let tools = Arc::new(ToolRegistry::new());
+        let tools = ToolRegistry::new();
         let prompts = Arc::new(PromptRegistry::new());
         let strategy = build(
             StrategyKind::React,
