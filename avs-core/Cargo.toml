@@ -17,6 +17,7 @@ uuid.workspace = true
 chrono.workspace = true
 tokio.workspace = true
 serde_yaml = "0.9"
+schemars = { version = "0.8", features = ["derive"] }
 toml.workspace = true
 
 # Optional tracing
