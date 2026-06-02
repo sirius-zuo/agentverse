@@ -66,6 +66,7 @@ async fn handle_mcp(
             let schemas = state.registry.schema();
             let tools: Vec<Value> = schemas
                 .into_iter()
+                .filter(|s| s["name"].as_str() != Some("find_tools"))
                 .map(|s| {
                     json!({
                         "name": s["name"],

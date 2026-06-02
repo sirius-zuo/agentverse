@@ -5,7 +5,9 @@
 // This binary just keeps the process alive until Ctrl-C.
 //
 // Run:
-//   ANTHROPIC_API_KEY=sk-... HOST=0.0.0.0 PORT=3000 cargo run -p example-http-agent
+//   MODEL_BASE_URL=http://localhost:9090/v1 \
+//   MODEL_NAME=Qwen3.6-35B-A3B-GGUF \
+//   cargo run -p example-http-agent
 
 use agentverse::{Config, LlmRunner, PromptRegistry, ProviderConfig};
 use agentverse_agent::Agent;
@@ -19,17 +21,20 @@ use std::sync::Arc;
 async fn main() {
     avs_logging::init();
 
-    let api_key = std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY required");
+    let base_url =
+        std::env::var("MODEL_BASE_URL").unwrap_or_else(|_| "http://localhost:9090/v1".to_string());
+    let api_key = std::env::var("MODEL_API_KEY").unwrap_or_default();
     let model_name =
-        std::env::var("MODEL_NAME").unwrap_or_else(|_| "claude-sonnet-4-6".to_string());
+        std::env::var("MODEL_NAME").unwrap_or_else(|_| "Qwen3.6-35B-A3B-GGUF".to_string());
 
     tracing::info!(model = %model_name, "Building HTTP agent");
 
     let runner = Arc::new(
         LlmRunner::from_config(Config {
-            provider: ProviderConfig::Anthropic {
-                model_name,
+            provider: ProviderConfig::OpenAI {
+                model_name: model_name.clone(),
                 api_key,
+                base_url: Some(base_url),
             },
             max_messages: 100,
             tools: vec![],
