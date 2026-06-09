@@ -55,4 +55,23 @@ pub trait SessionMemory: Send + Sync {
     ) -> Result<u64, SessionMemoryError>;
     /// Returns all active sessions across all users. Used by background workers only.
     async fn list_all_active_sessions(&self) -> Result<Vec<Session>, SessionMemoryError>;
+
+    /// Store serialised skill context for a session (None clears it).
+    /// Default implementation is a no-op so existing impls compile unchanged.
+    async fn set_skill_context(
+        &self,
+        _session_id: SessionId,
+        _context_json: Option<&str>,
+    ) -> Result<(), SessionMemoryError> {
+        Ok(())
+    }
+
+    /// Retrieve the serialised skill context for a session.
+    /// Default returns None.
+    async fn get_skill_context(
+        &self,
+        _session_id: SessionId,
+    ) -> Result<Option<String>, SessionMemoryError> {
+        Ok(None)
+    }
 }
