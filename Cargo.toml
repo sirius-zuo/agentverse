@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "avs-core",
+    "avs-skill",
     "avs-agent",
     "avs-guardrails",
     "avs-integration",
