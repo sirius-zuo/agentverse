@@ -148,6 +148,7 @@ mod tests {
             strategy,
             false,
             None,
+            None,
         )
     }
 

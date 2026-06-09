@@ -11,11 +11,11 @@ http = [
     "dep:tower-http",
     "dep:reqwest",
     "dep:serde",
-    "dep:serde_json",
     "dep:uuid",
 ]
 
 [dependencies]
+agentverse-skill = { path = "../avs-skill" }
 agentverse = { path = "../avs-core" }
 agentverse-session = { path = "../avs-session" }
 agentverse-strategy = { path = "../avs-strategy" }
@@ -25,6 +25,7 @@ tokio = { workspace = true }
 async-trait.workspace = true
 tracing.workspace = true
 chrono = { workspace = true }
+serde_json = { workspace = true }
 
 # Optional — only compiled with `http` feature
 axum = { workspace = true, optional = true }
@@ -32,7 +33,6 @@ tower = { workspace = true, optional = true }
 tower-http = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }
 
 [dev-dependencies]
@@ -41,3 +41,4 @@ agentverse-memory = { path = "../avs-memory" }
 agentverse-tools = { path = "../avs-tools" }
 agentverse-session = { path = "../avs-session" }
 agentverse-strategy = { path = "../avs-strategy" }
+tempfile = "3"
