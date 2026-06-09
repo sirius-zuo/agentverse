@@ -74,6 +74,7 @@ async fn main() {
         strategy,
         false,
         None,
+        None,
     );
 
     let config_path = concat!(env!("CARGO_MANIFEST_DIR"), "/agent.toml");

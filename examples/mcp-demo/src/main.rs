@@ -139,6 +139,7 @@ async fn main() {
         strategy,
         false,
         None,
+        None,
     );
 
     // ── 5. Run a query ────────────────────────────────────────────────────────

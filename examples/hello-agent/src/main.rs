@@ -89,6 +89,7 @@ async fn main() {
         strategy,
         false,
         None,
+        None,
     );
 
     let session_id = agent.create_session("user").await.expect("create session");
