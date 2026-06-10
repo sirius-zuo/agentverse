@@ -82,3 +82,23 @@ fn subagent_error_display_token_budget() {
     let e = SubAgentError::TokenBudgetExceeded { used: 5001, limit: 5000 };
     assert!(e.to_string().contains("5001"));
 }
+
+#[tokio::test]
+async fn subagent_handle_await_result_returns_sent_value() {
+    use agentverse_subagent::SubAgentHandle;
+    use tokio::sync::oneshot;
+    use uuid::Uuid;
+
+    let (tx, rx) = oneshot::channel();
+    let handle = SubAgentHandle::from_parts(Uuid::new_v4(), rx);
+
+    let result = SubAgentResult {
+        answer: "hello".into(),
+        usage: agentverse::UsageStats::default(),
+        steps: 1,
+    };
+    tx.send(Ok(result)).unwrap();
+
+    let received = handle.await_result().await.unwrap();
+    assert_eq!(received.answer, "hello");
+}
