@@ -459,14 +459,12 @@ impl SessionMemory for PostgresSessionMemory {
         session_id: SessionId,
         context_json: Option<&str>,
     ) -> Result<(), SessionMemoryError> {
-        let result = sqlx::query(
-            "UPDATE sessions SET skill_context_json = $1 WHERE id = $2"
-        )
-        .bind(context_json)
-        .bind(session_id.to_string())
-        .execute(&self.pool)
-        .await
-        .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+        let result = sqlx::query("UPDATE sessions SET skill_context_json = $1 WHERE id = $2")
+            .bind(context_json)
+            .bind(session_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
 
         if result.rows_affected() == 0 {
             return Err(SessionMemoryError::NotFound(session_id));
@@ -478,13 +476,12 @@ impl SessionMemory for PostgresSessionMemory {
         &self,
         session_id: SessionId,
     ) -> Result<Option<String>, SessionMemoryError> {
-        let row: Option<Option<String>> = sqlx::query_scalar(
-            "SELECT skill_context_json FROM sessions WHERE id = $1"
-        )
-        .bind(session_id.to_string())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+        let row: Option<Option<String>> =
+            sqlx::query_scalar("SELECT skill_context_json FROM sessions WHERE id = $1")
+                .bind(session_id.to_string())
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
 
         match row {
             None => Err(SessionMemoryError::NotFound(session_id)),
@@ -504,7 +501,7 @@ impl SessionMemory for PostgresSessionMemory {
 
         sqlx::query(
             "INSERT INTO sessions (id, user_id, status, created_at, updated_at, skill_context_json)
-             VALUES ($1, $2, $3, $4, $5, $6)"
+             VALUES ($1, $2, $3, $4, $5, $6)",
         )
         .bind(&id)
         .bind(&session.user_id)

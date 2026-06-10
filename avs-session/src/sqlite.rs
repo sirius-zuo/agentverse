@@ -135,19 +135,17 @@ impl SqliteSessionMemory {
 
         // Skill context column (added by skill-system plan)
         let has_skill_ctx: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'skill_context_json'"
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'skill_context_json'",
         )
         .fetch_one(&self.pool)
         .await
         .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
 
         if has_skill_ctx == 0 {
-            sqlx::query(
-                "ALTER TABLE sessions ADD COLUMN skill_context_json TEXT"
-            )
-            .execute(&self.pool)
-            .await
-            .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+            sqlx::query("ALTER TABLE sessions ADD COLUMN skill_context_json TEXT")
+                .execute(&self.pool)
+                .await
+                .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
         }
 
         Ok(())
@@ -467,14 +465,12 @@ impl SessionMemory for SqliteSessionMemory {
         session_id: SessionId,
         context_json: Option<&str>,
     ) -> Result<(), SessionMemoryError> {
-        let result = sqlx::query(
-            "UPDATE sessions SET skill_context_json = ? WHERE id = ?"
-        )
-        .bind(context_json)
-        .bind(session_id.to_string())
-        .execute(&self.pool)
-        .await
-        .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+        let result = sqlx::query("UPDATE sessions SET skill_context_json = ? WHERE id = ?")
+            .bind(context_json)
+            .bind(session_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
 
         if result.rows_affected() == 0 {
             return Err(SessionMemoryError::NotFound(session_id));
@@ -486,13 +482,12 @@ impl SessionMemory for SqliteSessionMemory {
         &self,
         session_id: SessionId,
     ) -> Result<Option<String>, SessionMemoryError> {
-        let row: Option<Option<String>> = sqlx::query_scalar(
-            "SELECT skill_context_json FROM sessions WHERE id = ?"
-        )
-        .bind(session_id.to_string())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+        let row: Option<Option<String>> =
+            sqlx::query_scalar("SELECT skill_context_json FROM sessions WHERE id = ?")
+                .bind(session_id.to_string())
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
 
         match row {
             None => Err(SessionMemoryError::NotFound(session_id)),
@@ -512,7 +507,7 @@ impl SessionMemory for SqliteSessionMemory {
 
         sqlx::query(
             "INSERT INTO sessions (id, user_id, status, created_at, updated_at, skill_context_json)
-             VALUES (?, ?, ?, ?, ?, ?)"
+             VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&session.user_id)
@@ -535,9 +530,13 @@ mod skill_context_tests {
     #[tokio::test]
     async fn create_with_skill_context_stores_context_atomically() {
         let store = SqliteSessionMemory::new("sqlite::memory:").await.unwrap();
-        let ctx_json = r#"{"instructions":"atomic","documents":[],"tools":[],"max_iterations":null}"#;
+        let ctx_json =
+            r#"{"instructions":"atomic","documents":[],"tools":[],"max_iterations":null}"#;
 
-        let session = store.create_with_skill_context("alice", ctx_json).await.unwrap();
+        let session = store
+            .create_with_skill_context("alice", ctx_json)
+            .await
+            .unwrap();
 
         // Context must be set — no second call needed
         let retrieved = store.get_skill_context(session.id).await.unwrap();
@@ -556,7 +555,10 @@ mod skill_context_tests {
 
         // Set some JSON
         store
-            .set_skill_context(session.id, Some(r#"{"instructions":"test","documents":[],"tools":[],"max_iterations":null}"#))
+            .set_skill_context(
+                session.id,
+                Some(r#"{"instructions":"test","documents":[],"tools":[],"max_iterations":null}"#),
+            )
             .await
             .unwrap();
 

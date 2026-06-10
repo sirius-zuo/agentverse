@@ -91,7 +91,10 @@ impl SessionManager {
         user_id: &str,
         context_json: &str,
     ) -> Result<SessionId, SessionMemoryError> {
-        let session = self.store.create_with_skill_context(user_id, context_json).await?;
+        let session = self
+            .store
+            .create_with_skill_context(user_id, context_json)
+            .await?;
         Ok(session.id)
     }
 }

@@ -311,6 +311,9 @@ mod tests {
     #[test]
     fn tool_summaries_for_unknown_names_returns_none_string() {
         let reg = ToolRegistry::new();
-        assert_eq!(reg.tool_summaries_for(&["ghost".to_string()]), "none (reasoning only)");
+        assert_eq!(
+            reg.tool_summaries_for(&["ghost".to_string()]),
+            "none (reasoning only)"
+        );
     }
 }

@@ -58,10 +58,7 @@ pub fn parse_skill_file(path: &Path, content: &str) -> Result<Skill, SkillError>
         description: fm.description,
         tags: fm.tags.unwrap_or_default(),
         tools: avs.tools.unwrap_or_default(),
-        activation_domains: avs
-            .activation
-            .and_then(|a| a.domains)
-            .unwrap_or_default(),
+        activation_domains: avs.activation.and_then(|a| a.domains).unwrap_or_default(),
         instructions: body.trim().to_string(),
         documents: vec![],
         max_iterations: avs.max_iterations,
@@ -79,8 +76,8 @@ fn split_frontmatter(content: &str) -> (&str, &str) {
         return ("", content);
     }
     let after_open = &content[4..]; // skip "---\n"
-    // Scan for the closing "---" that is alone on its line.
-    // We look for "\n---" where the remainder of that line is only whitespace.
+                                    // Scan for the closing "---" that is alone on its line.
+                                    // We look for "\n---" where the remainder of that line is only whitespace.
     let mut pos = 0;
     loop {
         match after_open[pos..].find("\n---") {
@@ -190,9 +187,16 @@ You are an architect.
 
     #[test]
     fn body_horizontal_rule_does_not_truncate_instructions() {
-        let content = "---\nname: foo\ndescription: d\n---\n\nFirst paragraph.\n\n---\n\nSecond paragraph.\n";
+        let content =
+            "---\nname: foo\ndescription: d\n---\n\nFirst paragraph.\n\n---\n\nSecond paragraph.\n";
         let skill = parse_skill_file(&dummy_path(), content).unwrap();
-        assert!(skill.instructions.contains("First paragraph."), "missing first para");
-        assert!(skill.instructions.contains("Second paragraph."), "missing second para");
+        assert!(
+            skill.instructions.contains("First paragraph."),
+            "missing first para"
+        );
+        assert!(
+            skill.instructions.contains("Second paragraph."),
+            "missing second para"
+        );
     }
 }

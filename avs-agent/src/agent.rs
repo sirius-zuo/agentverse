@@ -1,18 +1,61 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use agentverse::memory::{LongtermMemory, LongtermRecord, Message, MessageRole};
 use agentverse::{LlmRunner, PromptRegistry, RunStrategy};
 use agentverse_session::{Session, SessionId, SessionManager, SessionMemory, SessionMemoryError};
-use agentverse_skill::{SkillContext, SkillError, SkillRegistry};
+use agentverse_skill::{SkillContext, SkillError, SkillMode, SkillRegistry, SkillRouter};
 use agentverse_tools::ToolRegistry;
 use serde_json;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 
 struct CacheMemory {
     messages: Vec<Message>,
     last_used: Instant,
+}
+
+pub struct SkillConfig {
+    pub registry: Arc<RwLock<SkillRegistry>>,
+    pub mode: SkillMode,
+    pub dir: PathBuf,
+    /// Override routing threshold. None = use default per mode (0.15 Open, 0.08 Constrained).
+    pub routing_threshold: Option<f32>,
+}
+
+impl SkillConfig {
+    pub fn load(dir: impl AsRef<std::path::Path>, mode: SkillMode) -> Result<Self, SkillError> {
+        let registry = SkillRegistry::load(dir.as_ref())?;
+        Ok(Self {
+            registry: Arc::new(RwLock::new(registry)),
+            mode,
+            dir: dir.as_ref().to_path_buf(),
+            routing_threshold: None,
+        })
+    }
+
+    pub fn with_threshold(mut self, threshold: f32) -> Self {
+        self.routing_threshold = Some(threshold);
+        self
+    }
+}
+
+fn format_skill_summaries(skills: &[&agentverse_skill::Skill]) -> String {
+    if skills.is_empty() {
+        return String::new();
+    }
+    let mut sorted = skills.to_vec();
+    sorted.sort_by(|a, b| a.id.cmp(&b.id));
+    let lines = sorted
+        .iter()
+        .map(|s| format!("- {}: {}", s.id, s.description))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "## Available Skills\n\n{}\n\nYou may use a skill when the user's request matches one of the above.",
+        lines
+    )
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -39,7 +82,7 @@ pub struct Agent {
     cache_memory: Mutex<HashMap<(String, SessionId), CacheMemory>>,
     buffer_ttl: Duration,
     longterm_memory: Option<Arc<dyn LongtermMemory>>,
-    skill_registry: Option<Arc<SkillRegistry>>,
+    skills: Option<SkillConfig>,
 }
 
 impl Agent {
@@ -51,7 +94,7 @@ impl Agent {
         strategy: Arc<dyn RunStrategy>,
         enable_http_server: bool,
         longterm_memory: Option<Arc<dyn LongtermMemory>>,
-        skill_registry: Option<Arc<SkillRegistry>>,
+        skills: Option<SkillConfig>,
     ) -> Arc<Self> {
         let agent = Arc::new(Self {
             runner,
@@ -62,7 +105,7 @@ impl Agent {
             cache_memory: Mutex::new(HashMap::new()),
             buffer_ttl: Duration::from_secs(300),
             longterm_memory,
-            skill_registry,
+            skills,
         });
 
         #[cfg(feature = "http")]
@@ -75,20 +118,43 @@ impl Agent {
         agent
     }
 
-    fn render_system_with_skill(&self, skill: Option<&SkillContext>) -> Option<String> {
-        let base = self.prompts
+    fn assemble_system(
+        &self,
+        skill_ctx: Option<&SkillContext>,
+        summaries_block: Option<&str>,
+    ) -> Option<String> {
+        let mut parts: Vec<String> = Vec::new();
+
+        match skill_ctx {
+            Some(ctx) => {
+                // Skill active: full instructions + supporting documents
+                parts.push(ctx.instructions.clone());
+                parts.extend(ctx.documents.iter().cloned());
+            }
+            None => {
+                // Discovery phase: skill summaries (if any)
+                if let Some(block) = summaries_block {
+                    if !block.is_empty() {
+                        parts.push(block.to_string());
+                    }
+                }
+            }
+        }
+
+        // Agent base system prompt from system.j2 template
+        if let Ok(base) = self
+            .prompts
             .render("system", std::collections::HashMap::new())
-            .ok()
-            .filter(|s| !s.trim().is_empty());
-        let skill_block = skill.map(|ctx| {
-            let mut parts = vec![ctx.instructions.clone()];
-            parts.extend(ctx.documents.iter().cloned());
-            parts.join("\n\n")
-        });
-        match (skill_block, base) {
-            (Some(sk), Some(b)) => Some(format!("{}\n\n{}", sk, b)),
-            (Some(sk), None) => Some(sk),
-            (None, b) => b,
+        {
+            if !base.trim().is_empty() {
+                parts.push(base);
+            }
+        }
+
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join("\n\n"))
         }
     }
 
@@ -201,7 +267,7 @@ impl Agent {
     /// session-aware `invoke` path, not this method.
     pub async fn invoke_stateless(&self, input: &str) -> Result<String, AgentError> {
         // Stateless: no session, no memory context — always a fresh single-turn call.
-        let messages = self.assemble_messages(self.render_system_with_skill(None), vec![], input);
+        let messages = self.assemble_messages(self.assemble_system(None, None), vec![], input);
         let response = self.strategy.run(messages).await?;
         Ok(response)
     }
@@ -216,13 +282,46 @@ impl Agent {
 
         let history = self.get_cache_memory(user_id, session_id).await?;
 
-        // Load skill context for this session (session-stable)
-        let skill_ctx: Option<SkillContext> = self
-            .sessions
-            .get_skill_context(session_id)
-            .await?
-            .map(|json| serde_json::from_str::<SkillContext>(&json))
-            .transpose()?;
+        // Load skill context; on first invoke with no context, attempt routing.
+        // The read lock on the registry is held only during this block.
+        let (skill_ctx, summaries_block): (Option<SkillContext>, Option<String>) = {
+            let existing = self.sessions.get_skill_context(session_id).await?;
+
+            if let Some(json) = existing {
+                // Already bound — use as-is, no summaries needed.
+                let ctx = serde_json::from_str::<SkillContext>(&json)?;
+                (Some(ctx), None)
+            } else if let Some(ref skills) = self.skills {
+                // Not yet bound — acquire read lock once for routing + summaries.
+                let reg = skills.registry.read().await;
+                let candidates = reg.eligible(&skills.mode);
+
+                let router = match skills.routing_threshold {
+                    Some(t) => agentverse_skill::SkillRouter::with_threshold(t),
+                    None => agentverse_skill::SkillRouter::for_mode(&skills.mode),
+                };
+
+                if let Some(skill_id) = router.route(input, &candidates) {
+                    tracing::debug!(
+                        skill_id = %skill_id,
+                        session_id = %session_id,
+                        "skill activated via automatic routing"
+                    );
+                    let ctx = reg.compile_context(&skill_id).map_err(AgentError::Skill)?;
+                    let json = serde_json::to_string(&ctx)?;
+                    self.sessions
+                        .set_skill_context(session_id, Some(&json))
+                        .await?;
+                    (Some(ctx), None)
+                } else {
+                    tracing::debug!(session_id = %session_id, "no skill matched, running base agent");
+                    let text = format_skill_summaries(&candidates);
+                    (None, if text.is_empty() { None } else { Some(text) })
+                }
+            } else {
+                (None, None)
+            }
+        };
 
         // Active tool names: skill tools ∩ registry, or all if no skill.
         // A skill with tools:[] restricts to zero tools; only None (no skill) means all tools.
@@ -265,7 +364,7 @@ impl Agent {
             content: input.to_string(),
         };
         let messages = self.assemble_messages_with_context(
-            self.render_system_with_skill(skill_ctx.as_ref()),
+            self.assemble_system(skill_ctx.as_ref(), summaries_block.as_deref()),
             long_term_text,
             history,
             input,
@@ -287,10 +386,7 @@ impl Agent {
 
         if let Some(ms) = self.longterm_memory.clone() {
             let uid = user_id.to_string();
-            let record = LongtermRecord::now(
-                format!("User: {input}\nAssistant: {response}"),
-                0.5,
-            );
+            let record = LongtermRecord::now(format!("User: {input}\nAssistant: {response}"), 0.5);
             tokio::spawn(async move {
                 let _ = ms.write(&uid, record).await;
             });
@@ -308,15 +404,29 @@ impl Agent {
         user_id: &str,
         skill_id: &str,
     ) -> Result<SessionId, AgentError> {
-        let registry = self.skill_registry.as_ref().ok_or_else(|| {
+        let skills = self.skills.as_ref().ok_or_else(|| {
             SkillError::NotConfigured("no skill registry configured on this agent".into())
         })?;
-        let ctx = registry.compile_context(skill_id)?;
+        let ctx = skills.registry.read().await.compile_context(skill_id)?;
         let ctx_json = serde_json::to_string(&ctx)?;
         Ok(self
             .sessions
             .create_session_with_skill_context(user_id, &ctx_json)
             .await?)
+    }
+
+    /// Reload the skill registry from disk. Existing sessions are unaffected;
+    /// new routing calls pick up the refreshed registry.
+    pub async fn reload_skills(&self) -> Result<(), AgentError> {
+        let skills = self.skills.as_ref().ok_or_else(|| {
+            AgentError::Skill(SkillError::NotConfigured(
+                "no skills configured on this agent".into(),
+            ))
+        })?;
+        let new_registry = SkillRegistry::load(&skills.dir).map_err(AgentError::Skill)?;
+        *skills.registry.write().await = new_registry;
+        tracing::info!(dir = ?skills.dir, "skill registry reloaded");
+        Ok(())
     }
 
     pub async fn get_session(
@@ -493,6 +603,92 @@ mod tests {
         let msgs = agent.load_messages("alice", sid).await.unwrap();
         assert!(msgs.is_empty());
     }
+
+    #[tokio::test]
+    async fn assemble_system_with_active_skill_contains_instructions_and_docs() {
+        let agent = make_agent().await;
+        let ctx = SkillContext {
+            instructions: "You are an expert reviewer.".into(),
+            documents: vec!["## Principles\nBe thorough.".into()],
+            tools: vec![],
+            max_iterations: None,
+        };
+        let result = agent.assemble_system(Some(&ctx), None);
+        let s = result.unwrap();
+        assert!(
+            s.contains("You are an expert reviewer."),
+            "instructions missing"
+        );
+        assert!(s.contains("Be thorough."), "document content missing");
+    }
+
+    #[tokio::test]
+    async fn assemble_system_with_summaries_contains_block() {
+        let agent = make_agent().await;
+        let block = "## Available Skills\n\n- code-review: Reviews code.";
+        let result = agent.assemble_system(None, Some(block));
+        assert!(result.unwrap().contains("## Available Skills"));
+    }
+
+    #[tokio::test]
+    async fn assemble_system_skill_active_excludes_summaries() {
+        let agent = make_agent().await;
+        let ctx = SkillContext {
+            instructions: "Skill active.".into(),
+            documents: vec![],
+            tools: vec![],
+            max_iterations: None,
+        };
+        let result =
+            agent.assemble_system(Some(&ctx), Some("## Available Skills\n\nshould not appear"));
+        let s = result.unwrap();
+        assert!(s.contains("Skill active."));
+        assert!(
+            !s.contains("## Available Skills"),
+            "summaries must not appear when skill is active"
+        );
+    }
+
+    #[test]
+    fn format_skill_summaries_is_sorted_and_contains_descriptions() {
+        use agentverse_skill::Skill;
+        let skills: Vec<Skill> = vec![
+            Skill {
+                id: "z-skill".into(),
+                version: "1.0.0".into(),
+                description: "Does Z.".into(),
+                tags: vec![],
+                tools: vec![],
+                activation_domains: vec![],
+                instructions: String::new(),
+                documents: vec![],
+                max_iterations: None,
+            },
+            Skill {
+                id: "a-skill".into(),
+                version: "1.0.0".into(),
+                description: "Does A.".into(),
+                tags: vec![],
+                tools: vec![],
+                activation_domains: vec![],
+                instructions: String::new(),
+                documents: vec![],
+                max_iterations: None,
+            },
+        ];
+        let refs: Vec<&Skill> = skills.iter().collect();
+        let text = format_skill_summaries(&refs);
+        assert!(text.contains("## Available Skills"));
+        assert!(text.contains("a-skill: Does A."));
+        assert!(text.contains("z-skill: Does Z."));
+        // a-skill should appear before z-skill (sorted)
+        assert!(text.find("a-skill").unwrap() < text.find("z-skill").unwrap());
+    }
+
+    #[test]
+    fn format_skill_summaries_empty_list_returns_empty_string() {
+        assert_eq!(format_skill_summaries(&[]), String::new());
+    }
 }
 
 #[cfg(test)]
@@ -500,14 +696,14 @@ mod skill_tests {
     use super::*;
     use agentverse::{Config, LlmRunner, PromptRegistry};
     use agentverse_session::SqliteSessionMemory;
-    use agentverse_skill::SkillRegistry;
+    use agentverse_skill::SkillMode;
     use agentverse_strategy::{build, StrategyKind};
     use agentverse_tools::ToolRegistry;
+    use std::fs;
     use std::sync::Arc;
     use tempfile::tempdir;
-    use std::fs;
 
-    async fn make_agent_with_skill_dir(skills_dir: &std::path::Path) -> Arc<Agent> {
+    async fn make_agent_with_skills(skills: Option<SkillConfig>) -> Arc<Agent> {
         let runner = Arc::new(
             LlmRunner::from_config(Config {
                 provider: agentverse::ProviderConfig::OpenAI {
@@ -532,7 +728,6 @@ mod skill_tests {
             3,
         );
         let session_memory = Arc::new(SqliteSessionMemory::new("sqlite::memory:").await.unwrap());
-        let skill_registry = SkillRegistry::load(skills_dir).ok();
         Agent::new(
             runner,
             tools,
@@ -541,7 +736,7 @@ mod skill_tests {
             strategy,
             false,
             None,
-            skill_registry,
+            skills,
         )
     }
 
@@ -558,7 +753,8 @@ mod skill_tests {
     async fn create_session_with_skill_stores_context() {
         let dir = tempdir().unwrap();
         write_skill(dir.path(), "system", "test-skill", "You are a test agent.");
-        let agent = make_agent_with_skill_dir(dir.path()).await;
+        let skills = SkillConfig::load(dir.path(), SkillMode::Open).ok();
+        let agent = make_agent_with_skills(skills).await;
 
         let session_id = agent
             .create_session_with_skill("alice", "test-skill")
@@ -568,8 +764,7 @@ mod skill_tests {
         // The skill context should be stored in the session
         let ctx_json = agent.sessions.get_skill_context(session_id).await.unwrap();
         assert!(ctx_json.is_some());
-        let ctx: agentverse_skill::SkillContext =
-            serde_json::from_str(&ctx_json.unwrap()).unwrap();
+        let ctx: agentverse_skill::SkillContext = serde_json::from_str(&ctx_json.unwrap()).unwrap();
         assert!(ctx.instructions.contains("You are a test agent."));
         assert!(ctx.tools.contains(&"find_tools".to_string()));
     }
@@ -577,7 +772,8 @@ mod skill_tests {
     #[tokio::test]
     async fn create_session_with_skill_returns_error_for_unknown_skill() {
         let dir = tempdir().unwrap();
-        let agent = make_agent_with_skill_dir(dir.path()).await;
+        let skills = SkillConfig::load(dir.path(), SkillMode::Open).ok();
+        let agent = make_agent_with_skills(skills).await;
         let result = agent
             .create_session_with_skill("alice", "nonexistent-skill")
             .await;
@@ -596,16 +792,25 @@ mod skill_tests {
         )
         .unwrap();
 
-        let agent = make_agent_with_skill_dir(dir.path()).await;
+        let skills = SkillConfig::load(dir.path(), SkillMode::Open).ok();
+        let agent = make_agent_with_skills(skills).await;
         let session_id = agent
             .create_session_with_skill("alice", "no-tools-skill")
             .await
             .unwrap();
 
         // Retrieve the stored context and check tools is empty
-        let ctx_json = agent.sessions.get_skill_context(session_id).await.unwrap().unwrap();
+        let ctx_json = agent
+            .sessions
+            .get_skill_context(session_id)
+            .await
+            .unwrap()
+            .unwrap();
         let ctx: agentverse_skill::SkillContext = serde_json::from_str(&ctx_json).unwrap();
-        assert!(ctx.tools.is_empty(), "skill declared no tools — ctx.tools should be empty");
+        assert!(
+            ctx.tools.is_empty(),
+            "skill declared no tools — ctx.tools should be empty"
+        );
 
         // Verify that invoke would resolve active_tool_names to [] not to all tools.
         // We can't call invoke without a live LLM, but we can verify the stored context
@@ -617,6 +822,252 @@ mod skill_tests {
             .filter(|name| agent.tools.has_tool(name))
             .cloned()
             .collect();
-        assert!(active.is_empty(), "expected zero active tools for skills with empty tools list");
+        assert!(
+            active.is_empty(),
+            "expected zero active tools for skills with empty tools list"
+        );
+    }
+
+    #[tokio::test]
+    async fn skill_config_load_creates_registry_and_wraps_in_rwlock() {
+        let dir = tempdir().unwrap();
+        write_skill(dir.path(), "system", "test-skill", "Test.");
+        let config = SkillConfig::load(dir.path(), agentverse_skill::SkillMode::Open)
+            .expect("SkillConfig::load");
+        let reg = config.registry.read().await;
+        assert!(reg.get("test-skill").is_some());
+    }
+
+    #[tokio::test]
+    async fn agent_new_accepts_skill_config() {
+        let dir = tempdir().unwrap();
+        write_skill(dir.path(), "system", "my-skill", "Instructions.");
+        let skills = SkillConfig::load(dir.path(), agentverse_skill::SkillMode::Open).ok();
+        // If this compiles and creates the agent, the signature is correct.
+        let _agent = make_agent_with_skills(skills).await;
+    }
+
+    mod reload {
+        use super::*;
+
+        fn write_skill_with_description(
+            dir: &std::path::Path,
+            subdir: &str,
+            name: &str,
+            description: &str,
+            instructions: &str,
+        ) {
+            let pkg = dir.join(subdir).join(name);
+            fs::create_dir_all(&pkg).unwrap();
+            let content =
+                format!("---\nname: {name}\ndescription: {description}\n---\n\n{instructions}\n");
+            fs::write(pkg.join("SKILL.md"), content).unwrap();
+        }
+
+        #[tokio::test]
+        async fn reload_skills_refreshes_registry_with_new_skills() {
+            let dir = tempdir().unwrap();
+            write_skill_with_description(
+                dir.path(),
+                "system",
+                "skill-a",
+                "Does A.",
+                "Instructions A.",
+            );
+            let skills = SkillConfig::load(dir.path(), agentverse_skill::SkillMode::Open).unwrap();
+            let agent = make_agent_with_skills(Some(skills)).await;
+
+            // Before reload: skill-a exists, skill-b does not
+            {
+                let s = agent.skills.as_ref().unwrap();
+                let reg = s.registry.read().await;
+                assert!(reg.get("skill-a").is_some());
+                assert!(reg.get("skill-b").is_none());
+            }
+
+            // Add skill-b to directory while agent is running
+            write_skill_with_description(
+                dir.path(),
+                "system",
+                "skill-b",
+                "Does B.",
+                "Instructions B.",
+            );
+
+            // Reload
+            agent.reload_skills().await.expect("reload_skills");
+
+            // After reload: both skills present
+            {
+                let s = agent.skills.as_ref().unwrap();
+                let reg = s.registry.read().await;
+                assert!(
+                    reg.get("skill-a").is_some(),
+                    "skill-a should still be present"
+                );
+                assert!(
+                    reg.get("skill-b").is_some(),
+                    "skill-b should be present after reload"
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn reload_skills_returns_error_when_no_skills_configured() {
+            let agent = make_agent_with_skills(None).await;
+            let result = agent.reload_skills().await;
+            assert!(
+                result.is_err(),
+                "reload_skills should error when no skills configured"
+            );
+        }
+    }
+
+    fn write_skill_with_description(
+        dir: &std::path::Path,
+        subdir: &str,
+        name: &str,
+        description: &str,
+        instructions: &str,
+    ) {
+        let pkg = dir.join(subdir).join(name);
+        fs::create_dir_all(&pkg).unwrap();
+        let content =
+            format!("---\nname: {name}\ndescription: {description}\n---\n\n{instructions}\n");
+        fs::write(pkg.join("SKILL.md"), content).unwrap();
+    }
+
+    #[tokio::test]
+    async fn first_invoke_routes_to_matching_skill() {
+        let dir = tempdir().unwrap();
+        write_skill_with_description(
+            dir.path(),
+            "system",
+            "code-review",
+            "Review code for bugs and style issues.",
+            "You are an expert code reviewer.",
+        );
+        let skills = SkillConfig::load(dir.path(), agentverse_skill::SkillMode::Open).unwrap();
+        let agent = make_agent_with_skills(Some(skills)).await;
+        let session_id = agent.create_session("alice").await.unwrap();
+
+        // invoke will fail (no real LLM), but routing + DB write happen before LLM call
+        let _ = agent
+            .invoke("alice", session_id, "please review my code for bugs")
+            .await;
+
+        let ctx_json = agent.sessions.get_skill_context(session_id).await.unwrap();
+        assert!(
+            ctx_json.is_some(),
+            "skill should be bound after matching first invoke"
+        );
+        let ctx: agentverse_skill::SkillContext = serde_json::from_str(&ctx_json.unwrap()).unwrap();
+        assert!(ctx
+            .instructions
+            .contains("You are an expert code reviewer."));
+    }
+
+    #[tokio::test]
+    async fn first_invoke_no_match_leaves_session_without_skill() {
+        let dir = tempdir().unwrap();
+        write_skill_with_description(
+            dir.path(),
+            "system",
+            "code-review",
+            "Review code for bugs and style issues.",
+            "You are a reviewer.",
+        );
+        let skills = SkillConfig::load(dir.path(), agentverse_skill::SkillMode::Open).unwrap();
+        let agent = make_agent_with_skills(Some(skills)).await;
+        let session_id = agent.create_session("alice").await.unwrap();
+
+        let _ = agent
+            .invoke("alice", session_id, "what is the weather today")
+            .await;
+
+        let ctx_json = agent.sessions.get_skill_context(session_id).await.unwrap();
+        assert!(
+            ctx_json.is_none(),
+            "unrelated message should not bind a skill"
+        );
+    }
+
+    #[tokio::test]
+    async fn second_invoke_does_not_re_route_an_explicitly_bound_session() {
+        let dir = tempdir().unwrap();
+        write_skill_with_description(
+            dir.path(),
+            "system",
+            "code-review",
+            "Review code.",
+            "Reviewer instructions.",
+        );
+        write_skill_with_description(
+            dir.path(),
+            "system",
+            "docs-writer",
+            "Write documentation.",
+            "Writer instructions.",
+        );
+        let skills = SkillConfig::load(dir.path(), agentverse_skill::SkillMode::Open).unwrap();
+        let agent = make_agent_with_skills(Some(skills)).await;
+
+        // Explicitly bind code-review
+        let session_id = agent
+            .create_session_with_skill("alice", "code-review")
+            .await
+            .unwrap();
+
+        // Second invoke with a message that would match docs-writer — skill must not change
+        let _ = agent
+            .invoke("alice", session_id, "write documentation for this")
+            .await;
+
+        let ctx_json = agent
+            .sessions
+            .get_skill_context(session_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let ctx: agentverse_skill::SkillContext = serde_json::from_str(&ctx_json).unwrap();
+        assert!(
+            ctx.instructions.contains("Reviewer instructions."),
+            "explicit binding must not be overridden by routing"
+        );
+    }
+
+    #[tokio::test]
+    async fn constrained_mode_only_routes_to_allowed_skills() {
+        let dir = tempdir().unwrap();
+        write_skill_with_description(
+            dir.path(),
+            "system",
+            "code-review",
+            "Review code for bugs.",
+            "Reviewer.",
+        );
+        write_skill_with_description(
+            dir.path(),
+            "system",
+            "hr-onboarding",
+            "Onboard new employees.",
+            "HR onboarding.",
+        );
+        // Only allow hr-onboarding
+        let mode = agentverse_skill::SkillMode::Constrained(vec!["hr-onboarding".into()]);
+        let skills = SkillConfig::load(dir.path(), mode).unwrap();
+        let agent = make_agent_with_skills(Some(skills)).await;
+        let session_id = agent.create_session("alice").await.unwrap();
+
+        // This message matches code-review but it's not in the allow-list
+        let _ = agent
+            .invoke("alice", session_id, "please review my code for bugs")
+            .await;
+
+        let ctx_json = agent.sessions.get_skill_context(session_id).await.unwrap();
+        assert!(
+            ctx_json.is_none(),
+            "code-review is not in Constrained allow-list, should not bind"
+        );
     }
 }
