@@ -22,7 +22,7 @@ impl SubAgentTool {
     }
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct SubAgentArgs {
     /// Short identifier for this SubAgent (used in tracing).
     pub name: String,
@@ -33,6 +33,7 @@ pub struct SubAgentArgs {
     /// Model alias: "haiku", "sonnet", or "opus". Omit to inherit parent model.
     pub model: Option<String>,
     /// Tool names this SubAgent may use. Empty list = reasoning only (no tools).
+    #[serde(default)]
     pub allowed_tools: Vec<String>,
     /// Maximum ReAct steps. Defaults to 10.
     pub max_steps: Option<usize>,
@@ -44,7 +45,7 @@ pub struct SubAgentArgs {
     pub resources: Vec<ResourceArgJson>,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct ResourceArgJson {
     pub label: String,
     pub content: String,
