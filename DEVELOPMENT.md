@@ -7,6 +7,7 @@ Complete guide for developing, testing, and deploying agents with AgentVerse.
 - [Architecture Overview](#architecture-overview)
 - [Development Setup](#development-setup)
 - [Creating a Custom Agent](#creating-a-custom-agent)
+- [Using the Skill System](#using-the-skill-system)
 - [Multi-LLM Provider Configuration](#multi-llm-provider-configuration)
 - [Writing Tools](#writing-tools)
 - [Using MCP (Model Context Protocol)](#using-mcp-model-context-protocol)
@@ -27,6 +28,7 @@ AgentVerse is a modular Rust framework organized as a Cargo workspace:
 AgentVerse/
 ├── avs-core/              # LlmRunner, Config, ProviderConfig, PromptRegistry, Memory + Tool traits
 ├── avs-agent/             # Agent: single LLM access point; optional HTTP sidecar (feature = "http")
+├── avs-skill/             # Skill system: SKILL.md parser, SkillRegistry, SkillRouter, SkillMode, SkillConfig
 ├── avs-strategy/          # build() factory + StrategyKind enum; re-exports all strategies
 ├── avs-session/           # Session model, SessionManager, SessionMemory trait, SqliteSessionMemory
 ├── avs-logging/           # avs_logging::init() (RUST_LOG / LOG_FORMAT)
@@ -41,11 +43,11 @@ AgentVerse/
 ├── avs-memory-lancedb/    # LanceDB Layer-3 LongtermMemory backend
 ├── avs-memory-pgvector/   # pgvector Layer-3 LongtermMemory backend + PostgresSessionMemory
 └── examples/
-    ├── hello-agent/        # Interactive REPL (ReAct + Calculator + DateTime)
+    ├── hello-agent/        # Open-mode REPL; Extend pattern (system/ + user/ skills)
     ├── react-calculator/   # Multi-step ReAct with Calculator
-    ├── web-search-agent/   # Plan-and-Execute with WebSearch
+    ├── web-search-agent/   # Constrained-mode web search; Shadow pattern (user/ overrides system/)
     ├── anthropic-react/    # Anthropic Claude with prompt caching
-    ├── code-review-agent/  # Hierarchical planning with FileSearch + ShellTool
+    ├── code-review-agent/  # Explicit skill binding; Hierarchical planning with FileSearch + ShellTool
     ├── slack-hr-assistant/ # IntegrationRuntime Slack/console bot
     ├── http-agent/         # Agent with enable_http_server=true
     └── mcp-demo/           # Full MCP round-trip: McpServer + McpCatalogSource + agent
@@ -55,7 +57,10 @@ AgentVerse/
 
 | Concept | Crate | Description |
 |---------|-------|-------------|
-| **Agent** | `agentverse-agent` | Single LLM access point — composes `LlmRunner`, strategy, `SessionManager`, and memory layers |
+| **Agent** | `agentverse-agent` | Single LLM access point — composes `LlmRunner`, strategy, `SessionManager`, memory layers, and optional `SkillConfig` |
+| **SkillConfig** | `agentverse-agent` | Wraps `SkillRegistry`, `SkillMode`, routing threshold, and precomputed caches; constructed via `SkillConfig::load` |
+| **SkillMode** | `agentverse-agent` | `Open` (all skills eligible) or `Constrained(ids)` (allowlist); also re-exported from `agentverse-skill` |
+| **SkillRouter** | `agentverse-skill` | Keyword-overlap scorer; binds a skill to a session on first invoke above threshold |
 | **StrategyKind** | `agentverse-strategy` | Enum selecting the orchestration loop; `build()` constructs an `Arc<dyn RunStrategy>` |
 | **LlmRunner** | `agentverse` | Renders prompts and calls model providers |
 | **Config** | `agentverse` | Provider settings (model name, API key, base URL) |
@@ -186,8 +191,8 @@ async fn main() {
         SqliteSessionMemory::new("sqlite::memory:").await.expect("session memory")
     );
 
-    // enable_http_server=false: console only; None = no long-term memory
-    let agent = Agent::new(runner, tools, prompts, session_memory, strategy, false, None);
+    // enable_http_server=false: console only; None = no long-term memory; None = no skills
+    let agent = Agent::new(runner, tools, prompts, session_memory, strategy, false, None, None);
 
     // Stateless invoke (no session history)
     match agent.invoke_stateless("What is 6 * 7?").await {
@@ -218,7 +223,7 @@ agentverse-agent = { path = "path/to/avs-agent", features = ["http"] }
 ```rust
 // enable_http_server=true: spawns HTTP server as a background task
 // reads HOST (default 0.0.0.0) and PORT (default 3000) from env
-let _agent = Agent::new(runner, tools, prompts, session_memory, strategy, true, None);
+let _agent = Agent::new(runner, tools, prompts, session_memory, strategy, true, None, None);
 
 // Keep the process alive
 tokio::signal::ctrl_c().await.unwrap();
@@ -246,6 +251,162 @@ let runner = Arc::new(LlmRunner::from_config(Config {
 | `React` | Tool-using agents, Q&A, step-by-step reasoning |
 | `Plan` | Multi-step tasks that benefit from upfront planning |
 | `Hierarchical` | Complex tasks decomposed into independent sub-goals |
+
+---
+
+## Using the Skill System
+
+Skills give an agent focused instructions and a tool allowlist at session creation — without any code change. Each skill is a directory containing a `SKILL.md` file with YAML frontmatter and a Markdown body.
+
+### Directory Layout
+
+```
+skills/
+  system/          # Ships with the agent binary; checked in to source
+    math-helper/
+      SKILL.md
+    datetime-helper/
+      SKILL.md
+    style-guide.md # Optional supporting documents (loaded into skill context)
+  user/            # Operator-added at deploy time; not committed to source
+    travel-advisor/
+      SKILL.md
+```
+
+`system/` skills are the defaults. `user/` skills load second and can **shadow** a system skill (same `name:` field) or **extend** the agent with a new capability (different `name:`).
+
+### SKILL.md Format
+
+```markdown
+---
+name: math-helper
+description: >
+  Performs arithmetic and unit conversions.
+  Use when the user asks to calculate, compute, add, subtract,
+  multiply, or divide numbers.
+version: 1.0.0
+tags:
+  - math
+agentverse:
+  tools:
+    - calculator
+---
+
+You are a precise math assistant. Use the calculator tool for all
+arithmetic — never compute in your head. Show your working steps clearly.
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `name` | yes | Skill ID used for routing and explicit binding. Must match across shadow pairs. |
+| `description` | yes | Plain English; used by the keyword-overlap router to match user messages. |
+| `version` | no | Semver string; informational only. |
+| `tags` | no | Freeform strings; not used by the router in v1. |
+| `agentverse.tools` | no | List of tool `name()` values. Only tools in this list (AND registered in `ToolRegistry`) are active for the session. Empty list = no tools. Omitting the field = no restriction. |
+
+Any additional files in the skill directory (e.g. `style-guide.md`) are loaded as supporting documents and injected into the system prompt alongside the instructions.
+
+### Wiring Skills into an Agent
+
+```rust
+use agentverse_agent::{Agent, SkillConfig, SkillMode};
+
+// skills/ is resolved at compile time relative to the binary's source root
+let skills_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/skills");
+let skills = SkillConfig::load(skills_dir, SkillMode::Open)
+    .expect("skills dir not found");
+
+// Print skill IDs at startup (precomputed — no extra lock needed)
+println!("Skills loaded: {}", skills.ids.lock().unwrap().join(", "));
+
+let agent = Agent::new(
+    runner, tools, prompts, session_memory, strategy,
+    false,        // enable_http_server
+    None,         // longterm_memory
+    Some(skills), // skill config
+);
+```
+
+### Routing Modes
+
+**`SkillMode::Open`** — all registered skills are candidates. Routing threshold: 0.15.
+
+```rust
+SkillConfig::load(skills_dir, SkillMode::Open)?
+```
+
+**`SkillMode::Constrained(ids)`** — only the listed skill IDs are candidates. Routing threshold: 0.08 (lower because the agent is purpose-built).
+
+```rust
+SkillConfig::load(
+    skills_dir,
+    SkillMode::Constrained(vec!["web-search".to_string()]),
+)?
+```
+
+### How Routing Works
+
+1. On the first `invoke` for a session, the `SkillRouter` scores the user's message against each eligible skill's `id + description` using keyword overlap (what fraction of the message words appear in the target text).
+2. If a skill name appears as a whole word in the message, it wins immediately regardless of threshold.
+3. The highest-scoring skill above threshold binds to the session. All subsequent messages in that session use that skill's instructions and tool allowlist.
+4. If no skill scores above threshold, the agent responds normally with skill summaries visible in the system prompt.
+
+### Explicit Binding
+
+Bypass routing entirely by calling `create_session_with_skill` before the first `invoke`:
+
+```rust
+// Skill "code-review" is active from message 1; router never runs
+let session_id = agent
+    .create_session_with_skill("user", "code-review")
+    .await?;
+
+let reply = agent.invoke("user", session_id, "Review src/main.rs").await?;
+```
+
+### Shadow Pattern
+
+A `user/` skill with the same `name:` field as a `system/` skill **replaces** it in the registry. The agent code is unchanged; only the instructions and tool list differ.
+
+```
+skills/
+  system/web-search/SKILL.md   # name: web-search, version 1.0.0
+  user/web-search/SKILL.md     # name: web-search, version 1.1.0 (overrides system)
+```
+
+The user variant's instructions are active for all routing after `SkillConfig::load`.
+
+### Extend Pattern
+
+A `user/` skill with a **new** name adds capability the system skills do not cover.
+
+```
+skills/
+  system/math-helper/SKILL.md
+  user/travel-advisor/SKILL.md   # new skill — no system counterpart
+```
+
+`travel-advisor` becomes an eligible routing candidate for `SkillMode::Open` agents. If it declares `tools: []`, it runs as pure language generation with no tool access.
+
+### Hot Reload
+
+```rust
+agent.reload_skills().await?;
+```
+
+Reloads `system/` and `user/` from disk. Existing live sessions are unaffected — their bound `SkillContext` was serialized at session creation. New sessions after the reload will route against the updated registry.
+
+### Tool Filtering
+
+The `agentverse.tools` list in SKILL.md is intersected with the tools registered in `ToolRegistry`. Only tools that appear in both lists are active for a bound session. Tools excluded by the skill are invisible to the LLM; the LLM cannot call them even if they are registered.
+
+```
+SKILL.md tools: ["file_search", "shell"]
+Registered:     ["calculator", "file_search", "shell", "web_search"]
+Active:         ["file_search", "shell"]
+```
+
+Tool names must match the `name()` return value of the tool struct exactly (e.g. `"web_search"` not `"WebSearch"`).
 
 ---
 
@@ -664,7 +825,7 @@ docker run -p 3000:3000 \
 
 ## Adding Long-Term Memory
 
-Layer-3 `LongtermMemory` is opt-in. Pass `Some(store)` as the last argument to `Agent::new`; pass `None` to disable it entirely.
+Layer-3 `LongtermMemory` is opt-in. Pass `Some(store)` as the `longterm_memory` argument to `Agent::new`; pass `None` to disable it entirely.
 
 ```rust
 use agentverse::memory::LongtermMemory;
@@ -673,7 +834,7 @@ use std::sync::Arc;
 // Any type implementing LongtermMemory works here
 let longterm: Arc<dyn LongtermMemory> = Arc::new(MyLongtermStore::new().await?);
 
-let agent = Agent::new(runner, tools, prompts, session_memory, strategy, false, Some(longterm));
+let agent = Agent::new(runner, tools, prompts, session_memory, strategy, false, Some(longterm), None);
 ```
 
 On each `invoke` call the agent:
@@ -816,7 +977,8 @@ Strategy completed        iteration=3
 | Crate | Key Types |
 |-------|-----------|
 | `agentverse` | `LlmRunner`, `Config`, `ProviderConfig`, `PromptRegistry`, `RunStrategy`, `Tool`, `ErasedTool`, `ToolCall`, `ToolResult`, `ModelError` |
-| `agentverse-agent` | `Agent`, `AgentError` |
+| `agentverse-agent` | `Agent`, `AgentError`, `SkillConfig`, `SkillMode` |
+| `agentverse-skill` | `SkillRegistry`, `SkillRouter`, `SkillMode`, `SkillConfig`, `Skill`, `SkillContext`, `SkillError` |
 | `agentverse-strategy` | `build()`, `StrategyKind` |
 | `agentverse-session` | `SqliteSessionMemory`, `SessionMemory`, `SessionManager`, `SessionId` |
 | `agentverse-logging` | `init()` |

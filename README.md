@@ -13,6 +13,10 @@ your binary
         │     └── HierarchicalStrategy (avs-plan)
         ├── LlmRunner  (avs-core)
         ├── ToolRegistry  (avs-tools)
+        ├── SkillConfig  (avs-skill, optional)
+        │     ├── SkillRegistry — loaded from skills/system/ and skills/user/
+        │     ├── SkillMode — Open (any skill) or Constrained (allowlist)
+        │     └── SkillRouter — keyword-overlap routing on first invoke
         ├── Memory layers
         │     ├── Layer 1: CacheMemory   — in-process RAM buffer, TTL-evicted
         │     ├── Layer 2: SessionMemory — durable per-user conversation transcript (SQLite/Postgres)
@@ -20,12 +24,13 @@ your binary
         └── HTTP server (avs-agent `http` feature, optional)
 ```
 
-`Agent` is the only way to invoke the LLM. You choose a strategy with `agentverse_strategy::build(StrategyKind::*)` and pass it to `Agent::new`. The agent handles session history, memory assembly, prompt construction, and optional HTTP serving.
+`Agent` is the only way to invoke the LLM. You choose a strategy with `agentverse_strategy::build(StrategyKind::*)` and pass it to `Agent::new`. The agent handles session history, memory assembly, prompt construction, skill routing, and optional HTTP serving.
 
 ## What Is Implemented
 
-- **Agent**: `agentverse-agent::Agent` is the single LLM access point. Composes `LlmRunner`, `StrategyKind`, `SessionManager`, and memory layers.
+- **Agent**: `agentverse-agent::Agent` is the single LLM access point. Composes `LlmRunner`, `StrategyKind`, `SessionManager`, memory layers, and optional skill routing.
 - **Strategies**: ReAct, Plan-and-Execute, Hierarchical planning. Selected at construction via `agentverse-strategy::build`. Strategies are pure `Vec<Message> → String` with no memory coupling.
+- **Skill system**: `agentverse-skill` provides file-based skill discovery, keyword-overlap routing, and per-session skill context. Skills are Markdown files (`SKILL.md`) that declare LLM instructions, tool allowlists, and metadata. Two load slots — `system/` and `user/` — support operator overrides without code changes.
 - **Three-layer memory**: Layer 1 `CacheMemory` (in-process, TTL), Layer 2 `SessionMemory` (durable transcript), Layer 3 `LongtermMemory` (distilled cross-session knowledge, opt-in).
 - **Multi-user sessions**: `Agent` routes through `SessionManager` for durable per-user conversation history with ownership enforcement.
 - **HTTP sidecar**: `Agent::new(..., enable_http_server: true)` spawns an HTTP server as a background task. The agent can run without it; the server cannot run without the agent.
@@ -327,7 +332,8 @@ let registry = Arc::new(PromptRegistry::from_config(&PromptConfig {
 | Crate | Package | Purpose |
 |---|---|---|
 | `avs-core` | `agentverse` | Core config, errors, prompts, model providers, `LlmRunner`, memory and tool traits |
-| `avs-agent` | `agentverse-agent` | Single LLM access point: `Agent` composes `LlmRunner`, strategy, and `SessionManager`; optional HTTP sidecar |
+| `avs-agent` | `agentverse-agent` | Single LLM access point: `Agent` composes `LlmRunner`, strategy, `SessionManager`, and optional `SkillConfig`; optional HTTP sidecar |
+| `avs-skill` | `agentverse-skill` | Skill system: `SKILL.md` parser, `SkillRegistry`, `SkillRouter`, `SkillMode`, `SkillConfig` |
 | `avs-strategy` | `agentverse-strategy` | Strategy factory (`build`, `StrategyKind`) and umbrella re-exports |
 | `avs-session` | `agentverse-session` | Session model, `SessionManager`, `SessionMemory` trait, `SqliteSessionMemory` |
 | `avs-integration` | `agentverse-integration` | Agent-owned connector runtime for console, Slack, GitHub, WhatsApp |
@@ -344,18 +350,102 @@ let registry = Arc::new(PromptRegistry::from_config(&PromptConfig {
 
 ## Examples
 
+The three skill examples form a progression of skill-system concepts:
+
+| Package | Skill mode | Binding | Concept demonstrated |
+|---|---|---|---|
+| `example-hello-agent` | `Open` | Auto-routing | General-purpose REPL; Extend pattern (user/ adds travel-advisor) |
+| `example-web-search-agent` | `Constrained(["web-search"])` | Auto-routing | Constrained routing; Shadow pattern (user/ overrides system web-search) |
+| `example-code-review-agent` | `Open` | Explicit (`create_session_with_skill`) | Explicit binding; tool restriction (file_search + shell only) |
+
+Other examples:
+
 | Package | Description |
 |---|---|
-| `example-hello-agent` | Interactive ReAct REPL with Calculator and DateTime |
 | `example-react-calculator` | ReAct calculator demonstration |
-| `example-web-search-agent` | Plan-and-Execute web search summary |
 | `example-anthropic-react` | Anthropic ReAct agent with prompt-cache usage |
-| `example-code-review-agent` | Hierarchical code-review agent with file and shell tools |
 | `example-slack-hr-assistant` | IntegrationRuntime-backed Slack/console assistant |
 | `example-http-agent` | Agent with `enable_http_server=true`; demonstrates the HTTP sidecar |
 | `example-mcp-demo` | Full MCP round-trip: `McpServer` exposes tools; `McpCatalogSource` discovers them into a second registry; agent uses them transparently |
 
 Run examples with `cargo run -p <package>`.
+
+## Skills
+
+Skills are Markdown files that give an agent focused instructions, a tool allowlist, and metadata — without any code change. Each skill is a directory containing a `SKILL.md` file:
+
+```
+skills/
+  system/
+    math-helper/SKILL.md      # ships with the agent
+    datetime-helper/SKILL.md
+  user/
+    travel-advisor/SKILL.md   # operator-added (Extend pattern)
+```
+
+**`SKILL.md` format:**
+
+```markdown
+---
+name: math-helper
+description: >
+  Performs arithmetic and unit conversions.
+  Use when the user asks to calculate, compute, add, subtract,
+  multiply, or divide numbers.
+version: 1.0.0
+agentverse:
+  tools:
+    - calculator
+---
+
+You are a precise math assistant. Use the calculator tool for all
+arithmetic — never compute in your head. Show your working steps clearly.
+```
+
+The `agentverse.tools` list restricts which registered tools the LLM can call in that session. Tools not listed are invisible to the LLM for that session even if registered on the agent.
+
+**Wiring into `Agent::new`:**
+
+```rust
+use agentverse_agent::{Agent, SkillConfig, SkillMode};
+
+let skills_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/skills");
+let skills = SkillConfig::load(skills_dir, SkillMode::Open)
+    .expect("skills dir not found");
+
+let agent = Agent::new(runner, tools, prompts, session_memory, strategy,
+                       false, None, Some(skills));
+```
+
+**Routing modes:**
+
+| Mode | Behavior |
+|---|---|
+| `SkillMode::Open` | All registered skills are candidates; router scores by keyword overlap against description |
+| `SkillMode::Constrained(ids)` | Only the listed skill IDs are candidates; lower routing threshold (0.08 vs 0.15) |
+
+On first `invoke`, the `SkillRouter` scores the user message against eligible skills. The top match above threshold binds the skill to the session for its lifetime. All subsequent messages in that session use the bound skill's instructions and tool allowlist.
+
+**Explicit binding** (bypasses routing entirely):
+
+```rust
+let session_id = agent
+    .create_session_with_skill("user", "code-review")
+    .await?;
+```
+
+**Shadow and Extend patterns:**
+
+- **Shadow** — a `user/` skill with the same `name:` as a `system/` skill replaces it. Operators can swap instructions without touching code.
+- **Extend** — a `user/` skill with a new name adds capability. If it declares `tools: []`, it runs as pure language generation.
+
+**Hot reload:**
+
+```rust
+agent.reload_skills().await?;
+```
+
+Existing sessions are unaffected; new routing calls pick up the refreshed registry.
 
 ## Development
 
@@ -373,6 +463,7 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for deeper implementation notes.
 AgentVerse/
 |-- avs-core/
 |-- avs-agent/
+|-- avs-skill/
 |-- avs-session/
 |-- avs-strategy/
 |-- avs-integration/
