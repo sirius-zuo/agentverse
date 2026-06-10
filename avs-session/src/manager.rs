@@ -85,4 +85,13 @@ impl SessionManager {
     ) -> Result<Option<String>, SessionMemoryError> {
         self.store.get_skill_context(session_id).await
     }
+
+    pub async fn create_session_with_skill_context(
+        &self,
+        user_id: &str,
+        context_json: &str,
+    ) -> Result<SessionId, SessionMemoryError> {
+        let session = self.store.create_with_skill_context(user_id, context_json).await?;
+        Ok(session.id)
+    }
 }

@@ -499,11 +499,51 @@ impl SessionMemory for SqliteSessionMemory {
             Some(v) => Ok(v),
         }
     }
+
+    async fn create_with_skill_context(
+        &self,
+        user_id: &str,
+        context_json: &str,
+    ) -> Result<Session, SessionMemoryError> {
+        let session = Session::new(user_id);
+        let id = session.id.to_string();
+        let created_at = session.created_at.timestamp();
+        let status = session.status.to_string();
+
+        sqlx::query(
+            "INSERT INTO sessions (id, user_id, status, created_at, updated_at, skill_context_json)
+             VALUES (?, ?, ?, ?, ?, ?)"
+        )
+        .bind(&id)
+        .bind(&session.user_id)
+        .bind(&status)
+        .bind(created_at)
+        .bind(created_at)
+        .bind(context_json)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+
+        Ok(session)
+    }
 }
 
 #[cfg(test)]
 mod skill_context_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn create_with_skill_context_stores_context_atomically() {
+        let store = SqliteSessionMemory::new("sqlite::memory:").await.unwrap();
+        let ctx_json = r#"{"instructions":"atomic","documents":[],"tools":[],"max_iterations":null}"#;
+
+        let session = store.create_with_skill_context("alice", ctx_json).await.unwrap();
+
+        // Context must be set — no second call needed
+        let retrieved = store.get_skill_context(session.id).await.unwrap();
+        assert!(retrieved.is_some());
+        assert!(retrieved.unwrap().contains("atomic"));
+    }
 
     #[tokio::test]
     async fn skill_context_roundtrips() {

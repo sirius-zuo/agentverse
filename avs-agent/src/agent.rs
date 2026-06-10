@@ -310,11 +310,10 @@ impl Agent {
         })?;
         let ctx = registry.compile_context(skill_id)?;
         let ctx_json = serde_json::to_string(&ctx)?;
-        let session_id = self.sessions.create_session(user_id).await?;
-        self.sessions
-            .set_skill_context(session_id, Some(&ctx_json))
-            .await?;
-        Ok(session_id)
+        Ok(self
+            .sessions
+            .create_session_with_skill_context(user_id, &ctx_json)
+            .await?)
     }
 
     pub async fn get_session(
