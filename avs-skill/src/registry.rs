@@ -1,9 +1,9 @@
 use crate::error::SkillError;
+use crate::mode::SkillMode;
 use crate::parser::parse_skill_file;
 use crate::types::{Skill, SkillContext, SkillId};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 pub struct SkillRegistry {
     /// name → (skill, package_directory)
@@ -13,7 +13,7 @@ pub struct SkillRegistry {
 impl SkillRegistry {
     /// Load skills from `<skills_dir>/system/` then `<skills_dir>/user/`.
     /// User skills shadow system skills with the same `name`.
-    pub fn load(skills_dir: &Path) -> Result<Arc<Self>, SkillError> {
+    pub fn load(skills_dir: &Path) -> Result<Self, SkillError> {
         let mut skills: HashMap<SkillId, (Skill, PathBuf)> = HashMap::new();
 
         let system_dir = skills_dir.join("system");
@@ -27,11 +27,22 @@ impl SkillRegistry {
             load_dir(&user_dir, &mut skills)?;
         }
 
-        Ok(Arc::new(Self { skills }))
+        Ok(Self { skills })
     }
 
     pub fn get(&self, id: &str) -> Option<&Skill> {
         self.skills.get(id).map(|(s, _)| s)
+    }
+
+    /// Return skills eligible for routing under the given mode.
+    pub fn eligible(&self, mode: &SkillMode) -> Vec<&Skill> {
+        match mode {
+            SkillMode::Open => self.skills.values().map(|(s, _)| s).collect(),
+            SkillMode::Constrained(ids) => ids
+                .iter()
+                .filter_map(|id| self.skills.get(id).map(|(s, _)| s))
+                .collect(),
+        }
     }
 
     /// Compile a `SkillContext` for the given skill id.
@@ -182,5 +193,53 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let reg = SkillRegistry::load(dir.path()).unwrap();
         assert!(reg.get("anything").is_none());
+    }
+
+    #[test]
+    fn load_returns_self_not_arc() {
+        let dir = tempfile::tempdir().unwrap();
+        make_skill_pkg(dir.path(), "system", "review", &[], "Review.");
+        // If this compiles and runs, load returns Self (not Arc<Self>)
+        let reg: SkillRegistry = SkillRegistry::load(dir.path()).unwrap();
+        assert!(reg.get("review").is_some());
+    }
+
+    #[test]
+    fn eligible_open_returns_all_skills() {
+        use crate::mode::SkillMode;
+        let dir = tempfile::tempdir().unwrap();
+        make_skill_pkg(dir.path(), "system", "skill-a", &[], "A.");
+        make_skill_pkg(dir.path(), "system", "skill-b", &[], "B.");
+        let reg = SkillRegistry::load(dir.path()).unwrap();
+        let eligible = reg.eligible(&SkillMode::Open);
+        assert_eq!(eligible.len(), 2);
+    }
+
+    #[test]
+    fn eligible_constrained_filters_to_listed_ids() {
+        use crate::mode::SkillMode;
+        let dir = tempfile::tempdir().unwrap();
+        make_skill_pkg(dir.path(), "system", "skill-a", &[], "A.");
+        make_skill_pkg(dir.path(), "system", "skill-b", &[], "B.");
+        make_skill_pkg(dir.path(), "system", "skill-c", &[], "C.");
+        let reg = SkillRegistry::load(dir.path()).unwrap();
+        let mode = SkillMode::Constrained(vec!["skill-a".into(), "skill-c".into()]);
+        let eligible = reg.eligible(&mode);
+        let ids: Vec<&str> = eligible.iter().map(|s| s.id.as_str()).collect();
+        assert!(ids.contains(&"skill-a"));
+        assert!(ids.contains(&"skill-c"));
+        assert!(!ids.contains(&"skill-b"));
+    }
+
+    #[test]
+    fn eligible_constrained_with_unknown_id_skips_silently() {
+        use crate::mode::SkillMode;
+        let dir = tempfile::tempdir().unwrap();
+        make_skill_pkg(dir.path(), "system", "skill-a", &[], "A.");
+        let reg = SkillRegistry::load(dir.path()).unwrap();
+        let mode = SkillMode::Constrained(vec!["skill-a".into(), "nonexistent".into()]);
+        let eligible = reg.eligible(&mode);
+        assert_eq!(eligible.len(), 1);
+        assert_eq!(eligible[0].id, "skill-a");
     }
 }
