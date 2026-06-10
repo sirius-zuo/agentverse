@@ -69,22 +69,40 @@ pub fn parse_skill_file(path: &Path, content: &str) -> Result<Skill, SkillError>
 }
 
 /// Split `content` into (frontmatter_src, body).
-/// Returns ("", content) if no `---` delimiters are found.
+/// Returns ("", content) if no valid `---` delimiters are found.
+/// The opening delimiter must be "---" alone on the first line (followed by \n).
+/// The closing delimiter is the next line that is exactly "---" (optional trailing whitespace).
 fn split_frontmatter(content: &str) -> (&str, &str) {
     let content = content.trim_start_matches('\n');
-    if !content.starts_with("---") {
+    // Opening --- must be exactly "---" followed by a newline, not "----" or "---yaml"
+    if !content.starts_with("---\n") {
         return ("", content);
     }
-    // Skip the opening ---
-    let after_open = &content[3..];
-    // Find the closing --- (must be on its own line)
-    if let Some(close_pos) = after_open.find("\n---") {
-        let frontmatter = after_open[..close_pos].trim_start_matches('\n');
-        let after_close = &after_open[close_pos + 4..]; // skip \n---
-        let body = after_close.strip_prefix('\n').unwrap_or(after_close);
-        (frontmatter, body)
-    } else {
-        ("", content)
+    let after_open = &content[4..]; // skip "---\n"
+    // Scan for the closing "---" that is alone on its line.
+    // We look for "\n---" where the remainder of that line is only whitespace.
+    let mut pos = 0;
+    loop {
+        match after_open[pos..].find("\n---") {
+            None => return ("", content),
+            Some(rel) => {
+                let abs = pos + rel;
+                let rest = &after_open[abs + 4..]; // text right after "\n---"
+                let line_end = rest.find('\n').unwrap_or(rest.len());
+                if rest[..line_end].trim().is_empty() {
+                    // Valid closing delimiter found
+                    let frontmatter = after_open[..abs].trim_start_matches('\n');
+                    let body = if line_end < rest.len() {
+                        &rest[line_end + 1..]
+                    } else {
+                        ""
+                    };
+                    return (frontmatter, body);
+                }
+                // Not a standalone "---" line — skip past it and keep searching
+                pos = abs + 1;
+            }
+        }
     }
 }
 
@@ -160,5 +178,21 @@ You are an architect.
         let content = "---\nversion: 1.0.0\n---\nBody.";
         let err = parse_skill_file(&dummy_path(), content).unwrap_err();
         assert!(matches!(err, SkillError::Parse { .. }));
+    }
+
+    #[test]
+    fn four_dashes_is_not_valid_frontmatter() {
+        // "----\n" starts with "---" but is not a real delimiter
+        let content = "----\nname: foo\ndescription: d\n---\nbody";
+        let err = parse_skill_file(&dummy_path(), content).unwrap_err();
+        assert!(matches!(err, SkillError::Parse { .. }));
+    }
+
+    #[test]
+    fn body_horizontal_rule_does_not_truncate_instructions() {
+        let content = "---\nname: foo\ndescription: d\n---\n\nFirst paragraph.\n\n---\n\nSecond paragraph.\n";
+        let skill = parse_skill_file(&dummy_path(), content).unwrap();
+        assert!(skill.instructions.contains("First paragraph."), "missing first para");
+        assert!(skill.instructions.contains("Second paragraph."), "missing second para");
     }
 }
