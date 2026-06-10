@@ -104,6 +104,7 @@ impl SubAgentExecutor {
 
     /// Register a `SubAgentTool` into `registry` so the LLM can invoke subagents via tool calls.
     pub fn register_tool(executor: &Arc<Self>, registry: &Arc<ToolRegistry>) {
+        // depth=0: tools registered at the agent root always spawn top-level subagents
         registry.register(crate::tool::SubAgentTool::new(Arc::clone(executor), 0));
     }
 }
