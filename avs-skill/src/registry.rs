@@ -45,6 +45,11 @@ impl SkillRegistry {
         }
     }
 
+    /// Return the filesystem directory for the given skill package, if loaded.
+    pub fn skill_dir(&self, id: &str) -> Option<&std::path::Path> {
+        self.skills.get(id).map(|(_, dir)| dir.as_path())
+    }
+
     /// Compile a `SkillContext` for the given skill id.
     /// Documents were loaded eagerly at registry creation; this clones them.
     pub fn compile_context(&self, id: &str) -> Result<SkillContext, SkillError> {
@@ -250,5 +255,21 @@ mod tests {
         let eligible = reg.eligible(&mode);
         assert_eq!(eligible.len(), 1);
         assert_eq!(eligible[0].id, "skill-a");
+    }
+
+    #[test]
+    fn skill_dir_returns_path_for_known_skill() {
+        let dir = tempfile::tempdir().unwrap();
+        make_skill_pkg(dir.path(), "system", "my-skill", &[], "Do things.");
+        let reg = SkillRegistry::load(dir.path()).unwrap();
+        let skill_dir = reg.skill_dir("my-skill").unwrap();
+        assert!(skill_dir.ends_with("my-skill"));
+    }
+
+    #[test]
+    fn skill_dir_returns_none_for_unknown_skill() {
+        let dir = tempfile::tempdir().unwrap();
+        let reg = SkillRegistry::load(dir.path()).unwrap();
+        assert!(reg.skill_dir("nonexistent").is_none());
     }
 }
