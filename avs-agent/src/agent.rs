@@ -24,14 +24,19 @@ pub struct SkillConfig {
     pub routing_threshold: Option<f32>,
     /// Precomputed summaries block for the discovery phase; rebuilt on `reload_skills`.
     summaries: std::sync::Mutex<String>,
+    /// Sorted eligible skill IDs; precomputed at load and rebuilt on `reload_skills`.
+    pub ids: std::sync::Mutex<Vec<String>>,
 }
 
 impl SkillConfig {
     pub fn load(dir: impl AsRef<std::path::Path>, mode: SkillMode) -> Result<Self, SkillError> {
         let registry = SkillRegistry::load(dir.as_ref())?;
-        let summaries = {
+        let (summaries, ids) = {
             let candidates = registry.eligible(&mode);
-            format_skill_summaries(&candidates)
+            let summaries = format_skill_summaries(&candidates);
+            let mut ids: Vec<String> = candidates.iter().map(|s| s.id.clone()).collect();
+            ids.sort();
+            (summaries, ids)
         };
         Ok(Self {
             registry: Arc::new(RwLock::new(registry)),
@@ -39,6 +44,7 @@ impl SkillConfig {
             dir: dir.as_ref().to_path_buf(),
             routing_threshold: None,
             summaries: std::sync::Mutex::new(summaries),
+            ids: std::sync::Mutex::new(ids),
         })
     }
 
@@ -447,13 +453,17 @@ impl Agent {
             .await
             .unwrap_or_else(|e| Err(SkillError::Io(std::io::Error::other(e))))
             .map_err(AgentError::Skill)?;
-        // Rebuild summaries while we still have owned access to new_registry.
-        let new_summaries = {
+        // Rebuild summaries and ids while we still have owned access to new_registry.
+        let (new_summaries, new_ids) = {
             let candidates = new_registry.eligible(&skills.mode);
-            format_skill_summaries(&candidates)
+            let summaries = format_skill_summaries(&candidates);
+            let mut ids: Vec<String> = candidates.iter().map(|s| s.id.clone()).collect();
+            ids.sort();
+            (summaries, ids)
         };
         *skills.registry.write().await = new_registry;
         *skills.summaries.lock().unwrap() = new_summaries;
+        *skills.ids.lock().unwrap() = new_ids;
         tracing::info!(dir = ?skills.dir, "skill registry reloaded");
         Ok(())
     }

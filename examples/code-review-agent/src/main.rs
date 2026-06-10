@@ -141,8 +141,12 @@ async fn main() {
 
         let input = match lines.next_line().await {
             Ok(Some(line)) => line,
-            _ => {
+            Ok(None) => {
                 println!("\nGoodbye!");
+                break;
+            }
+            Err(e) => {
+                eprintln!("Error reading input: {e}");
                 break;
             }
         };

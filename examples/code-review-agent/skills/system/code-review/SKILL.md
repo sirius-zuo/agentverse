@@ -11,7 +11,6 @@ agentverse:
   tools:
     - file_search
     - shell
-  max_iterations: 10
 ---
 
 # Code Review

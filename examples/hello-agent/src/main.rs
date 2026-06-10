@@ -79,19 +79,7 @@ async fn main() {
     let skills = SkillConfig::load(skills_dir, SkillMode::Open)
         .expect("failed to load skills — check examples/hello-agent/skills/");
 
-    // Read skill names before moving `skills` into the agent.
-    // Lock scope is tight: names are cloned, then the read guard drops.
-    let skill_names: Vec<String> = {
-        let reg = skills.registry.read().await;
-        let mut names: Vec<String> = reg
-            .eligible(&SkillMode::Open)
-            .iter()
-            .map(|s| s.id.clone())
-            .collect();
-        names.sort();
-        names
-    };
-    println!("Skills loaded: {}", skill_names.join(", "));
+    println!("Skills loaded: {}", skills.ids.lock().unwrap().join(", "));
     println!("Type your question and press Enter. Type \"exit\" or press Ctrl+C to quit.\n");
 
     let strategy = build(
@@ -128,8 +116,12 @@ async fn main() {
 
         let input = match lines.next_line().await {
             Ok(Some(line)) => line,
-            _ => {
+            Ok(None) => {
                 println!("\nGoodbye!");
+                break;
+            }
+            Err(e) => {
+                eprintln!("Error reading input: {e}");
                 break;
             }
         };
