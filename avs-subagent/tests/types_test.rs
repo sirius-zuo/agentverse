@@ -17,15 +17,11 @@ fn budget_round_trips_through_json() {
 
 #[test]
 fn subagent_spec_defaults_model_to_none() {
-    let spec = SubAgentSpec {
-        name: "test".into(),
-        objective: "do thing".into(),
-        system_prompt: None,
-        model: None,
-        allowed_tools: vec![],
-        budget: Budget { max_steps: 5, max_tokens: 1000, timeout: Duration::from_secs(30) },
-    };
+    // Verify optional fields default to None when absent from JSON
+    let json = r#"{"name":"test","objective":"do thing","allowed_tools":[],"budget":{"max_steps":5,"max_tokens":1000,"timeout":30}}"#;
+    let spec: SubAgentSpec = serde_json::from_str(json).unwrap();
     assert!(spec.model.is_none());
+    assert!(spec.system_prompt.is_none());
     assert!(spec.allowed_tools.is_empty());
 }
 
@@ -39,6 +35,10 @@ fn model_override_alias_and_id_round_trip() {
     let id2: ModelOverride    = serde_json::from_str(&j2).unwrap();
     assert!(matches!(alias2, ModelOverride::Alias(_)));
     assert!(matches!(id2,    ModelOverride::Id(_)));
+    let ModelOverride::Alias(alias_str) = alias2 else { panic!("expected Alias") };
+    assert_eq!(alias_str, "haiku");
+    let ModelOverride::Id(id_str) = id2 else { panic!("expected Id") };
+    assert_eq!(id_str, "claude-haiku-4-5-20251001");
 }
 
 #[test]
