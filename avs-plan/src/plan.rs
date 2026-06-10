@@ -59,6 +59,15 @@ impl PlanStrategy {
 #[async_trait::async_trait]
 impl agentverse::RunStrategy for PlanStrategy {
     async fn run(&self, messages: Vec<Message>) -> Result<String, AgentError> {
+        let all_names = self.tools.tool_names();
+        self.run_with_active_tools(messages, &all_names).await
+    }
+
+    async fn run_with_active_tools(
+        &self,
+        messages: Vec<Message>,
+        active_tool_names: &[String],
+    ) -> Result<String, AgentError> {
         let input = messages
             .iter()
             .rev()
@@ -66,7 +75,7 @@ impl agentverse::RunStrategy for PlanStrategy {
             .map(|m| m.content.clone())
             .unwrap_or_default();
 
-        let tool_summaries = self.tools.tool_summaries();
+        let tool_summaries = self.tools.tool_summaries_for(active_tool_names);
 
         let conversation = messages
             .iter()
@@ -99,10 +108,14 @@ impl agentverse::RunStrategy for PlanStrategy {
             }
 
             let result = if let Some(ref tool_name) = step.tool {
-                let args = step.args.clone().unwrap_or_default();
-                match self.execute_tool(tool_name, args).await {
-                    Ok(r) => r,
-                    Err(e) => format!("Tool error: {}", e),
+                if !active_tool_names.is_empty() && !active_tool_names.contains(tool_name) {
+                    format!("Tool '{}' is not available for this session", tool_name)
+                } else {
+                    let args = step.args.clone().unwrap_or_default();
+                    match self.execute_tool(tool_name, args).await {
+                        Ok(r) => r,
+                        Err(e) => format!("Tool error: {}", e),
+                    }
                 }
             } else {
                 format!("Reasoning: {}", step.description)

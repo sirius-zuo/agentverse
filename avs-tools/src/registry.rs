@@ -254,4 +254,63 @@ impl ToolRegistry {
         entries.sort();
         entries.join("\n")
     }
+
+    /// Human-readable tool summary for a named subset of tools.
+    /// Returns "none (reasoning only)" if `names` is empty or no named tools are registered.
+    pub fn tool_summaries_for(&self, names: &[String]) -> String {
+        if names.is_empty() {
+            return "none (reasoning only)".to_string();
+        }
+        let tools = self.tools.read().unwrap();
+        let mut entries: Vec<String> = tools
+            .iter()
+            .filter(|(name, _)| names.contains(name))
+            .map(|(_, (t, _))| {
+                let schema = t.schema();
+                let props = schema["input_schema"]["properties"].as_object();
+                let required: Vec<&str> = schema["input_schema"]["required"]
+                    .as_array()
+                    .map(|r| r.iter().filter_map(|v| v.as_str()).collect())
+                    .unwrap_or_default();
+                let args_hint = if let Some(props) = props {
+                    let fields: Vec<String> = required
+                        .iter()
+                        .filter_map(|k| {
+                            props.get(*k).map(|v| {
+                                let desc =
+                                    v.get("description").and_then(|d| d.as_str()).unwrap_or("");
+                                format!("\"{k}: \"{desc}\"")
+                            })
+                        })
+                        .collect();
+                    format!("{{{}}}", fields.join(", "))
+                } else {
+                    "{}".to_string()
+                };
+                format!("- {}: {}\n  args: {}", t.name(), t.description(), args_hint)
+            })
+            .collect();
+        if entries.is_empty() {
+            return "none (reasoning only)".to_string();
+        }
+        entries.sort();
+        entries.join("\n")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_summaries_for_empty_names_returns_none_string() {
+        let reg = ToolRegistry::new();
+        assert_eq!(reg.tool_summaries_for(&[]), "none (reasoning only)");
+    }
+
+    #[test]
+    fn tool_summaries_for_unknown_names_returns_none_string() {
+        let reg = ToolRegistry::new();
+        assert_eq!(reg.tool_summaries_for(&["ghost".to_string()]), "none (reasoning only)");
+    }
 }

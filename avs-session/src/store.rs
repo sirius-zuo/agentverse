@@ -74,4 +74,17 @@ pub trait SessionMemory: Send + Sync {
     ) -> Result<Option<String>, SessionMemoryError> {
         Ok(None)
     }
+
+    /// Create a session with skill context in a single operation.
+    /// The default implementation is a two-step create + set; backends should
+    /// override this with a single atomic INSERT to prevent orphaned sessions.
+    async fn create_with_skill_context(
+        &self,
+        user_id: &str,
+        context_json: &str,
+    ) -> Result<Session, SessionMemoryError> {
+        let session = self.create(user_id).await?;
+        self.set_skill_context(session.id, Some(context_json)).await?;
+        Ok(session)
+    }
 }

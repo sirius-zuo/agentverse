@@ -125,6 +125,23 @@ impl PostgresSessionMemory {
             .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
         }
 
+        // Skill context column (added by skill-system plan)
+        let has_skill_ctx: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)
+             FROM information_schema.columns
+             WHERE table_name = 'sessions' AND column_name = 'skill_context_json'",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+
+        if has_skill_ctx == 0 {
+            sqlx::query("ALTER TABLE sessions ADD COLUMN skill_context_json TEXT")
+                .execute(&self.pool)
+                .await
+                .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+        }
+
         Ok(())
     }
 }
@@ -435,5 +452,70 @@ impl SessionMemory for PostgresSessionMemory {
                 })
             })
             .collect::<Result<Vec<_>, _>>()
+    }
+
+    async fn set_skill_context(
+        &self,
+        session_id: SessionId,
+        context_json: Option<&str>,
+    ) -> Result<(), SessionMemoryError> {
+        let result = sqlx::query(
+            "UPDATE sessions SET skill_context_json = $1 WHERE id = $2"
+        )
+        .bind(context_json)
+        .bind(session_id.to_string())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+
+        if result.rows_affected() == 0 {
+            return Err(SessionMemoryError::NotFound(session_id));
+        }
+        Ok(())
+    }
+
+    async fn get_skill_context(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Option<String>, SessionMemoryError> {
+        let row: Option<Option<String>> = sqlx::query_scalar(
+            "SELECT skill_context_json FROM sessions WHERE id = $1"
+        )
+        .bind(session_id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+
+        match row {
+            None => Err(SessionMemoryError::NotFound(session_id)),
+            Some(v) => Ok(v),
+        }
+    }
+
+    async fn create_with_skill_context(
+        &self,
+        user_id: &str,
+        context_json: &str,
+    ) -> Result<Session, SessionMemoryError> {
+        let session = Session::new(user_id);
+        let id = session.id.to_string();
+        let created_at = session.created_at.timestamp();
+        let status = session.status.to_string();
+
+        sqlx::query(
+            "INSERT INTO sessions (id, user_id, status, created_at, updated_at, skill_context_json)
+             VALUES ($1, $2, $3, $4, $5, $6)"
+        )
+        .bind(&id)
+        .bind(&session.user_id)
+        .bind(&status)
+        .bind(created_at)
+        .bind(created_at)
+        .bind(context_json)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+
+        Ok(session)
     }
 }

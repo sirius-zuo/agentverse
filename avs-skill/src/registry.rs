@@ -35,18 +35,16 @@ impl SkillRegistry {
     }
 
     /// Compile a `SkillContext` for the given skill id.
-    /// Loads supporting files from the skill's package directory.
+    /// Documents were loaded eagerly at registry creation; this clones them.
     pub fn compile_context(&self, id: &str) -> Result<SkillContext, SkillError> {
-        let (skill, pkg_dir) = self
+        let (skill, _pkg_dir) = self
             .skills
             .get(id)
             .ok_or_else(|| SkillError::NotFound(id.to_string()))?;
 
-        let documents = collect_supporting_files(pkg_dir)?;
-
         Ok(SkillContext {
             instructions: skill.instructions.clone(),
-            documents,
+            documents: skill.documents.clone(),
             tools: skill.tools.clone(),
             max_iterations: skill.max_iterations,
         })
