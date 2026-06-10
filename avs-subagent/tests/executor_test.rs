@@ -209,3 +209,48 @@ async fn spawn_returns_handle_and_result_is_available() {
     let result = handle.await_result().await.unwrap();
     assert_eq!(result.answer, "The answer is 3.");
 }
+
+#[test]
+fn subagent_tool_name_and_schema() {
+    use agentverse::ErasedTool;
+    use std::sync::Arc;
+
+    let server = MockServer::start();
+    let executor = Arc::new(make_executor(&server.base_url()));
+    let tool = SubAgentTool::new(executor, 0);
+    let erased: &dyn ErasedTool = &tool;
+
+    assert_eq!(erased.name(), "spawn_subagent");
+    let schema = erased.schema();
+    assert_eq!(schema["name"].as_str().unwrap(), "spawn_subagent");
+    assert!(schema["input_schema"]["properties"].is_object());
+}
+
+#[tokio::test]
+async fn subagent_tool_execute_calls_executor_and_returns_answer() {
+    use agentverse::ErasedTool;
+    use std::sync::Arc;
+
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method("POST").path("/v1/messages");
+        then.status(200).json_body(anthropic_answer_body("tool answer"));
+    });
+
+    let executor = Arc::new(make_executor(&server.base_url()));
+    let tool = SubAgentTool::new(executor, 0);
+    let erased: &dyn ErasedTool = &tool;
+
+    let args = serde_json::json!({
+        "name": "my-worker",
+        "objective": "do the thing",
+        "allowed_tools": [],
+        "resources": [],
+        "max_steps": 3,
+        "max_tokens": 5000,
+        "timeout_secs": 10
+    });
+
+    let result = erased.execute_raw(args).await.unwrap();
+    assert_eq!(result.as_str().unwrap(), "tool answer");
+}
