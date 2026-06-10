@@ -125,7 +125,10 @@ async fn run_enforces_token_budget() {
 async fn run_injects_resources_into_message() {
     let server = MockServer::start();
     server.mock(|when, then| {
-        when.method("POST").path("/v1/messages");
+        when.method("POST")
+            .path("/v1/messages")
+            .body_contains("important content here")
+            .body_contains("notes.md");
         then.status(200).json_body(anthropic_answer_body("done"));
     });
 
