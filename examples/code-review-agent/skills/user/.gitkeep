@@ -1,0 +1,5 @@
+# Drop project-specific code-review rules here.
+#
+# Example: create skills/user/code-review/SKILL.md with the same
+# name: code-review — it will shadow the system skill and add your
+# team's style guide or project conventions.

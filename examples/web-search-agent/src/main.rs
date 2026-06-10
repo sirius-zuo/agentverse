@@ -1,7 +1,14 @@
 // examples/web-search-agent/src/main.rs
 //
-// Plan-and-Execute agent: search a topic on DuckDuckGo, fetch the top N pages,
-// and produce a summarized answer with sources.
+// Web-search agent constrained to a single skill (SkillMode::Constrained).
+//
+// Demonstrates two skill-system patterns:
+//   Constrained routing: only the "web-search" skill is eligible regardless
+//     of what other skills may be present in skills/.
+//   Shadow pattern: skills/user/web-search/ has the same `name: web-search`
+//     as skills/system/web-search/ — the user variant loads second and
+//     silently overrides the system variant, applying stricter citation rules
+//     with no code change.
 //
 // Run:
 //   MODEL_BASE_URL=http://localhost:9090/v1 \
@@ -9,7 +16,7 @@
 //   cargo run -p example-web-search-agent -- "rust async programming" 3
 
 use agentverse::{Config, LlmRunner, PromptConfig, PromptRegistry, ProviderConfig};
-use agentverse_agent::Agent;
+use agentverse_agent::{Agent, SkillConfig, SkillMode};
 use agentverse_logging as avs_logging;
 use agentverse_session::SqliteSessionMemory;
 use agentverse_strategy::{build, StrategyKind};
@@ -59,9 +66,8 @@ async fn main() {
         .expect("runner"),
     );
 
-    let tool_registry = ToolRegistry::new();
-    tool_registry.register(WebSearch);
-    let tools = tool_registry;
+    let tools = ToolRegistry::new();
+    tools.register(WebSearch);
 
     let prompts = Arc::new(
         PromptRegistry::from_config(&PromptConfig {
@@ -70,6 +76,15 @@ async fn main() {
         })
         .expect("prompts"),
     );
+
+    let skills_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/skills");
+    // Constrained to "web-search" only. The user/ variant shadows system/ —
+    // stricter footnote citation rules activate with no code change.
+    let skills = SkillConfig::load(
+        skills_dir,
+        SkillMode::Constrained(vec!["web-search".to_string()]),
+    )
+    .expect("failed to load skills — check examples/web-search-agent/skills/");
 
     let strategy = build(
         StrategyKind::Plan,
@@ -92,7 +107,7 @@ async fn main() {
         strategy,
         false,
         None,
-        None,
+        Some(skills),
     );
 
     let question = format!(
@@ -101,7 +116,8 @@ async fn main() {
     );
     println!("> {}", question);
 
-    match agent.invoke_stateless(&question).await {
+    let session_id = agent.create_session("user").await.expect("session");
+    match agent.invoke("user", session_id, &question).await {
         Ok(answer) => println!("\nAgent: {}", answer),
         Err(e) => eprintln!("Error: {}", e),
     }
