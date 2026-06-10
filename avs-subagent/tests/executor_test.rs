@@ -188,7 +188,7 @@ async fn run_many_collects_all_results_on_failure() {
 
     assert_eq!(results.len(), 3);
     for result in results {
-        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), SubAgentError::Llm(_)));
     }
 }
 
