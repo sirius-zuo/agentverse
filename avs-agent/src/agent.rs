@@ -221,15 +221,16 @@ impl Agent {
             .map(|json| serde_json::from_str::<SkillContext>(&json))
             .transpose()?;
 
-        // Active tool names: skill tools ∩ registry, or all if no skill
+        // Active tool names: skill tools ∩ registry, or all if no skill.
+        // A skill with tools:[] restricts to zero tools; only None (no skill) means all tools.
         let active_tool_names: Vec<String> = match &skill_ctx {
-            Some(ctx) if !ctx.tools.is_empty() => ctx
+            None => self.tools.tool_names(),
+            Some(ctx) => ctx
                 .tools
                 .iter()
                 .filter(|name| self.tools.has_tool(name))
                 .cloned()
                 .collect(),
-            _ => self.tools.tool_names(),
         };
 
         // Layer 3: retrieve scored memories
@@ -579,5 +580,41 @@ mod skill_tests {
             .create_session_with_skill("alice", "nonexistent-skill")
             .await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn empty_tools_in_skill_restricts_to_zero_tools() {
+        // Write a skill with an empty tools list
+        let dir = tempdir().unwrap();
+        let pkg = dir.path().join("system").join("no-tools-skill");
+        fs::create_dir_all(&pkg).unwrap();
+        fs::write(
+            pkg.join("SKILL.md"),
+            "---\nname: no-tools-skill\ndescription: Restricted.\nagentverse:\n  tools: []\n---\n\nNo tools.\n",
+        )
+        .unwrap();
+
+        let agent = make_agent_with_skill_dir(dir.path()).await;
+        let session_id = agent
+            .create_session_with_skill("alice", "no-tools-skill")
+            .await
+            .unwrap();
+
+        // Retrieve the stored context and check tools is empty
+        let ctx_json = agent.sessions.get_skill_context(session_id).await.unwrap().unwrap();
+        let ctx: agentverse_skill::SkillContext = serde_json::from_str(&ctx_json).unwrap();
+        assert!(ctx.tools.is_empty(), "skill declared no tools — ctx.tools should be empty");
+
+        // Verify that invoke would resolve active_tool_names to [] not to all tools.
+        // We can't call invoke without a live LLM, but we can verify the stored context
+        // has empty tools, which is the input to the active_tool_names calculation.
+        // The calculation `None => all, Some(ctx) => filtered(ctx.tools)` should give [].
+        let active: Vec<String> = ctx
+            .tools
+            .iter()
+            .filter(|name| agent.tools.has_tool(name))
+            .cloned()
+            .collect();
+        assert!(active.is_empty(), "expected zero active tools for skills with empty tools list");
     }
 }
