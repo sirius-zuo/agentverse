@@ -28,25 +28,30 @@ fn subagent_spec_defaults_model_to_none() {
 #[test]
 fn model_override_alias_and_id_round_trip() {
     let alias = ModelOverride::Alias("haiku".into());
-    let id    = ModelOverride::Id("claude-haiku-4-5-20251001".into());
+    let id = ModelOverride::Id("claude-haiku-4-5-20251001".into());
     let j1 = serde_json::to_string(&alias).unwrap();
     let j2 = serde_json::to_string(&id).unwrap();
     let alias2: ModelOverride = serde_json::from_str(&j1).unwrap();
-    let id2: ModelOverride    = serde_json::from_str(&j2).unwrap();
+    let id2: ModelOverride = serde_json::from_str(&j2).unwrap();
     assert!(matches!(alias2, ModelOverride::Alias(_)));
-    assert!(matches!(id2,    ModelOverride::Id(_)));
-    let ModelOverride::Alias(alias_str) = alias2 else { panic!("expected Alias") };
+    assert!(matches!(id2, ModelOverride::Id(_)));
+    let ModelOverride::Alias(alias_str) = alias2 else {
+        panic!("expected Alias")
+    };
     assert_eq!(alias_str, "haiku");
-    let ModelOverride::Id(id_str) = id2 else { panic!("expected Id") };
+    let ModelOverride::Id(id_str) = id2 else {
+        panic!("expected Id")
+    };
     assert_eq!(id_str, "claude-haiku-4-5-20251001");
 }
 
 #[test]
 fn subagent_context_resources_accessible() {
     let ctx = SubAgentContext {
-        resources: vec![
-            ResourceContent { label: "main.rs".into(), content: "fn main() {}".into() },
-        ],
+        resources: vec![ResourceContent {
+            label: "main.rs".into(),
+            content: "fn main() {}".into(),
+        }],
         depth: 0,
     };
     assert_eq!(ctx.resources[0].label, "main.rs");
@@ -57,7 +62,11 @@ fn subagent_context_resources_accessible() {
 fn subagent_result_fields() {
     let r = SubAgentResult {
         answer: "done".into(),
-        usage: agentverse::UsageStats { input_tokens: 10, output_tokens: 5, ..Default::default() },
+        usage: agentverse::UsageStats {
+            input_tokens: 10,
+            output_tokens: 5,
+            ..Default::default()
+        },
         steps: 3,
     };
     assert_eq!(r.answer, "done");
@@ -79,7 +88,10 @@ fn subagent_error_display_step_budget() {
 
 #[test]
 fn subagent_error_display_token_budget() {
-    let e = SubAgentError::TokenBudgetExceeded { used: 5001, limit: 5000 };
+    let e = SubAgentError::TokenBudgetExceeded {
+        used: 5001,
+        limit: 5000,
+    };
     assert!(e.to_string().contains("5001"));
 }
 

@@ -357,7 +357,8 @@ mod tests {
     fn filter_by_names_never_includes_spawn_subagent() {
         let reg = ToolRegistry::new();
         // Even if explicitly listed, spawn_subagent is excluded
-        let filtered = reg.filter_by_names(&["spawn_subagent".to_string(), "find_tools".to_string()]);
+        let filtered =
+            reg.filter_by_names(&["spawn_subagent".to_string(), "find_tools".to_string()]);
         assert!(!filtered.has_tool("spawn_subagent"));
     }
 

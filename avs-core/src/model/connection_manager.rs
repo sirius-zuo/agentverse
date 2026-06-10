@@ -166,8 +166,8 @@ impl ConnectionManager {
     pub fn with_model(&self, model_name: &str) -> Self {
         let provider: Box<dyn ModelProvider> = match self.provider.name() {
             "anthropic" => Box::new(AnthropicProvider::new()),
-            "gemini"    => Box::new(GeminiProvider::new()),
-            "openai"    => Box::new(OpenAICompatible::new()),
+            "gemini" => Box::new(GeminiProvider::new()),
+            "openai" => Box::new(OpenAICompatible::new()),
             other => panic!("with_model: unknown provider name {:?}", other),
         };
         Self {

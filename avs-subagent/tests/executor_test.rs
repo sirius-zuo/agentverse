@@ -234,7 +234,8 @@ async fn subagent_tool_execute_calls_executor_and_returns_answer() {
     let server = MockServer::start();
     server.mock(|when, then| {
         when.method("POST").path("/v1/messages");
-        then.status(200).json_body(anthropic_answer_body("tool answer"));
+        then.status(200)
+            .json_body(anthropic_answer_body("tool answer"));
     });
 
     let executor = Arc::new(make_executor(&server.base_url()));

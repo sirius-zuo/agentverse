@@ -243,11 +243,8 @@ fn test_provider_config_serialization() {
 #[test]
 fn connection_manager_with_model_uses_new_model_name() {
     use agentverse::memory::{Message, MessageRole};
-    let cm = ConnectionManager::anthropic(
-        "https://api.anthropic.com",
-        "claude-sonnet-4-6",
-        "test-key",
-    );
+    let cm =
+        ConnectionManager::anthropic("https://api.anthropic.com", "claude-sonnet-4-6", "test-key");
     let overridden = cm.with_model("claude-haiku-4-5-20251001");
     let req = agentverse::GenerateRequest {
         system: None,
@@ -257,20 +254,14 @@ fn connection_manager_with_model_uses_new_model_name() {
         }],
         tools: None,
     };
-    let body = overridden
-        .provider_build_request_for_test(req)
-        .unwrap();
+    let body = overridden.provider_build_request_for_test(req).unwrap();
     assert_eq!(body["model"].as_str().unwrap(), "claude-haiku-4-5-20251001");
 }
 
 #[test]
 fn connection_manager_with_model_openai_uses_new_model_name() {
     use agentverse::memory::{Message, MessageRole};
-    let cm = ConnectionManager::openai(
-        "https://api.openai.com/v1",
-        "gpt-4o",
-        "test-key",
-    );
+    let cm = ConnectionManager::openai("https://api.openai.com/v1", "gpt-4o", "test-key");
     let overridden = cm.with_model("gpt-4o-mini");
     let req = agentverse::GenerateRequest {
         system: None,
