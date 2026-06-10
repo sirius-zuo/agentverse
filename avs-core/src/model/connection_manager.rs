@@ -167,14 +167,17 @@ impl ConnectionManager {
         let provider: Box<dyn ModelProvider> = match self.provider.name() {
             "anthropic" => Box::new(AnthropicProvider::new()),
             "gemini"    => Box::new(GeminiProvider::new()),
-            _           => Box::new(OpenAICompatible::new()),
+            "openai"    => Box::new(OpenAICompatible::new()),
+            other => panic!("with_model: unknown provider name {:?}", other),
         };
         Self {
-            client: Client::new(),
+            client: self.client.clone(),
             api_base: self.api_base.clone(),
             api_key: self.api_key.clone(),
             model_name: model_name.to_string(),
             provider,
+            // SubAgent model overrides start with a fresh circuit breaker —
+            // the old breaker's state is irrelevant for a different model endpoint.
             circuit_breaker: Arc::new(Mutex::new(CircuitBreaker::new(5, 30))),
             max_retries: self.max_retries,
             retry_delay_ms: self.retry_delay_ms,
