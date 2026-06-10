@@ -38,3 +38,29 @@ fn load_skill_subagent_spec_returns_none_when_no_yaml() {
     let result = load_skill_subagent_spec(dir.path()).unwrap();
     assert!(result.is_none());
 }
+
+#[test]
+fn load_skill_subagent_spec_handles_plain_string_model() {
+    use agentverse_subagent::ModelOverride;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("subagent.yaml"),
+        r#"
+name: summarizer
+objective: "Summarize the document"
+model: haiku
+allowed_tools: []
+budget:
+  max_steps: 5
+  max_tokens: 2000
+  timeout: 30
+"#,
+    )
+    .unwrap();
+
+    let spec = agentverse_subagent::load_skill_subagent_spec(dir.path())
+        .unwrap()
+        .unwrap();
+    assert_eq!(spec.name, "summarizer");
+    assert!(matches!(spec.model, Some(ModelOverride::Alias(ref s)) if s == "haiku"));
+}
