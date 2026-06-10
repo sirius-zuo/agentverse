@@ -178,3 +178,29 @@ async fn append_turn_contract_preserves_user_then_assistant_order() {
     assert_eq!(messages[0].content, "hello");
     assert_eq!(messages[1].content, "hi");
 }
+
+#[test]
+fn agent_with_subagent_executor_registers_spawn_subagent_tool() {
+    use agentverse::ConnectionManager;
+    use agentverse::PromptRegistry;
+    use agentverse_subagent::SubAgentExecutor;
+    use agentverse_tools::ToolRegistry;
+    use std::sync::Arc;
+
+    let tools = ToolRegistry::new();
+    assert!(!tools.has_tool("spawn_subagent"));
+
+    let cm = Arc::new(ConnectionManager::anthropic(
+        "http://127.0.0.1:1",
+        "claude-sonnet-4-6",
+        "test-key",
+    ));
+    let executor = Arc::new(SubAgentExecutor::new(
+        cm,
+        Arc::clone(&tools),
+        Arc::new(PromptRegistry::new()),
+    ));
+
+    SubAgentExecutor::register_tool(&executor, &tools);
+    assert!(tools.has_tool("spawn_subagent"));
+}

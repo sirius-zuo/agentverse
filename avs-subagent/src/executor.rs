@@ -101,6 +101,11 @@ impl SubAgentExecutor {
         });
         SubAgentHandle::from_parts(Uuid::new_v4(), rx)
     }
+
+    /// Register a `SubAgentTool` into `registry` so the LLM can invoke subagents via tool calls.
+    pub fn register_tool(executor: &Arc<Self>, registry: &Arc<ToolRegistry>) {
+        registry.register(crate::tool::SubAgentTool::new(Arc::clone(executor), 0));
+    }
 }
 
 // ── internal helpers ──────────────────────────────────────────────────────────
