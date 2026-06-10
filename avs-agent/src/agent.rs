@@ -1,18 +1,44 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use agentverse::memory::{LongtermMemory, LongtermRecord, Message, MessageRole};
 use agentverse::{LlmRunner, PromptRegistry, RunStrategy};
 use agentverse_session::{Session, SessionId, SessionManager, SessionMemory, SessionMemoryError};
-use agentverse_skill::{SkillContext, SkillError, SkillRegistry};
+use agentverse_skill::{SkillContext, SkillError, SkillMode, SkillRegistry, SkillRouter};
 use agentverse_tools::ToolRegistry;
 use serde_json;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 
 struct CacheMemory {
     messages: Vec<Message>,
     last_used: Instant,
+}
+
+pub struct SkillConfig {
+    pub registry: Arc<RwLock<SkillRegistry>>,
+    pub mode: SkillMode,
+    pub dir: PathBuf,
+    /// Override routing threshold. None = use default per mode (0.15 Open, 0.08 Constrained).
+    pub routing_threshold: Option<f32>,
+}
+
+impl SkillConfig {
+    pub fn load(dir: impl AsRef<std::path::Path>, mode: SkillMode) -> Result<Self, SkillError> {
+        let registry = SkillRegistry::load(dir.as_ref())?;
+        Ok(Self {
+            registry: Arc::new(RwLock::new(registry)),
+            mode,
+            dir: dir.as_ref().to_path_buf(),
+            routing_threshold: None,
+        })
+    }
+
+    pub fn with_threshold(mut self, threshold: f32) -> Self {
+        self.routing_threshold = Some(threshold);
+        self
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -39,7 +65,7 @@ pub struct Agent {
     cache_memory: Mutex<HashMap<(String, SessionId), CacheMemory>>,
     buffer_ttl: Duration,
     longterm_memory: Option<Arc<dyn LongtermMemory>>,
-    skill_registry: Option<Arc<SkillRegistry>>,
+    skills: Option<SkillConfig>,
 }
 
 impl Agent {
@@ -51,7 +77,7 @@ impl Agent {
         strategy: Arc<dyn RunStrategy>,
         enable_http_server: bool,
         longterm_memory: Option<Arc<dyn LongtermMemory>>,
-        skill_registry: Option<Arc<SkillRegistry>>,
+        skills: Option<SkillConfig>,
     ) -> Arc<Self> {
         let agent = Arc::new(Self {
             runner,
@@ -62,7 +88,7 @@ impl Agent {
             cache_memory: Mutex::new(HashMap::new()),
             buffer_ttl: Duration::from_secs(300),
             longterm_memory,
-            skill_registry,
+            skills,
         });
 
         #[cfg(feature = "http")]
@@ -308,15 +334,29 @@ impl Agent {
         user_id: &str,
         skill_id: &str,
     ) -> Result<SessionId, AgentError> {
-        let registry = self.skill_registry.as_ref().ok_or_else(|| {
+        let skills = self.skills.as_ref().ok_or_else(|| {
             SkillError::NotConfigured("no skill registry configured on this agent".into())
         })?;
-        let ctx = registry.compile_context(skill_id)?;
+        let ctx = skills.registry.read().await.compile_context(skill_id)?;
         let ctx_json = serde_json::to_string(&ctx)?;
         Ok(self
             .sessions
             .create_session_with_skill_context(user_id, &ctx_json)
             .await?)
+    }
+
+    /// Reload the skill registry from disk. Existing sessions are unaffected;
+    /// new routing calls pick up the refreshed registry.
+    pub async fn reload_skills(&self) -> Result<(), AgentError> {
+        let skills = self.skills.as_ref().ok_or_else(|| {
+            AgentError::Skill(SkillError::NotConfigured(
+                "no skills configured on this agent".into(),
+            ))
+        })?;
+        let new_registry = SkillRegistry::load(&skills.dir).map_err(AgentError::Skill)?;
+        *skills.registry.write().await = new_registry;
+        tracing::info!(dir = ?skills.dir, "skill registry reloaded");
+        Ok(())
     }
 
     pub async fn get_session(
@@ -500,14 +540,14 @@ mod skill_tests {
     use super::*;
     use agentverse::{Config, LlmRunner, PromptRegistry};
     use agentverse_session::SqliteSessionMemory;
-    use agentverse_skill::SkillRegistry;
+    use agentverse_skill::SkillMode;
     use agentverse_strategy::{build, StrategyKind};
     use agentverse_tools::ToolRegistry;
     use std::sync::Arc;
     use tempfile::tempdir;
     use std::fs;
 
-    async fn make_agent_with_skill_dir(skills_dir: &std::path::Path) -> Arc<Agent> {
+    async fn make_agent_with_skills(skills: Option<SkillConfig>) -> Arc<Agent> {
         let runner = Arc::new(
             LlmRunner::from_config(Config {
                 provider: agentverse::ProviderConfig::OpenAI {
@@ -532,7 +572,6 @@ mod skill_tests {
             3,
         );
         let session_memory = Arc::new(SqliteSessionMemory::new("sqlite::memory:").await.unwrap());
-        let skill_registry = SkillRegistry::load(skills_dir).ok();
         Agent::new(
             runner,
             tools,
@@ -541,7 +580,7 @@ mod skill_tests {
             strategy,
             false,
             None,
-            skill_registry,
+            skills,
         )
     }
 
@@ -558,7 +597,8 @@ mod skill_tests {
     async fn create_session_with_skill_stores_context() {
         let dir = tempdir().unwrap();
         write_skill(dir.path(), "system", "test-skill", "You are a test agent.");
-        let agent = make_agent_with_skill_dir(dir.path()).await;
+        let skills = SkillConfig::load(dir.path(), SkillMode::Open).ok();
+        let agent = make_agent_with_skills(skills).await;
 
         let session_id = agent
             .create_session_with_skill("alice", "test-skill")
@@ -577,7 +617,8 @@ mod skill_tests {
     #[tokio::test]
     async fn create_session_with_skill_returns_error_for_unknown_skill() {
         let dir = tempdir().unwrap();
-        let agent = make_agent_with_skill_dir(dir.path()).await;
+        let skills = SkillConfig::load(dir.path(), SkillMode::Open).ok();
+        let agent = make_agent_with_skills(skills).await;
         let result = agent
             .create_session_with_skill("alice", "nonexistent-skill")
             .await;
@@ -596,7 +637,8 @@ mod skill_tests {
         )
         .unwrap();
 
-        let agent = make_agent_with_skill_dir(dir.path()).await;
+        let skills = SkillConfig::load(dir.path(), SkillMode::Open).ok();
+        let agent = make_agent_with_skills(skills).await;
         let session_id = agent
             .create_session_with_skill("alice", "no-tools-skill")
             .await
@@ -618,5 +660,80 @@ mod skill_tests {
             .cloned()
             .collect();
         assert!(active.is_empty(), "expected zero active tools for skills with empty tools list");
+    }
+
+    #[tokio::test]
+    async fn skill_config_load_creates_registry_and_wraps_in_rwlock() {
+        let dir = tempdir().unwrap();
+        write_skill(dir.path(), "system", "test-skill", "Test.");
+        let config = SkillConfig::load(dir.path(), agentverse_skill::SkillMode::Open)
+            .expect("SkillConfig::load");
+        let reg = config.registry.read().await;
+        assert!(reg.get("test-skill").is_some());
+    }
+
+    #[tokio::test]
+    async fn agent_new_accepts_skill_config() {
+        let dir = tempdir().unwrap();
+        write_skill(dir.path(), "system", "my-skill", "Instructions.");
+        let skills = SkillConfig::load(dir.path(), agentverse_skill::SkillMode::Open).ok();
+        // If this compiles and creates the agent, the signature is correct.
+        let _agent = make_agent_with_skills(skills).await;
+    }
+
+    mod reload {
+        use super::*;
+
+        fn write_skill_with_description(
+            dir: &std::path::Path,
+            subdir: &str,
+            name: &str,
+            description: &str,
+            instructions: &str,
+        ) {
+            let pkg = dir.join(subdir).join(name);
+            fs::create_dir_all(&pkg).unwrap();
+            let content = format!(
+                "---\nname: {name}\ndescription: {description}\n---\n\n{instructions}\n"
+            );
+            fs::write(pkg.join("SKILL.md"), content).unwrap();
+        }
+
+        #[tokio::test]
+        async fn reload_skills_refreshes_registry_with_new_skills() {
+            let dir = tempdir().unwrap();
+            write_skill_with_description(dir.path(), "system", "skill-a", "Does A.", "Instructions A.");
+            let skills = SkillConfig::load(dir.path(), agentverse_skill::SkillMode::Open).unwrap();
+            let agent = make_agent_with_skills(Some(skills)).await;
+
+            // Before reload: skill-a exists, skill-b does not
+            {
+                let s = agent.skills.as_ref().unwrap();
+                let reg = s.registry.read().await;
+                assert!(reg.get("skill-a").is_some());
+                assert!(reg.get("skill-b").is_none());
+            }
+
+            // Add skill-b to directory while agent is running
+            write_skill_with_description(dir.path(), "system", "skill-b", "Does B.", "Instructions B.");
+
+            // Reload
+            agent.reload_skills().await.expect("reload_skills");
+
+            // After reload: both skills present
+            {
+                let s = agent.skills.as_ref().unwrap();
+                let reg = s.registry.read().await;
+                assert!(reg.get("skill-a").is_some(), "skill-a should still be present");
+                assert!(reg.get("skill-b").is_some(), "skill-b should be present after reload");
+            }
+        }
+
+        #[tokio::test]
+        async fn reload_skills_returns_error_when_no_skills_configured() {
+            let agent = make_agent_with_skills(None).await;
+            let result = agent.reload_skills().await;
+            assert!(result.is_err(), "reload_skills should error when no skills configured");
+        }
     }
 }
