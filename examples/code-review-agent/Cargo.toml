@@ -12,5 +12,5 @@ agentverse-memory = { path = "../../avs-memory" }
 agentverse-session = { path = "../../avs-session" }
 agentverse-strategy = { path = "../../avs-strategy" }
 agentverse-tools = { path = "../../avs-tools" }
-tokio.workspace = true
+tokio = { workspace = true, features = ["io-util"] }
 tracing.workspace = true

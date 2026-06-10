@@ -1,25 +1,26 @@
 // examples/code-review-agent/src/main.rs
 //
-// Demonstrates the Hierarchical Planning strategy:
-//   1. Decompose — model breaks the request into independent sub-goals
-//   2. Plan      — for each sub-goal a step-by-step plan is generated
-//   3. Execute   — each plan step runs a tool or reasons inline
-//   4. Synthesize — all results are combined into a final answer
+// Demonstrates explicit skill binding via create_session_with_skill.
+// The "code-review" skill is bound at session creation — before the first
+// user message — so the SkillRouter never runs. Only file_search and shell
+// are active for the session, as declared in SKILL.md.
 //
 // Run:
 //   MODEL_BASE_URL=http://localhost:9090/v1 \
 //   MODEL_NAME=Qwen3.6-35B-A3B-GGUF \
-//   PROJECT_DIR=/path/to/AgentVerse \
+//   PROJECT_DIR=/path/to/project \
 //   cargo run -p example-code-review-agent
 
 use agentverse::{Config, LlmRunner, PromptConfig, PromptRegistry, ProviderConfig};
-use agentverse_agent::Agent;
+use agentverse_agent::{Agent, SkillConfig, SkillMode};
 use agentverse_logging as avs_logging;
 use agentverse_session::SqliteSessionMemory;
 use agentverse_strategy::{build, StrategyKind};
 use agentverse_tools::{FileSearch, ShellTool, ToolOptions, ToolRegistry};
+use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, BufReader};
 
 #[tokio::main]
 async fn main() {
@@ -58,8 +59,8 @@ async fn main() {
             ..Default::default()
         },
     );
-    // ShellTool lets the agent read file contents with `cat` or search with
-    // `grep`. It runs commands in `project_dir` with a 30-second timeout.
+    // ShellTool lets the agent read files with `cat` or search with `grep`.
+    // It runs commands in `project_dir` with a 30-second timeout.
     //
     // SECURITY: `workdir` is NOT a filesystem sandbox — absolute paths,
     // symlinks, and `cd` can still reach the full filesystem. The blocked
@@ -93,6 +94,10 @@ async fn main() {
         .expect("prompt config"),
     );
 
+    let skills_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/skills");
+    let skills = SkillConfig::load(skills_dir, SkillMode::Open)
+        .expect("failed to load skills — check examples/code-review-agent/skills/");
+
     let strategy = build(
         StrategyKind::Hierarchical,
         Arc::clone(&runner),
@@ -114,20 +119,46 @@ async fn main() {
         strategy,
         false,
         None,
-        None,
+        Some(skills),
     );
 
-    let question = format!(
-        "Review the avs-react/src codebase in {}: \
-         find all Rust source files, count how many there are, \
-         and summarize what each file is responsible for.",
-        project_dir
-    );
-    println!("> {}", question);
-    println!();
+    // Explicit binding: skill is set before the first user message.
+    // The SkillRouter never runs — no auto-routing needed.
+    let session_id = agent
+        .create_session_with_skill("user", "code-review")
+        .await
+        .expect("create session with code-review skill");
 
-    match agent.invoke_stateless(&question).await {
-        Ok(answer) => println!("Agent:\n{}", answer),
-        Err(e) => eprintln!("Error: {}", e),
+    println!("Code Review Agent — explicit skill binding (code-review)");
+    println!("Active tools: file_search, shell");
+    println!("Type a review request and press Enter. Type \"exit\" to quit.\n");
+
+    let mut lines = BufReader::new(tokio::io::stdin()).lines();
+
+    loop {
+        print!("Review> ");
+        std::io::stdout().flush().ok();
+
+        let input = match lines.next_line().await {
+            Ok(Some(line)) => line,
+            _ => {
+                println!("\nGoodbye!");
+                break;
+            }
+        };
+
+        let input = input.trim().to_string();
+        if input.is_empty() {
+            continue;
+        }
+        if input.eq_ignore_ascii_case("exit") {
+            println!("Goodbye!");
+            break;
+        }
+
+        match agent.invoke("user", session_id, &input).await {
+            Ok(answer) => println!("\nAgent:\n{}\n", answer),
+            Err(e) => eprintln!("Error: {}\n", e),
+        }
     }
 }
