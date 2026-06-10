@@ -20,5 +20,5 @@ uuid                = { workspace = true }
 
 [dev-dependencies]
 tokio       = { workspace = true, features = ["rt-multi-thread", "macros"] }
-httpmock    = "0.7"
+httpmock    = { workspace = true }
 tempfile    = "3"
