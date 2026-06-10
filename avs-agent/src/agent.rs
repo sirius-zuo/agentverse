@@ -305,7 +305,7 @@ impl Agent {
         skill_id: &str,
     ) -> Result<SessionId, AgentError> {
         let registry = self.skill_registry.as_ref().ok_or_else(|| {
-            SkillError::NotFound("no skill registry configured on this agent".into())
+            SkillError::NotConfigured("no skill registry configured on this agent".into())
         })?;
         let ctx = registry.compile_context(skill_id)?;
         let ctx_json = serde_json::to_string(&ctx)?;
