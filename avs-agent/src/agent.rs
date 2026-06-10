@@ -41,6 +41,23 @@ impl SkillConfig {
     }
 }
 
+fn format_skill_summaries(skills: &[&agentverse_skill::Skill]) -> String {
+    if skills.is_empty() {
+        return String::new();
+    }
+    let mut sorted = skills.to_vec();
+    sorted.sort_by(|a, b| a.id.cmp(&b.id));
+    let lines = sorted
+        .iter()
+        .map(|s| format!("- {}: {}", s.id, s.description))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "## Available Skills\n\n{}\n\nYou may use a skill when the user's request matches one of the above.",
+        lines
+    )
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum AgentError {
     #[error("session error: {0}")]
@@ -101,20 +118,40 @@ impl Agent {
         agent
     }
 
-    fn render_system_with_skill(&self, skill: Option<&SkillContext>) -> Option<String> {
-        let base = self.prompts
-            .render("system", std::collections::HashMap::new())
-            .ok()
-            .filter(|s| !s.trim().is_empty());
-        let skill_block = skill.map(|ctx| {
-            let mut parts = vec![ctx.instructions.clone()];
-            parts.extend(ctx.documents.iter().cloned());
-            parts.join("\n\n")
-        });
-        match (skill_block, base) {
-            (Some(sk), Some(b)) => Some(format!("{}\n\n{}", sk, b)),
-            (Some(sk), None) => Some(sk),
-            (None, b) => b,
+    fn assemble_system(
+        &self,
+        skill_ctx: Option<&SkillContext>,
+        summaries_block: Option<&str>,
+    ) -> Option<String> {
+        let mut parts: Vec<String> = Vec::new();
+
+        match skill_ctx {
+            Some(ctx) => {
+                // Skill active: full instructions + supporting documents
+                parts.push(ctx.instructions.clone());
+                parts.extend(ctx.documents.iter().cloned());
+            }
+            None => {
+                // Discovery phase: skill summaries (if any)
+                if let Some(block) = summaries_block {
+                    if !block.is_empty() {
+                        parts.push(block.to_string());
+                    }
+                }
+            }
+        }
+
+        // Agent base system prompt from system.j2 template
+        if let Ok(base) = self.prompts.render("system", std::collections::HashMap::new()) {
+            if !base.trim().is_empty() {
+                parts.push(base);
+            }
+        }
+
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join("\n\n"))
         }
     }
 
@@ -227,7 +264,7 @@ impl Agent {
     /// session-aware `invoke` path, not this method.
     pub async fn invoke_stateless(&self, input: &str) -> Result<String, AgentError> {
         // Stateless: no session, no memory context — always a fresh single-turn call.
-        let messages = self.assemble_messages(self.render_system_with_skill(None), vec![], input);
+        let messages = self.assemble_messages(self.assemble_system(None, None), vec![], input);
         let response = self.strategy.run(messages).await?;
         Ok(response)
     }
@@ -291,7 +328,7 @@ impl Agent {
             content: input.to_string(),
         };
         let messages = self.assemble_messages_with_context(
-            self.render_system_with_skill(skill_ctx.as_ref()),
+            self.assemble_system(skill_ctx.as_ref(), None),
             long_term_text,
             history,
             input,
@@ -532,6 +569,85 @@ mod tests {
         let sid = agent.create_session("alice").await.unwrap();
         let msgs = agent.load_messages("alice", sid).await.unwrap();
         assert!(msgs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn assemble_system_with_active_skill_contains_instructions_and_docs() {
+        let agent = make_agent().await;
+        let ctx = SkillContext {
+            instructions: "You are an expert reviewer.".into(),
+            documents: vec!["## Principles\nBe thorough.".into()],
+            tools: vec![],
+            max_iterations: None,
+        };
+        let result = agent.assemble_system(Some(&ctx), None);
+        let s = result.unwrap();
+        assert!(s.contains("You are an expert reviewer."), "instructions missing");
+        assert!(s.contains("Be thorough."), "document content missing");
+    }
+
+    #[tokio::test]
+    async fn assemble_system_with_summaries_contains_block() {
+        let agent = make_agent().await;
+        let block = "## Available Skills\n\n- code-review: Reviews code.";
+        let result = agent.assemble_system(None, Some(block));
+        assert!(result.unwrap().contains("## Available Skills"));
+    }
+
+    #[tokio::test]
+    async fn assemble_system_skill_active_excludes_summaries() {
+        let agent = make_agent().await;
+        let ctx = SkillContext {
+            instructions: "Skill active.".into(),
+            documents: vec![],
+            tools: vec![],
+            max_iterations: None,
+        };
+        let result = agent.assemble_system(Some(&ctx), Some("## Available Skills\n\nshould not appear"));
+        let s = result.unwrap();
+        assert!(s.contains("Skill active."));
+        assert!(!s.contains("## Available Skills"), "summaries must not appear when skill is active");
+    }
+
+    #[test]
+    fn format_skill_summaries_is_sorted_and_contains_descriptions() {
+        use agentverse_skill::Skill;
+        let skills: Vec<Skill> = vec![
+            Skill {
+                id: "z-skill".into(),
+                version: "1.0.0".into(),
+                description: "Does Z.".into(),
+                tags: vec![],
+                tools: vec![],
+                activation_domains: vec![],
+                instructions: String::new(),
+                documents: vec![],
+                max_iterations: None,
+            },
+            Skill {
+                id: "a-skill".into(),
+                version: "1.0.0".into(),
+                description: "Does A.".into(),
+                tags: vec![],
+                tools: vec![],
+                activation_domains: vec![],
+                instructions: String::new(),
+                documents: vec![],
+                max_iterations: None,
+            },
+        ];
+        let refs: Vec<&Skill> = skills.iter().collect();
+        let text = format_skill_summaries(&refs);
+        assert!(text.contains("## Available Skills"));
+        assert!(text.contains("a-skill: Does A."));
+        assert!(text.contains("z-skill: Does Z."));
+        // a-skill should appear before z-skill (sorted)
+        assert!(text.find("a-skill").unwrap() < text.find("z-skill").unwrap());
+    }
+
+    #[test]
+    fn format_skill_summaries_empty_list_returns_empty_string() {
+        assert_eq!(format_skill_summaries(&[]), String::new());
     }
 }
 
