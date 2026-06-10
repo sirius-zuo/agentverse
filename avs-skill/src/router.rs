@@ -22,8 +22,15 @@ impl SkillRouter {
         let msg_lower = message.to_lowercase();
 
         // Explicit name match always wins regardless of threshold.
+        // Word-boundary check: skill id must appear as a whole whitespace-delimited token
+        // (with trailing/leading punctuation stripped) to avoid false positives on substrings
+        // (e.g. skill "hr" must not fire on "three" or "threshold").
         for skill in candidates {
-            if msg_lower.contains(&skill.id.to_lowercase()) {
+            let skill_id = skill.id.to_lowercase();
+            if msg_lower
+                .split_whitespace()
+                .any(|w| w.trim_matches(|c: char| !c.is_alphanumeric() && c != '-') == skill_id)
+            {
                 return Some(skill.id.clone());
             }
         }
@@ -43,15 +50,26 @@ impl SkillRouter {
 }
 
 pub(crate) fn keyword_overlap(message: &str, target: &str) -> f32 {
-    let target_words: std::collections::HashSet<&str> = target.split_whitespace().collect();
-    if target_words.is_empty() {
+    // Split on non-alphanumeric boundaries (consistent with BM25Index tokenizer) so that
+    // hyphenated IDs like "code-review" produce tokens ["code", "review"] in both message
+    // and target rather than the single token "code-review".
+    // Normalized by message word count: "what fraction of what the user said matches this skill."
+    let msg_words: std::collections::HashSet<&str> = message
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect();
+    if msg_words.is_empty() {
         return 0.0;
     }
-    let matches = message
-        .split_whitespace()
-        .filter(|w| target_words.contains(w))
+    let target_words: std::collections::HashSet<&str> = target
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect();
+    let matches = msg_words
+        .iter()
+        .filter(|w| target_words.contains(*w))
         .count();
-    matches as f32 / target_words.len() as f32
+    matches as f32 / msg_words.len() as f32
 }
 
 #[cfg(test)]
@@ -131,9 +149,8 @@ mod tests {
     }
 
     #[test]
-    fn keyword_overlap_counts_shared_words_over_target_size() {
-        // target: "review code bugs" (3 words)
-        // message contains 2 of those words → 2/3 ≈ 0.667
+    fn keyword_overlap_scores_by_message_coverage() {
+        // message: "review my code" (3 tokens); 2 of them appear in target → 2/3 ≈ 0.667
         let score = keyword_overlap("review my code", "review code bugs");
         assert!(score > 0.5 && score < 0.8, "expected ~0.667, got {}", score);
     }

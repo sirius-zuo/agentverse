@@ -15,6 +15,7 @@ struct SkillFrontmatter {
 }
 
 #[derive(Deserialize, Default)]
+#[allow(dead_code)]
 struct AgentverseExt {
     tools: Option<Vec<String>>,
     max_iterations: Option<usize>,

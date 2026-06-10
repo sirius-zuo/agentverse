@@ -22,16 +22,23 @@ pub struct SkillConfig {
     pub dir: PathBuf,
     /// Override routing threshold. None = use default per mode (0.15 Open, 0.08 Constrained).
     pub routing_threshold: Option<f32>,
+    /// Precomputed summaries block for the discovery phase; rebuilt on `reload_skills`.
+    summaries: std::sync::Mutex<String>,
 }
 
 impl SkillConfig {
     pub fn load(dir: impl AsRef<std::path::Path>, mode: SkillMode) -> Result<Self, SkillError> {
         let registry = SkillRegistry::load(dir.as_ref())?;
+        let summaries = {
+            let candidates = registry.eligible(&mode);
+            format_skill_summaries(&candidates)
+        };
         Ok(Self {
             registry: Arc::new(RwLock::new(registry)),
             mode,
             dir: dir.as_ref().to_path_buf(),
             routing_threshold: None,
+            summaries: std::sync::Mutex::new(summaries),
         })
     }
 
@@ -86,6 +93,7 @@ pub struct Agent {
 }
 
 impl Agent {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         runner: Arc<LlmRunner>,
         tools: Arc<ToolRegistry>,
@@ -282,32 +290,42 @@ impl Agent {
 
         let history = self.get_cache_memory(user_id, session_id).await?;
 
-        // Load skill context; on first invoke with no context, attempt routing.
-        // The read lock on the registry is held only during this block.
+        // Resolve skill context. On first invoke with no context, attempt routing.
+        // Each read lock is scoped to a single synchronous operation and released
+        // before any .await so that reload_skills write-lock is never blocked by I/O.
         let (skill_ctx, summaries_block): (Option<SkillContext>, Option<String>) = {
             let existing = self.sessions.get_skill_context(session_id).await?;
 
             if let Some(json) = existing {
-                // Already bound — use as-is, no summaries needed.
+                // Already bound — deserialize and use as-is.
                 let ctx = serde_json::from_str::<SkillContext>(&json)?;
                 (Some(ctx), None)
             } else if let Some(ref skills) = self.skills {
-                // Not yet bound — acquire read lock once for routing + summaries.
-                let reg = skills.registry.read().await;
-                let candidates = reg.eligible(&skills.mode);
-
                 let router = match skills.routing_threshold {
-                    Some(t) => agentverse_skill::SkillRouter::with_threshold(t),
-                    None => agentverse_skill::SkillRouter::for_mode(&skills.mode),
+                    Some(t) => SkillRouter::with_threshold(t),
+                    None => SkillRouter::for_mode(&skills.mode),
                 };
 
-                if let Some(skill_id) = router.route(input, &candidates) {
+                // Lock scope 1: route only. Released before any await.
+                let routed_id: Option<String> = {
+                    let reg = skills.registry.read().await;
+                    let candidates = reg.eligible(&skills.mode);
+                    router.route(input, &candidates)
+                    // candidates drops, then reg drops here
+                };
+
+                if let Some(skill_id) = routed_id {
                     tracing::debug!(
                         skill_id = %skill_id,
                         session_id = %session_id,
                         "skill activated via automatic routing"
                     );
-                    let ctx = reg.compile_context(&skill_id).map_err(AgentError::Skill)?;
+                    // Lock scope 2: compile context only. Released before set_skill_context await.
+                    let ctx = {
+                        let reg = skills.registry.read().await;
+                        reg.compile_context(&skill_id).map_err(AgentError::Skill)?
+                        // reg drops here
+                    };
                     let json = serde_json::to_string(&ctx)?;
                     self.sessions
                         .set_skill_context(session_id, Some(&json))
@@ -315,7 +333,7 @@ impl Agent {
                     (Some(ctx), None)
                 } else {
                     tracing::debug!(session_id = %session_id, "no skill matched, running base agent");
-                    let text = format_skill_summaries(&candidates);
+                    let text = skills.summaries.lock().unwrap().clone();
                     (None, if text.is_empty() { None } else { Some(text) })
                 }
             } else {
@@ -423,8 +441,19 @@ impl Agent {
                 "no skills configured on this agent".into(),
             ))
         })?;
-        let new_registry = SkillRegistry::load(&skills.dir).map_err(AgentError::Skill)?;
+        // SkillRegistry::load does blocking filesystem I/O — run it off the Tokio executor.
+        let dir = skills.dir.clone();
+        let new_registry = tokio::task::spawn_blocking(move || SkillRegistry::load(&dir))
+            .await
+            .unwrap_or_else(|e| Err(SkillError::Io(std::io::Error::other(e))))
+            .map_err(AgentError::Skill)?;
+        // Rebuild summaries while we still have owned access to new_registry.
+        let new_summaries = {
+            let candidates = new_registry.eligible(&skills.mode);
+            format_skill_summaries(&candidates)
+        };
         *skills.registry.write().await = new_registry;
+        *skills.summaries.lock().unwrap() = new_summaries;
         tracing::info!(dir = ?skills.dir, "skill registry reloaded");
         Ok(())
     }
@@ -849,20 +878,6 @@ mod skill_tests {
 
     mod reload {
         use super::*;
-
-        fn write_skill_with_description(
-            dir: &std::path::Path,
-            subdir: &str,
-            name: &str,
-            description: &str,
-            instructions: &str,
-        ) {
-            let pkg = dir.join(subdir).join(name);
-            fs::create_dir_all(&pkg).unwrap();
-            let content =
-                format!("---\nname: {name}\ndescription: {description}\n---\n\n{instructions}\n");
-            fs::write(pkg.join("SKILL.md"), content).unwrap();
-        }
 
         #[tokio::test]
         async fn reload_skills_refreshes_registry_with_new_skills() {
