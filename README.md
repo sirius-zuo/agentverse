@@ -1,6 +1,10 @@
 # AgentVerse
 
-AgentVerse is a Rust workspace for building async AI agents. It separates the core LLM runner from session management, orchestration strategies, tools, memory backends, and platform integrations. All LLM access goes through a single `Agent` entry point; the HTTP server is an optional sidecar that the agent can spawn itself.
+AgentVerse is a production-grade Rust framework structured around strict layer separation: a provider-agnostic LLM runner at the base, reasoning strategies (ReAct, Plan, Hierarchical) as pure stateless transformers above it, a session layer that maintains per-user transcript isolation, and a skill layer that controls what behavior and toolset each session activates — all composed through a single `Agent` type that enforces the boundaries between them.
+
+What makes it different: **behavior is operator-driven, not code-driven.** Drop a `SKILL.md` file into `skills/system/` or `skills/user/` and the agent rewrites its own system prompt, restricts its active toolset, and adjusts its routing threshold — at runtime, without a redeploy. A keyword-overlap router scores incoming messages against skill summaries and binds the best match for the session's lifetime; explicit binding (`create_session_with_skill`) bypasses routing entirely for agents with a single fixed purpose.
+
+Under the hood: a three-layer memory architecture (in-process cache → durable SQLite transcript → distilled long-term knowledge), pluggable reasoning strategies (ReAct, Plan, Hierarchical) wired as pure `Vec<Message> → String` functions with no memory coupling, and MCP support on both the client and server side. The optional HTTP sidecar is agent-owned — spawned by the agent, not the other way around.
 
 ## Architecture
 
