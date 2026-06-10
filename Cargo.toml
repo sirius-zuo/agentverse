@@ -24,6 +24,7 @@ members = [
     "examples/http-agent",
     "examples/mcp-demo",
     "avs-session",
+    "avs-subagent",
 ]
 resolver = "2"
 
