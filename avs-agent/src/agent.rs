@@ -196,6 +196,9 @@ impl Agent {
         }
     }
 
+    /// Single-turn stateless invocation with no session, history, or skill context.
+    /// Skill sessions (created via `create_session_with_skill`) must use the
+    /// session-aware `invoke` path, not this method.
     pub async fn invoke_stateless(&self, input: &str) -> Result<String, AgentError> {
         // Stateless: no session, no memory context — always a fresh single-turn call.
         let messages = self.assemble_messages(self.render_system_with_skill(None), vec![], input);
