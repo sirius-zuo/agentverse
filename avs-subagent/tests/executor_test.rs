@@ -4,6 +4,7 @@ use agentverse_tools::ToolRegistry;
 use httpmock::prelude::*;
 use std::sync::Arc;
 use std::time::Duration;
+use uuid::Uuid;
 
 fn anthropic_answer_body(answer: &str) -> serde_json::Value {
     serde_json::json!({
@@ -143,4 +144,68 @@ async fn run_injects_resources_into_message() {
 
     let result = executor.run(&basic_spec(), ctx).await.unwrap();
     assert_eq!(result.answer, "done");
+}
+
+#[tokio::test]
+async fn run_many_returns_all_results() {
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method("POST").path("/v1/messages");
+        then.status(200)
+            .json_body(anthropic_answer_body("The answer is 3."));
+    });
+
+    let executor = make_executor(&server.base_url());
+    let tasks = vec![
+        (basic_spec(), basic_ctx()),
+        (basic_spec(), basic_ctx()),
+        (basic_spec(), basic_ctx()),
+    ];
+    let results = executor.run_many(tasks).await;
+
+    assert_eq!(results.len(), 3);
+    for result in results {
+        let ok = result.unwrap();
+        assert_eq!(ok.answer, "The answer is 3.");
+    }
+}
+
+#[tokio::test]
+async fn run_many_collects_all_results_on_failure() {
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method("POST").path("/v1/messages");
+        then.status(500);
+    });
+
+    let executor = make_executor(&server.base_url());
+    let tasks = vec![
+        (basic_spec(), basic_ctx()),
+        (basic_spec(), basic_ctx()),
+        (basic_spec(), basic_ctx()),
+    ];
+    let results = executor.run_many(tasks).await;
+
+    assert_eq!(results.len(), 3);
+    for result in results {
+        assert!(result.is_err());
+    }
+}
+
+#[tokio::test]
+async fn spawn_returns_handle_and_result_is_available() {
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method("POST").path("/v1/messages");
+        then.status(200)
+            .json_body(anthropic_answer_body("The answer is 3."));
+    });
+
+    let executor = make_executor(&server.base_url());
+    let handle = executor.spawn(basic_spec(), basic_ctx());
+
+    assert_ne!(handle.id, Uuid::nil());
+
+    let result = handle.await_result().await.unwrap();
+    assert_eq!(result.answer, "The answer is 3.");
 }
