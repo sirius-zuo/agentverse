@@ -1,13 +1,21 @@
 // examples/hello-agent/src/main.rs
 //
-// Interactive Q&A agent: type a question, get an answer. Type "exit" or Ctrl+C to quit.
+// General-purpose interactive agent with automatic skill routing (SkillMode::Open).
+// Skills are discovered from examples/hello-agent/skills/:
+//   system/  — built-in skills (math-helper, datetime-helper)
+//   user/    — operator-added skills (travel-advisor, Extend pattern)
+//
+// On first message the SkillRouter scores all candidates and binds the best
+// match for the session's lifetime. If no skill matches, the agent responds
+// using skill summaries as context.
+//
 // Run:
 //   MODEL_BASE_URL=http://localhost:9090/v1 \
 //   MODEL_NAME=Qwen3.6-35B-A3B-GGUF \
 //   cargo run -p example-hello-agent
 
 use agentverse::{Config, LlmRunner, PromptConfig, PromptRegistry, ProviderConfig};
-use agentverse_agent::Agent;
+use agentverse_agent::{Agent, SkillConfig, SkillMode};
 use agentverse_logging as avs_logging;
 use agentverse_session::SqliteSessionMemory;
 use agentverse_strategy::{build, StrategyKind};
@@ -27,7 +35,6 @@ async fn main() {
         std::env::var("MODEL_NAME").unwrap_or_else(|_| "Qwen3.6-35B-A3B-GGUF".to_string());
 
     tracing::info!(model = %model_name, base_url = %base_url, "Hello Agent");
-    println!("Type your question and press Enter. Type \"exit\" or press Ctrl+C to quit.\n");
 
     let runner = Arc::new(
         LlmRunner::from_config(Config {
@@ -68,6 +75,25 @@ async fn main() {
         .expect("prompt config"),
     );
 
+    let skills_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/skills");
+    let skills = SkillConfig::load(skills_dir, SkillMode::Open)
+        .expect("failed to load skills — check examples/hello-agent/skills/");
+
+    // Read skill names before moving `skills` into the agent.
+    // Lock scope is tight: names are cloned, then the read guard drops.
+    let skill_names: Vec<String> = {
+        let reg = skills.registry.read().await;
+        let mut names: Vec<String> = reg
+            .eligible(&SkillMode::Open)
+            .iter()
+            .map(|s| s.id.clone())
+            .collect();
+        names.sort();
+        names
+    };
+    println!("Skills loaded: {}", skill_names.join(", "));
+    println!("Type your question and press Enter. Type \"exit\" or press Ctrl+C to quit.\n");
+
     let strategy = build(
         StrategyKind::React,
         Arc::clone(&runner),
@@ -89,7 +115,7 @@ async fn main() {
         strategy,
         false,
         None,
-        None,
+        Some(skills),
     );
 
     let session_id = agent.create_session("user").await.expect("create session");
