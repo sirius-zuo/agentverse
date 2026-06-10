@@ -202,6 +202,32 @@ impl ToolRegistry {
         new_reg
     }
 
+    /// Return a new registry containing only tools whose names appear in `names`.
+    /// `spawn_subagent` is always excluded regardless of `names` — SubAgents cannot
+    /// spawn sub-SubAgents.
+    pub fn filter_by_names(&self, names: &[String]) -> Arc<ToolRegistry> {
+        let new_reg = Arc::new(ToolRegistry {
+            tools: RwLock::new(HashMap::new()),
+            index: RwLock::new(BM25Index::new()),
+        });
+        let tools = self.tools.read().unwrap();
+        for name in names {
+            if name == "spawn_subagent" {
+                continue;
+            }
+            if let Some((tool, opts)) = tools.get(name) {
+                new_reg
+                    .tools
+                    .write()
+                    .unwrap()
+                    .insert(name.clone(), (Arc::clone(tool), opts.clone()));
+                let text = format!("{} {}", tool.name(), tool.description());
+                new_reg.index.write().unwrap().insert(name, &text);
+            }
+        }
+        new_reg
+    }
+
     pub fn has_tool(&self, name: &str) -> bool {
         self.tools.read().unwrap().contains_key(name)
     }
@@ -315,5 +341,30 @@ mod tests {
             reg.tool_summaries_for(&["ghost".to_string()]),
             "none (reasoning only)"
         );
+    }
+
+    #[test]
+    fn filter_by_names_returns_only_named_tools() {
+        use crate::calculator::Calculator;
+        let reg = ToolRegistry::new();
+        reg.register(Calculator);
+        let filtered = reg.filter_by_names(&["calculator".to_string()]);
+        assert!(filtered.has_tool("calculator"));
+        assert!(!filtered.has_tool("find_tools"));
+    }
+
+    #[test]
+    fn filter_by_names_never_includes_spawn_subagent() {
+        let reg = ToolRegistry::new();
+        // Even if explicitly listed, spawn_subagent is excluded
+        let filtered = reg.filter_by_names(&["spawn_subagent".to_string(), "find_tools".to_string()]);
+        assert!(!filtered.has_tool("spawn_subagent"));
+    }
+
+    #[test]
+    fn filter_by_names_empty_list_returns_empty_registry() {
+        let reg = ToolRegistry::new();
+        let filtered = reg.filter_by_names(&[]);
+        assert_eq!(filtered.len(), 0);
     }
 }
