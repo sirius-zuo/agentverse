@@ -84,7 +84,8 @@ pub trait SessionMemory: Send + Sync {
         context_json: &str,
     ) -> Result<Session, SessionMemoryError> {
         let session = self.create(user_id).await?;
-        self.set_skill_context(session.id, Some(context_json)).await?;
+        self.set_skill_context(session.id, Some(context_json))
+            .await?;
         Ok(session)
     }
 }

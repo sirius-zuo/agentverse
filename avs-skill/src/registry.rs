@@ -64,12 +64,8 @@ impl SkillRegistry {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-fn load_dir(
-    dir: &Path,
-    skills: &mut HashMap<SkillId, (Skill, PathBuf)>,
-) -> Result<(), SkillError> {
-    let entries =
-        std::fs::read_dir(dir).map_err(SkillError::Io)?;
+fn load_dir(dir: &Path, skills: &mut HashMap<SkillId, (Skill, PathBuf)>) -> Result<(), SkillError> {
+    let entries = std::fs::read_dir(dir).map_err(SkillError::Io)?;
     for entry in entries {
         let entry = entry.map_err(SkillError::Io)?;
         let pkg_dir = entry.path();
@@ -80,8 +76,7 @@ fn load_dir(
         if !skill_md.exists() {
             continue;
         }
-        let content =
-            std::fs::read_to_string(&skill_md).map_err(SkillError::Io)?;
+        let content = std::fs::read_to_string(&skill_md).map_err(SkillError::Io)?;
         let mut skill = parse_skill_file(&skill_md, &content)?;
 
         // Eager-load supporting documents
@@ -101,16 +96,14 @@ fn collect_supporting_files(dir: &Path) -> Result<Vec<String>, SkillError> {
 }
 
 fn visit_dir(dir: &Path, docs: &mut Vec<String>) -> Result<(), SkillError> {
-    let entries =
-        std::fs::read_dir(dir).map_err(SkillError::Io)?;
+    let entries = std::fs::read_dir(dir).map_err(SkillError::Io)?;
     for entry in entries {
         let entry = entry.map_err(SkillError::Io)?;
         let path = entry.path();
         if path.is_dir() {
             visit_dir(&path, docs)?;
         } else if path.file_name().and_then(|n| n.to_str()) != Some("SKILL.md") {
-            let content =
-                std::fs::read_to_string(&path).map_err(SkillError::Io)?;
+            let content = std::fs::read_to_string(&path).map_err(SkillError::Io)?;
             docs.push(content);
         }
     }
@@ -146,7 +139,13 @@ mod tests {
     #[test]
     fn loads_system_skill() {
         let dir = tempfile::tempdir().unwrap();
-        make_skill_pkg(dir.path(), "system", "code-review", &["FileSearch"], "Review code.");
+        make_skill_pkg(
+            dir.path(),
+            "system",
+            "code-review",
+            &["FileSearch"],
+            "Review code.",
+        );
         let reg = SkillRegistry::load(dir.path()).unwrap();
         let skill = reg.get("code-review").unwrap();
         assert_eq!(skill.id, "code-review");
@@ -157,7 +156,13 @@ mod tests {
     fn user_skill_shadows_system_skill() {
         let dir = tempfile::tempdir().unwrap();
         make_skill_pkg(dir.path(), "system", "planning", &[], "System planning.");
-        make_skill_pkg(dir.path(), "user", "planning", &["ShellTool"], "User planning.");
+        make_skill_pkg(
+            dir.path(),
+            "user",
+            "planning",
+            &["ShellTool"],
+            "User planning.",
+        );
         let reg = SkillRegistry::load(dir.path()).unwrap();
         let skill = reg.get("planning").unwrap();
         // User version wins
@@ -171,7 +176,11 @@ mod tests {
         make_skill_pkg(dir.path(), "system", "arch-review", &[], "Instructions.");
         // Add a supporting file
         let pkg_dir = dir.path().join("system").join("arch-review");
-        std::fs::write(pkg_dir.join("principles.md"), "## Principles\nPrefer simple.").unwrap();
+        std::fs::write(
+            pkg_dir.join("principles.md"),
+            "## Principles\nPrefer simple.",
+        )
+        .unwrap();
 
         let reg = SkillRegistry::load(dir.path()).unwrap();
         let ctx = reg.compile_context("arch-review").unwrap();

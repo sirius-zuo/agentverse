@@ -75,7 +75,10 @@ mod tests {
 
     #[test]
     fn explicit_name_match_wins_regardless_of_threshold() {
-        let skills = vec![make_skill("code-review", "Reviews code for bugs and style issues")];
+        let skills = vec![make_skill(
+            "code-review",
+            "Reviews code for bugs and style issues",
+        )];
         let router = SkillRouter::with_threshold(0.99); // impossibly high threshold
         let candidates: Vec<&Skill> = skills.iter().collect();
         assert_eq!(
@@ -97,7 +100,10 @@ mod tests {
 
     #[test]
     fn below_threshold_returns_none() {
-        let skills = vec![make_skill("code-review", "Review code for bugs and style issues")];
+        let skills = vec![make_skill(
+            "code-review",
+            "Review code for bugs and style issues",
+        )];
         let router = SkillRouter::with_threshold(0.99);
         let candidates: Vec<&Skill> = skills.iter().collect();
         assert_eq!(router.route("what is the weather today", &candidates), None);
