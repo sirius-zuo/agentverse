@@ -1,0 +1,188 @@
+use crate::error::SkillError;
+use crate::parser::parse_skill_file;
+use crate::types::{Skill, SkillContext, SkillId};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+pub struct SkillRegistry {
+    /// name → (skill, package_directory)
+    skills: HashMap<SkillId, (Skill, PathBuf)>,
+}
+
+impl SkillRegistry {
+    /// Load skills from `<skills_dir>/system/` then `<skills_dir>/user/`.
+    /// User skills shadow system skills with the same `name`.
+    pub fn load(skills_dir: &Path) -> Result<Arc<Self>, SkillError> {
+        let mut skills: HashMap<SkillId, (Skill, PathBuf)> = HashMap::new();
+
+        let system_dir = skills_dir.join("system");
+        if system_dir.exists() {
+            load_dir(&system_dir, &mut skills)?;
+        }
+
+        // User skills loaded second — they overwrite system skills with same name.
+        let user_dir = skills_dir.join("user");
+        if user_dir.exists() {
+            load_dir(&user_dir, &mut skills)?;
+        }
+
+        Ok(Arc::new(Self { skills }))
+    }
+
+    pub fn get(&self, id: &str) -> Option<&Skill> {
+        self.skills.get(id).map(|(s, _)| s)
+    }
+
+    /// Compile a `SkillContext` for the given skill id.
+    /// Loads supporting files from the skill's package directory.
+    pub fn compile_context(&self, id: &str) -> Result<SkillContext, SkillError> {
+        let (skill, pkg_dir) = self
+            .skills
+            .get(id)
+            .ok_or_else(|| SkillError::NotFound(id.to_string()))?;
+
+        let documents = collect_supporting_files(pkg_dir)?;
+
+        Ok(SkillContext {
+            instructions: skill.instructions.clone(),
+            documents,
+            tools: skill.tools.clone(),
+            max_iterations: skill.max_iterations,
+        })
+    }
+}
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+fn load_dir(
+    dir: &Path,
+    skills: &mut HashMap<SkillId, (Skill, PathBuf)>,
+) -> Result<(), SkillError> {
+    let entries =
+        std::fs::read_dir(dir).map_err(SkillError::Io)?;
+    for entry in entries {
+        let entry = entry.map_err(SkillError::Io)?;
+        let pkg_dir = entry.path();
+        if !pkg_dir.is_dir() {
+            continue;
+        }
+        let skill_md = pkg_dir.join("SKILL.md");
+        if !skill_md.exists() {
+            continue;
+        }
+        let content =
+            std::fs::read_to_string(&skill_md).map_err(SkillError::Io)?;
+        let mut skill = parse_skill_file(&skill_md, &content)?;
+
+        // Eager-load supporting documents
+        skill.documents = collect_supporting_files(&pkg_dir)?;
+
+        let id = skill.id.clone();
+        skills.insert(id, (skill, pkg_dir));
+    }
+    Ok(())
+}
+
+/// Recursively collect the text contents of all files in `dir` except `SKILL.md`.
+fn collect_supporting_files(dir: &Path) -> Result<Vec<String>, SkillError> {
+    let mut docs = Vec::new();
+    visit_dir(dir, &mut docs)?;
+    Ok(docs)
+}
+
+fn visit_dir(dir: &Path, docs: &mut Vec<String>) -> Result<(), SkillError> {
+    let entries =
+        std::fs::read_dir(dir).map_err(SkillError::Io)?;
+    for entry in entries {
+        let entry = entry.map_err(SkillError::Io)?;
+        let path = entry.path();
+        if path.is_dir() {
+            visit_dir(&path, docs)?;
+        } else if path.file_name().and_then(|n| n.to_str()) != Some("SKILL.md") {
+            let content =
+                std::fs::read_to_string(&path).map_err(SkillError::Io)?;
+            docs.push(content);
+        }
+    }
+    Ok(())
+}
+
+// ── tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn make_skill_pkg(base: &Path, subdir: &str, name: &str, tools: &[&str], body: &str) {
+        let pkg = base.join(subdir).join(name);
+        fs::create_dir_all(&pkg).unwrap();
+        let tools_yaml = tools
+            .iter()
+            .map(|t| format!("    - {t}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let tools_block = if tools.is_empty() {
+            String::new()
+        } else {
+            format!("agentverse:\n  tools:\n{tools_yaml}\n")
+        };
+        let content = format!(
+            "---\nname: {name}\ndescription: {name} description.\n{tools_block}---\n\n{body}\n"
+        );
+        fs::write(pkg.join("SKILL.md"), content).unwrap();
+    }
+
+    #[test]
+    fn loads_system_skill() {
+        let dir = tempfile::tempdir().unwrap();
+        make_skill_pkg(dir.path(), "system", "code-review", &["FileSearch"], "Review code.");
+        let reg = SkillRegistry::load(dir.path()).unwrap();
+        let skill = reg.get("code-review").unwrap();
+        assert_eq!(skill.id, "code-review");
+        assert_eq!(skill.tools, vec!["FileSearch"]);
+    }
+
+    #[test]
+    fn user_skill_shadows_system_skill() {
+        let dir = tempfile::tempdir().unwrap();
+        make_skill_pkg(dir.path(), "system", "planning", &[], "System planning.");
+        make_skill_pkg(dir.path(), "user", "planning", &["ShellTool"], "User planning.");
+        let reg = SkillRegistry::load(dir.path()).unwrap();
+        let skill = reg.get("planning").unwrap();
+        // User version wins
+        assert_eq!(skill.instructions, "User planning.");
+        assert_eq!(skill.tools, vec!["ShellTool"]);
+    }
+
+    #[test]
+    fn compile_context_loads_supporting_files() {
+        let dir = tempfile::tempdir().unwrap();
+        make_skill_pkg(dir.path(), "system", "arch-review", &[], "Instructions.");
+        // Add a supporting file
+        let pkg_dir = dir.path().join("system").join("arch-review");
+        std::fs::write(pkg_dir.join("principles.md"), "## Principles\nPrefer simple.").unwrap();
+
+        let reg = SkillRegistry::load(dir.path()).unwrap();
+        let ctx = reg.compile_context("arch-review").unwrap();
+        assert_eq!(ctx.instructions, "Instructions.");
+        assert_eq!(ctx.documents.len(), 1);
+        assert!(ctx.documents[0].contains("Prefer simple."));
+    }
+
+    #[test]
+    fn compile_context_returns_not_found_for_unknown_skill() {
+        let dir = tempfile::tempdir().unwrap();
+        let reg = SkillRegistry::load(dir.path()).unwrap();
+        let err = reg.compile_context("nonexistent").unwrap_err();
+        assert!(matches!(err, SkillError::NotFound(_)));
+    }
+
+    #[test]
+    fn empty_skills_dir_loads_without_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let reg = SkillRegistry::load(dir.path()).unwrap();
+        assert!(reg.get("anything").is_none());
+    }
+}

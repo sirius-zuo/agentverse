@@ -69,7 +69,22 @@ impl ReActStrategy {
 #[async_trait::async_trait]
 impl agentverse::RunStrategy for ReActStrategy {
     async fn run(&self, messages: Vec<Message>) -> Result<String, AgentError> {
-        let active = ActiveToolSet::all(&self.skeleton.tools);
+        let all_names = self.skeleton.tools.tool_names();
+        self.run_with_active_tools(messages, &all_names).await
+    }
+
+    async fn run_with_active_tools(
+        &self,
+        messages: Vec<Message>,
+        active_tool_names: &[String],
+    ) -> Result<String, AgentError> {
+        let mut active = ActiveToolSet::default();
+        active.activate(
+            &active_tool_names
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>(),
+        );
         let mut buf = self.prepare_buffer_with_active(messages, &active);
         let mut iteration = 0usize;
         let mut pending_answer: Option<String> = None;

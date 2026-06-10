@@ -70,4 +70,19 @@ impl SessionManager {
             .append_turn(session_id, user_message, assistant_message)
             .await
     }
+
+    pub async fn set_skill_context(
+        &self,
+        session_id: SessionId,
+        context_json: Option<&str>,
+    ) -> Result<(), SessionMemoryError> {
+        self.store.set_skill_context(session_id, context_json).await
+    }
+
+    pub async fn get_skill_context(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Option<String>, SessionMemoryError> {
+        self.store.get_skill_context(session_id).await
+    }
 }

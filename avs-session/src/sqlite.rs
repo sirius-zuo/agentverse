@@ -133,6 +133,23 @@ impl SqliteSessionMemory {
             .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
         }
 
+        // Skill context column (added by skill-system plan)
+        let has_skill_ctx: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'skill_context_json'"
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+
+        if has_skill_ctx == 0 {
+            sqlx::query(
+                "ALTER TABLE sessions ADD COLUMN skill_context_json TEXT"
+            )
+            .execute(&self.pool)
+            .await
+            .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+        }
+
         Ok(())
     }
 }
@@ -443,6 +460,74 @@ impl SessionMemory for SqliteSessionMemory {
         .await
         .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
         Ok(result.rows_affected())
+    }
+
+    async fn set_skill_context(
+        &self,
+        session_id: SessionId,
+        context_json: Option<&str>,
+    ) -> Result<(), SessionMemoryError> {
+        let result = sqlx::query(
+            "UPDATE sessions SET skill_context_json = ? WHERE id = ?"
+        )
+        .bind(context_json)
+        .bind(session_id.to_string())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+
+        if result.rows_affected() == 0 {
+            return Err(SessionMemoryError::NotFound(session_id));
+        }
+        Ok(())
+    }
+
+    async fn get_skill_context(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Option<String>, SessionMemoryError> {
+        let row: Option<Option<String>> = sqlx::query_scalar(
+            "SELECT skill_context_json FROM sessions WHERE id = ?"
+        )
+        .bind(session_id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+
+        match row {
+            None => Err(SessionMemoryError::NotFound(session_id)),
+            Some(v) => Ok(v),
+        }
+    }
+}
+
+#[cfg(test)]
+mod skill_context_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn skill_context_roundtrips() {
+        let store = SqliteSessionMemory::new("sqlite::memory:").await.unwrap();
+        let session = store.create("alice").await.unwrap();
+
+        // Initially None
+        let ctx = store.get_skill_context(session.id).await.unwrap();
+        assert!(ctx.is_none());
+
+        // Set some JSON
+        store
+            .set_skill_context(session.id, Some(r#"{"instructions":"test","documents":[],"tools":[],"max_iterations":null}"#))
+            .await
+            .unwrap();
+
+        let ctx = store.get_skill_context(session.id).await.unwrap();
+        assert!(ctx.is_some());
+        assert!(ctx.unwrap().contains("instructions"));
+
+        // Clear it
+        store.set_skill_context(session.id, None).await.unwrap();
+        let ctx = store.get_skill_context(session.id).await.unwrap();
+        assert!(ctx.is_none());
     }
 }
 

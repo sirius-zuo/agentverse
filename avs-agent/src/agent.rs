@@ -5,7 +5,9 @@ use std::time::{Duration, Instant};
 use agentverse::memory::{LongtermMemory, LongtermRecord, Message, MessageRole};
 use agentverse::{LlmRunner, PromptRegistry, RunStrategy};
 use agentverse_session::{Session, SessionId, SessionManager, SessionMemory, SessionMemoryError};
+use agentverse_skill::{SkillContext, SkillError, SkillRegistry};
 use agentverse_tools::ToolRegistry;
+use serde_json;
 use tokio::sync::Mutex;
 
 struct CacheMemory {
@@ -19,6 +21,10 @@ pub enum AgentError {
     Session(#[from] SessionMemoryError),
     #[error("llm error: {0}")]
     Llm(#[from] agentverse::AgentError),
+    #[error("skill error: {0}")]
+    Skill(#[from] SkillError),
+    #[error("json error: {0}")]
+    Json(#[from] serde_json::Error),
 }
 
 pub struct Agent {
@@ -33,6 +39,7 @@ pub struct Agent {
     cache_memory: Mutex<HashMap<(String, SessionId), CacheMemory>>,
     buffer_ttl: Duration,
     longterm_memory: Option<Arc<dyn LongtermMemory>>,
+    skill_registry: Option<Arc<SkillRegistry>>,
 }
 
 impl Agent {
@@ -44,6 +51,7 @@ impl Agent {
         strategy: Arc<dyn RunStrategy>,
         enable_http_server: bool,
         longterm_memory: Option<Arc<dyn LongtermMemory>>,
+        skill_registry: Option<Arc<SkillRegistry>>,
     ) -> Arc<Self> {
         let agent = Arc::new(Self {
             runner,
@@ -54,6 +62,7 @@ impl Agent {
             cache_memory: Mutex::new(HashMap::new()),
             buffer_ttl: Duration::from_secs(300),
             longterm_memory,
+            skill_registry,
         });
 
         #[cfg(feature = "http")]
@@ -66,11 +75,21 @@ impl Agent {
         agent
     }
 
-    fn render_system(&self) -> Option<String> {
-        self.prompts
+    fn render_system_with_skill(&self, skill: Option<&SkillContext>) -> Option<String> {
+        let base = self.prompts
             .render("system", std::collections::HashMap::new())
             .ok()
-            .filter(|s| !s.trim().is_empty())
+            .filter(|s| !s.trim().is_empty());
+        let skill_block = skill.map(|ctx| {
+            let mut parts = vec![ctx.instructions.clone()];
+            parts.extend(ctx.documents.iter().cloned());
+            parts.join("\n\n")
+        });
+        match (skill_block, base) {
+            (Some(sk), Some(b)) => Some(format!("{}\n\n{}", sk, b)),
+            (Some(sk), None) => Some(sk),
+            (None, b) => b,
+        }
     }
 
     fn assemble_messages(
@@ -179,7 +198,7 @@ impl Agent {
 
     pub async fn invoke_stateless(&self, input: &str) -> Result<String, AgentError> {
         // Stateless: no session, no memory context — always a fresh single-turn call.
-        let messages = self.assemble_messages(self.render_system(), vec![], input);
+        let messages = self.assemble_messages(self.render_system_with_skill(None), vec![], input);
         let response = self.strategy.run(messages).await?;
         Ok(response)
     }
@@ -194,9 +213,29 @@ impl Agent {
 
         let history = self.get_cache_memory(user_id, session_id).await?;
 
-        // Layer 3: retrieve scored memories and inject into system prompt
+        // Load skill context for this session (session-stable)
+        let skill_ctx: Option<SkillContext> = self
+            .sessions
+            .get_skill_context(session_id)
+            .await?
+            .map(|json| serde_json::from_str::<SkillContext>(&json))
+            .transpose()?;
+
+        // Active tool names: skill tools ∩ registry, or all if no skill
+        let active_tool_names: Vec<String> = match &skill_ctx {
+            Some(ctx) if !ctx.tools.is_empty() => ctx
+                .tools
+                .iter()
+                .filter(|name| self.tools.has_tool(name))
+                .cloned()
+                .collect(),
+            _ => self.tools.tool_names(),
+        };
+
+        // Layer 3: retrieve scored memories
         let long_term_text = if let Some(ref ms) = self.longterm_memory {
-            let memories = ms.retrieve(user_id, input, 5)
+            let memories = ms
+                .retrieve(user_id, input, 5)
                 .await
                 .unwrap_or_else(|e| {
                     tracing::warn!(error = %e, "layer-3 memory retrieve failed, proceeding without context");
@@ -222,12 +261,15 @@ impl Agent {
             content: input.to_string(),
         };
         let messages = self.assemble_messages_with_context(
-            self.render_system(),
+            self.render_system_with_skill(skill_ctx.as_ref()),
             long_term_text,
             history,
             input,
         );
-        let response = self.strategy.run(messages).await?;
+        let response = self
+            .strategy
+            .run_with_active_tools(messages, &active_tool_names)
+            .await?;
 
         let assistant_msg = Message {
             role: MessageRole::Assistant,
@@ -239,11 +281,12 @@ impl Agent {
         self.update_cache_memory(user_id, session_id, user_msg, assistant_msg)
             .await;
 
-        // Layer 3: async fire-and-forget consolidation
         if let Some(ms) = self.longterm_memory.clone() {
             let uid = user_id.to_string();
-            // TODO: replace 0.5 with heuristic or LLM-assigned importance scorer
-            let record = LongtermRecord::now(format!("User: {input}\nAssistant: {response}"), 0.5);
+            let record = LongtermRecord::now(
+                format!("User: {input}\nAssistant: {response}"),
+                0.5,
+            );
             tokio::spawn(async move {
                 let _ = ms.write(&uid, record).await;
             });
@@ -254,6 +297,23 @@ impl Agent {
 
     pub async fn create_session(&self, user_id: &str) -> Result<SessionId, AgentError> {
         Ok(self.sessions.create_session(user_id).await?)
+    }
+
+    pub async fn create_session_with_skill(
+        &self,
+        user_id: &str,
+        skill_id: &str,
+    ) -> Result<SessionId, AgentError> {
+        let registry = self.skill_registry.as_ref().ok_or_else(|| {
+            SkillError::NotFound("no skill registry configured on this agent".into())
+        })?;
+        let ctx = registry.compile_context(skill_id)?;
+        let ctx_json = serde_json::to_string(&ctx)?;
+        let session_id = self.sessions.create_session(user_id).await?;
+        self.sessions
+            .set_skill_context(session_id, Some(&ctx_json))
+            .await?;
+        Ok(session_id)
     }
 
     pub async fn get_session(
@@ -353,6 +413,7 @@ mod lt_tests {
             strategy,
             false,
             Some(ms),
+            None,
         );
         let sid = agent.create_session("alice").await.unwrap();
         assert!(agent.get_session("alice", sid).await.unwrap().is_some());
@@ -401,6 +462,7 @@ mod tests {
             strategy,
             false,
             None,
+            None,
         )
     }
 
@@ -427,5 +489,95 @@ mod tests {
         let sid = agent.create_session("alice").await.unwrap();
         let msgs = agent.load_messages("alice", sid).await.unwrap();
         assert!(msgs.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod skill_tests {
+    use super::*;
+    use agentverse::{Config, LlmRunner, PromptRegistry};
+    use agentverse_session::SqliteSessionMemory;
+    use agentverse_skill::SkillRegistry;
+    use agentverse_strategy::{build, StrategyKind};
+    use agentverse_tools::ToolRegistry;
+    use std::sync::Arc;
+    use tempfile::tempdir;
+    use std::fs;
+
+    async fn make_agent_with_skill_dir(skills_dir: &std::path::Path) -> Arc<Agent> {
+        let runner = Arc::new(
+            LlmRunner::from_config(Config {
+                provider: agentverse::ProviderConfig::OpenAI {
+                    model_name: "test".to_string(),
+                    api_key: "sk-test".to_string(),
+                    base_url: Some("http://127.0.0.1:1/v1".to_string()),
+                },
+                max_messages: 10,
+                tools: vec![],
+                prompts_dir: None,
+                system_prompt: None,
+            })
+            .unwrap(),
+        );
+        let tools = ToolRegistry::new();
+        let prompts = Arc::new(PromptRegistry::new());
+        let strategy = build(
+            StrategyKind::React,
+            Arc::clone(&runner),
+            Arc::clone(&prompts),
+            Arc::clone(&tools),
+            3,
+        );
+        let session_memory = Arc::new(SqliteSessionMemory::new("sqlite::memory:").await.unwrap());
+        let skill_registry = SkillRegistry::load(skills_dir).ok();
+        Agent::new(
+            runner,
+            tools,
+            prompts,
+            session_memory,
+            strategy,
+            false,
+            None,
+            skill_registry,
+        )
+    }
+
+    fn write_skill(dir: &std::path::Path, subdir: &str, name: &str, instructions: &str) {
+        let pkg = dir.join(subdir).join(name);
+        fs::create_dir_all(&pkg).unwrap();
+        let content = format!(
+            "---\nname: {name}\ndescription: Test skill.\nagentverse:\n  tools:\n    - find_tools\n---\n\n{instructions}\n"
+        );
+        fs::write(pkg.join("SKILL.md"), content).unwrap();
+    }
+
+    #[tokio::test]
+    async fn create_session_with_skill_stores_context() {
+        let dir = tempdir().unwrap();
+        write_skill(dir.path(), "system", "test-skill", "You are a test agent.");
+        let agent = make_agent_with_skill_dir(dir.path()).await;
+
+        let session_id = agent
+            .create_session_with_skill("alice", "test-skill")
+            .await
+            .unwrap();
+
+        // The skill context should be stored in the session
+        let ctx_json = agent.sessions.get_skill_context(session_id).await.unwrap();
+        assert!(ctx_json.is_some());
+        let ctx: agentverse_skill::SkillContext =
+            serde_json::from_str(&ctx_json.unwrap()).unwrap();
+        assert!(ctx.instructions.contains("You are a test agent."));
+        assert!(ctx.tools.contains(&"find_tools".to_string()));
+    }
+
+    #[tokio::test]
+    async fn create_session_with_skill_returns_error_for_unknown_skill() {
+        let dir = tempdir().unwrap();
+        let agent = make_agent_with_skill_dir(dir.path()).await;
+        let result = agent
+            .create_session_with_skill("alice", "nonexistent-skill")
+            .await;
+        assert!(result.is_err());
     }
 }
