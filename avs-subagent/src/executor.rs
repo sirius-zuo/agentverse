@@ -42,6 +42,9 @@ impl SubAgentExecutor {
         spec: &SubAgentSpec,
         ctx: SubAgentContext,
     ) -> Result<SubAgentResult, SubAgentError> {
+        // Primary depth guard: filter_by_names already excludes spawn_subagent so a
+        // subagent can't structurally nest. This check is defense-in-depth for callers
+        // that construct SubAgentContext directly (e.g. tests).
         if ctx.depth >= self.max_depth {
             return Err(SubAgentError::DepthExceeded);
         }

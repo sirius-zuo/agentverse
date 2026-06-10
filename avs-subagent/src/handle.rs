@@ -14,10 +14,6 @@ impl SubAgentHandle {
             .unwrap_or_else(|_| Err(SubAgentError::Panic("sender dropped".into())))
     }
 
-    pub fn is_finished(&self) -> bool {
-        false
-    }
-
     pub fn from_parts(
         id: Uuid,
         receiver: oneshot::Receiver<Result<SubAgentResult, SubAgentError>>,
