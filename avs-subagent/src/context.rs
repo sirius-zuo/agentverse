@@ -6,7 +6,7 @@ pub struct SubAgentContext {
     pub depth: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ResourceContent {
     pub label: String,
     pub content: String,

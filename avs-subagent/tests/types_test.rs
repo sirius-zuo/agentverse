@@ -102,7 +102,7 @@ async fn subagent_handle_await_result_returns_sent_value() {
     use uuid::Uuid;
 
     let (tx, rx) = oneshot::channel();
-    let handle = SubAgentHandle::from_parts(Uuid::new_v4(), rx);
+    let handle = SubAgentHandle::from_parts(Uuid::new_v4(), rx, tokio::spawn(async {}));
 
     let result = SubAgentResult {
         answer: "hello".into(),

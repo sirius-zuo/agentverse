@@ -2,6 +2,7 @@ use crate::context::{ResourceContent, SubAgentContext};
 use crate::executor::SubAgentExecutor;
 use crate::spec::{Budget, ModelOverride, SubAgentSpec};
 use agentverse::{Tool, ToolResult};
+use agentverse_tools::SPAWN_SUBAGENT_TOOL_NAME;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
@@ -14,6 +15,9 @@ pub struct SubAgentTool {
 }
 
 impl SubAgentTool {
+    /// Create a new `SubAgentTool` at `current_depth`. The executor enforces
+    /// `depth < max_depth`, so callers must pass the depth of the **current**
+    /// agent (not `current_depth + 1`). At root registration, pass `0`.
     pub fn new(executor: Arc<SubAgentExecutor>, current_depth: usize) -> Self {
         Self {
             executor,
@@ -30,7 +34,9 @@ pub struct SubAgentArgs {
     pub objective: String,
     /// Optional system prompt override.
     pub system_prompt: Option<String>,
-    /// Model alias: "haiku", "sonnet", or "opus". Omit to inherit parent model.
+    /// Model alias or raw model ID. Known aliases: "haiku", "sonnet", "opus".
+    /// Unknown strings pass through as raw model IDs (e.g. "claude-opus-4-8").
+    /// Omit to inherit the parent agent's model.
     pub model: Option<String>,
     /// Tool names this SubAgent may use. Empty list = reasoning only (no tools).
     #[serde(default)]
@@ -42,13 +48,8 @@ pub struct SubAgentArgs {
     /// Timeout in seconds. Defaults to 120.
     pub timeout_secs: Option<u64>,
     /// Context to inject: files, prior results, etc.
-    pub resources: Vec<ResourceArgJson>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct ResourceArgJson {
-    pub label: String,
-    pub content: String,
+    #[serde(default)]
+    pub resources: Vec<ResourceContent>,
 }
 
 #[async_trait::async_trait]
@@ -56,7 +57,7 @@ impl Tool for SubAgentTool {
     type Args = SubAgentArgs;
 
     fn name(&self) -> &str {
-        "spawn_subagent"
+        SPAWN_SUBAGENT_TOOL_NAME
     }
 
     fn description(&self) -> &str {
@@ -81,14 +82,7 @@ impl Tool for SubAgentTool {
             },
         };
         let ctx = SubAgentContext {
-            resources: args
-                .resources
-                .into_iter()
-                .map(|r| ResourceContent {
-                    label: r.label,
-                    content: r.content,
-                })
-                .collect(),
+            resources: args.resources,
             depth: self.current_depth,
         };
         match self.executor.run(&spec, ctx).await {

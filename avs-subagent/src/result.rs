@@ -30,4 +30,10 @@ pub enum SubAgentError {
 
     #[error("subagent panicked: {0}")]
     Panic(String),
+
+    #[error("io error: {0}")]
+    Io(String),
+
+    #[error("config error: {0}")]
+    Config(String),
 }
