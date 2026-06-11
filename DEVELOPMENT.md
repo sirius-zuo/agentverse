@@ -52,9 +52,11 @@ AgentVerse/
     ├── slack-hr-assistant/ # IntegrationRuntime Slack/console bot
     ├── http-agent/         # Agent with enable_http_server=true
     ├── mcp-demo/           # Full MCP round-trip: McpServer + McpCatalogSource + agent
-    ├── demo-tools/         # Library: 6 MCP-exposed domain tools used by multi-agent examples
-    ├── project-feasibility/ # Programmatic multi-agent pipeline (SubAgentExecutor::spawn + synthesis)
-    └── business-report/    # LLM-driven multi-agent via business-report skill + SubAgentTool
+    ├── demo-tools/            # Library: 13 MCP-exposed domain tools used by staged-skill examples
+    ├── project-feasibility/   # Programmatic multi-agent pipeline (SubAgentExecutor::spawn + synthesis)
+    ├── business-report/       # LLM-driven multi-agent via business-report skill + SubAgentTool
+    ├── doc-pipeline/          # Pattern A: self-directing skill chain (extractor→analyzer→summarizer; ReAct+Plan+ReAct)
+    └── support-router/        # Pattern C: coordinator dispatch (coordinator plans, specialists execute; React+Hierarchical+React)
 ```
 
 ### Key Concepts
