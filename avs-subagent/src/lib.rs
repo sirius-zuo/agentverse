@@ -12,4 +12,4 @@ pub use handle::SubAgentHandle;
 pub use result::{SubAgentError, SubAgentResult};
 pub use skill::load_skill_subagent_spec;
 pub use spec::{Budget, ModelOverride, SubAgentSpec};
-pub use tool::{SubAgentArgs, SubAgentTool};
+pub use tool::SubAgentTool;
