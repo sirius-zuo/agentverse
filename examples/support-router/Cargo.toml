@@ -1,0 +1,17 @@
+[package]
+name = "example-support-router"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+agentverse            = { path = "../../avs-core" }
+agentverse-agent      = { path = "../../avs-agent" }
+agentverse-demo-tools = { path = "../demo-tools" }
+agentverse-logging    = { path = "../../avs-logging" }
+agentverse-session    = { path = "../../avs-session" }
+agentverse-strategy   = { path = "../../avs-strategy" }
+agentverse-tools      = { path = "../../avs-tools" }
+serde                 = { workspace = true, features = ["derive"] }
+serde_json            = { workspace = true }
+tokio                 = { workspace = true }
