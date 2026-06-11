@@ -875,6 +875,20 @@ When you have the final answer:
     Thought: <brief summary>
     Answer: <final result>
 
+> **`Action Input:` JSON may span multiple lines.** The parser accumulates
+> every non-keyword line after `Action Input:` into a single buffer and parses
+> it as JSON when the next keyword (`Thought:`, `Action:`, `Observation:`,
+> `Answer:`) is encountered or the response ends. Both of these are valid:
+>
+> ```
+> Action Input: {"key": "value"}          # same line
+>
+> Action Input:                           # JSON on following lines
+> {
+>   "key": "value"
+> }
+> ```
+
 {% if examples %}
 Examples:
 {% for example in examples %}
