@@ -1,6 +1,7 @@
 use crate::result::SubAgentError;
 use crate::spec::{Budget, ModelOverride, SubAgentSpec};
 use serde::Deserialize;
+use std::io::ErrorKind;
 use std::path::Path;
 use std::time::Duration;
 
@@ -33,13 +34,22 @@ struct BudgetYaml {
 /// file does not exist; returns `Err` if the file exists but cannot be parsed.
 pub fn load_skill_subagent_spec(skill_dir: &Path) -> Result<Option<SubAgentSpec>, SubAgentError> {
     let yaml_path = skill_dir.join("subagent.yaml");
-    if !yaml_path.exists() {
-        return Ok(None);
-    }
-    let content = std::fs::read_to_string(&yaml_path)
-        .map_err(|e| SubAgentError::Panic(format!("Failed to read subagent.yaml: {e}")))?;
-    let raw: SkillSubAgentYaml = serde_yaml::from_str(&content)
-        .map_err(|e| SubAgentError::Panic(format!("Failed to parse subagent.yaml: {e}")))?;
+    let content = match std::fs::read_to_string(&yaml_path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(e) => {
+            return Err(SubAgentError::Io(format!(
+                "Failed to read {}: {e}",
+                yaml_path.display()
+            )))
+        }
+    };
+    let raw: SkillSubAgentYaml = serde_yaml::from_str(&content).map_err(|e| {
+        SubAgentError::Config(format!(
+            "Failed to parse {}: {e}",
+            yaml_path.display()
+        ))
+    })?;
 
     let model = raw.model.map(|m| match m {
         ModelOverrideYaml::Plain(s) => ModelOverride::Alias(s),
