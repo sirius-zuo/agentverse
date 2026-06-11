@@ -14,7 +14,9 @@ pub struct WordCount;
 #[async_trait::async_trait]
 impl Tool for WordCount {
     type Args = WordCountArgs;
-    fn name(&self) -> &str { "word_count" }
+    fn name(&self) -> &str {
+        "word_count"
+    }
     fn description(&self) -> &str {
         "Count the number of whitespace-separated words in a text string. Returns an integer."
     }
@@ -31,18 +33,22 @@ mod tests {
     #[tokio::test]
     async fn word_count_counts_tokens() {
         let tool = WordCount;
-        let result = tool.execute(WordCountArgs {
-            text: "one two three four five".to_string(),
-        })
-        .await
-        .unwrap();
+        let result = tool
+            .execute(WordCountArgs {
+                text: "one two three four five".to_string(),
+            })
+            .await
+            .unwrap();
         assert_eq!(result, json!(5));
     }
 
     #[tokio::test]
     async fn word_count_empty_string_returns_zero() {
         let tool = WordCount;
-        let result = tool.execute(WordCountArgs { text: String::new() })
+        let result = tool
+            .execute(WordCountArgs {
+                text: String::new(),
+            })
             .await
             .unwrap();
         assert_eq!(result, json!(0));

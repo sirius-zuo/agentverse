@@ -14,7 +14,9 @@ pub struct CheckRefundEligibility;
 #[async_trait::async_trait]
 impl Tool for CheckRefundEligibility {
     type Args = CheckRefundEligibilityArgs;
-    fn name(&self) -> &str { "check_refund_eligibility" }
+    fn name(&self) -> &str {
+        "check_refund_eligibility"
+    }
     fn description(&self) -> &str {
         "Check whether a paid invoice is eligible for a refund. \
          Returns eligibility status, reason, and refund amount."
@@ -36,11 +38,12 @@ mod tests {
     #[tokio::test]
     async fn check_refund_eligibility_returns_eligible() {
         let tool = CheckRefundEligibility;
-        let result = tool.execute(CheckRefundEligibilityArgs {
-            invoice_id: "1042".to_string(),
-        })
-        .await
-        .unwrap();
+        let result = tool
+            .execute(CheckRefundEligibilityArgs {
+                invoice_id: "1042".to_string(),
+            })
+            .await
+            .unwrap();
         assert_eq!(result["eligible"], true);
         assert!(result["refund_amount_usd"].as_f64().unwrap() > 0.0);
     }

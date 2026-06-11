@@ -16,7 +16,9 @@ pub struct CountMentions;
 #[async_trait::async_trait]
 impl Tool for CountMentions {
     type Args = CountMentionsArgs;
-    fn name(&self) -> &str { "count_mentions" }
+    fn name(&self) -> &str {
+        "count_mentions"
+    }
     fn description(&self) -> &str {
         "Count how many whitespace-separated tokens in text contain the term \
          (case-insensitive). Returns an integer."
@@ -40,24 +42,26 @@ mod tests {
     #[tokio::test]
     async fn count_mentions_is_case_insensitive() {
         let tool = CountMentions;
-        let result = tool.execute(CountMentionsArgs {
-            term: "rust".to_string(),
-            text: "Rust is great. I love rust. RUST is fast.".to_string(),
-        })
-        .await
-        .unwrap();
+        let result = tool
+            .execute(CountMentionsArgs {
+                term: "rust".to_string(),
+                text: "Rust is great. I love rust. RUST is fast.".to_string(),
+            })
+            .await
+            .unwrap();
         assert_eq!(result, json!(3));
     }
 
     #[tokio::test]
     async fn count_mentions_returns_zero_for_no_match() {
         let tool = CountMentions;
-        let result = tool.execute(CountMentionsArgs {
-            term: "python".to_string(),
-            text: "Rust is great. I love rust.".to_string(),
-        })
-        .await
-        .unwrap();
+        let result = tool
+            .execute(CountMentionsArgs {
+                term: "python".to_string(),
+                text: "Rust is great. I love rust.".to_string(),
+            })
+            .await
+            .unwrap();
         assert_eq!(result, json!(0));
     }
 }
