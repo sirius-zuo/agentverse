@@ -826,9 +826,11 @@ AgentVerse uses a **three-layer prompt system** designed to maximize LLM prompt 
 
 | Layer | File | Contains | Cache behaviour |
 |---|---|---|---|
-| System | `system.j2` | Agent identity + rules | Cached in the system block — paid once per session |
-| Preamble | `react.j2` | Tool descriptions + format instructions + few-shot examples | Inserted as `messages[0]`; captured by the penultimate-message cache breakpoint |
+| System | `system.j2` | Agent identity + rules — prepended by `[skill instructions + docs]` when a skill is active, or by skill summaries during the routing phase | Cached in the system block — paid once per session |
+| Preamble | `react.j2` | Tool descriptions + format instructions + few-shot examples — **only inserted when a `prompts/` directory with a `react.j2` file is configured** (`PromptRegistry::new()` without a directory skips this layer entirely) | Inserted after the System message (first non-System position); captured by the penultimate-message cache breakpoint |
 | Conversation | *(memory)* | Thought / Action / Tool Result / Answer exchanges | Volatile |
+
+> **Skill effect on the preamble:** when a skill is active its `agentverse.tools` allowlist filters `active_tool_names` before `react.j2` is rendered, so only the skill's permitted tools appear in the preamble's tool block.
 
 ### Directory Layout
 
@@ -906,6 +908,22 @@ Assistant: {{ example.output }}
 input = "What is 6 * 7?"
 output = "Thought: I need to multiply.\nAction: calculator\nAction Input: {\"operation\": \"multiply\", \"a\": 6, \"b\": 7}"
 ```
+
+### SubAgent Prompt Assembly
+
+`SubAgentExecutor` bypasses the three-layer system entirely. It assembles messages directly in `build_initial_messages` without touching `system.j2`, `react.j2`, or skill context:
+
+```text
+[optional System message — spec.system_prompt only]
+User: Objective: <spec.objective>
+
+## Context
+### <resource.label>
+<resource.content>
+...
+```
+
+No `system.j2` is rendered. No preamble is inserted regardless of `PromptRegistry` configuration. The ReAct format instruction must come from the `spec.system_prompt` field or from the skill body when the subagent is invoked via `SubAgentTool`.
 
 ---
 

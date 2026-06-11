@@ -193,7 +193,7 @@ Agent::invoke(user_id, session_id, input)
   1. assert_owner(user_id, session_id)
   2. get/rehydrate Layer-1 CacheMemory from Layer-2 SessionMemory if cold
   3. retrieve scored Layer-3 LongtermMemory for the input (optional)
-  4. assemble messages: [system + long-term context] + cache + user_input
+  4. assemble messages: [skill instructions + system.j2 (or summaries + system.j2 if no skill bound)] + long-term context + cache + user_input
   5. strategy.run(messages)
   6. append_turn to Layer-1 cache and Layer-2 SessionMemory
   7. async: consolidate turn into Layer-3 LongtermMemory
