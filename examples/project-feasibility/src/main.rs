@@ -4,7 +4,7 @@ use agentverse_demo_tools::{
 };
 use agentverse_logging as avs_logging;
 use agentverse_mcp::{McpCatalogSource, McpClient, McpServer, McpTransport};
-use agentverse_subagent::{Budget, ResourceContent, SubAgentContext, SubAgentExecutor, SubAgentSpec};
+use agentverse_subagent::{Budget, ResourceContent, SubAgentContext, SubAgentExecutor, SubAgentHandle, SubAgentSpec};
 use agentverse_tools::ToolRegistry;
 use std::sync::Arc;
 use std::time::Duration;
@@ -68,91 +68,88 @@ async fn main() {
     // ── 4. Stage 1: three analysts in parallel ─────────────────────────────
     let base_ctx = SubAgentContext { resources: vec![], depth: 0 };
 
-    let tasks = vec![
-        (
-            SubAgentSpec {
-                name: "financial-analyst".into(),
-                system_prompt: Some(
-                    "You are a financial analyst. Use project_cost_estimator to estimate \
-                     total development cost and npv_calculator to evaluate long-term return. \
-                     Be specific with numbers."
-                        .into(),
-                ),
-                objective: format!(
-                    "Estimate total development cost, NPV, and 3-year ROI for: {}. \
-                     Assume 12% discount rate and 18-month development duration.",
-                    project
-                ),
-                model: None,
-                allowed_tools: vec![
-                    "project_cost_estimator".into(),
-                    "npv_calculator".into(),
-                ],
-                budget: Budget {
-                    max_steps: 8,
-                    max_tokens: 4000,
-                    timeout: Duration::from_secs(90),
-                },
-            },
-            base_ctx.clone(),
+    let financial_spec = SubAgentSpec {
+        name: "financial-analyst".into(),
+        system_prompt: Some(
+            "You are a financial analyst. Use project_cost_estimator to estimate \
+             total development cost and npv_calculator to evaluate long-term return. \
+             Be specific with numbers."
+                .into(),
         ),
-        (
-            SubAgentSpec {
-                name: "timeline-analyst".into(),
-                system_prompt: Some(
-                    "You are a project timeline analyst. Use milestone_scheduler to \
-                     project delivery phases from today's date."
-                        .into(),
-                ),
-                objective: format!(
-                    "Project a realistic delivery timeline for: {}. \
-                     Start from today. Include phases: Discovery (4w), MVP (12w), \
-                     Beta (8w), GA (4w). Each phase depends on the previous.",
-                    project
-                ),
-                model: None,
-                allowed_tools: vec!["milestone_scheduler".into()],
-                budget: Budget {
-                    max_steps: 5,
-                    max_tokens: 3000,
-                    timeout: Duration::from_secs(60),
-                },
-            },
-            base_ctx.clone(),
+        objective: format!(
+            "Estimate total development cost, NPV, and 3-year ROI for: {}. \
+             Assume 12% discount rate and 18-month development duration.",
+            project
         ),
-        (
-            SubAgentSpec {
-                name: "risk-analyst".into(),
-                system_prompt: Some(
-                    "You are a risk analyst. Use risk_adjusted_schedule to quantify \
-                     schedule uncertainty. Identify the top 5 technical and business risks."
-                        .into(),
-                ),
-                objective: format!(
-                    "Identify top 5 risks and quantify schedule risk using PERT \
-                     estimates for: {}",
-                    project
-                ),
-                model: None,
-                allowed_tools: vec!["risk_adjusted_schedule".into()],
-                budget: Budget {
-                    max_steps: 6,
-                    max_tokens: 3000,
-                    timeout: Duration::from_secs(60),
-                },
-            },
-            base_ctx.clone(),
+        model: None,
+        allowed_tools: vec![
+            "project_cost_estimator".into(),
+            "npv_calculator".into(),
+        ],
+        budget: Budget {
+            max_steps: 8,
+            max_tokens: 4000,
+            timeout: Duration::from_secs(90),
+        },
+    };
+
+    let timeline_spec = SubAgentSpec {
+        name: "timeline-analyst".into(),
+        system_prompt: Some(
+            "You are a project timeline analyst. Use milestone_scheduler to \
+             project delivery phases from today's date."
+                .into(),
         ),
-    ];
+        objective: format!(
+            "Project a realistic delivery timeline for: {}. \
+             Start from today. Include phases: Discovery (4w), MVP (12w), \
+             Beta (8w), GA (4w). Each phase depends on the previous.",
+            project
+        ),
+        model: None,
+        allowed_tools: vec!["milestone_scheduler".into()],
+        budget: Budget {
+            max_steps: 5,
+            max_tokens: 3000,
+            timeout: Duration::from_secs(60),
+        },
+    };
+
+    let risk_spec = SubAgentSpec {
+        name: "risk-analyst".into(),
+        system_prompt: Some(
+            "You are a risk analyst. Use risk_adjusted_schedule to quantify \
+             schedule uncertainty. Identify the top 5 technical and business risks."
+                .into(),
+        ),
+        objective: format!(
+            "Identify top 5 risks and quantify schedule risk using PERT \
+             estimates for: {}",
+            project
+        ),
+        model: None,
+        allowed_tools: vec!["risk_adjusted_schedule".into()],
+        budget: Budget {
+            max_steps: 6,
+            max_tokens: 3000,
+            timeout: Duration::from_secs(60),
+        },
+    };
 
     println!("\nRunning 3 analyst subagents in parallel...\n");
-    let results = executor.run_many(tasks).await;
+
+    // Spawn all 3 concurrently — each starts immediately. Storing (label, handle) pairs
+    // before awaiting keeps labels bound to the right task regardless of completion order.
+    let labeled: Vec<(&str, SubAgentHandle)> = vec![
+        ("Financial Analysis", executor.spawn(financial_spec, base_ctx.clone())),
+        ("Timeline Analysis", executor.spawn(timeline_spec, base_ctx.clone())),
+        ("Risk Analysis", executor.spawn(risk_spec, base_ctx.clone())),
+    ];
 
     // ── 5. Collect results as ResourceContent ──────────────────────────────
-    let labels = ["Financial Analysis", "Timeline Analysis", "Risk Analysis"];
     let mut resources = Vec::new();
-    for (label, result) in labels.iter().zip(results.iter()) {
-        match result {
+    for (label, handle) in labeled {
+        match handle.await_result().await {
             Ok(r) => {
                 println!("  [ok] {} ({} steps)", label, r.steps);
                 resources.push(ResourceContent {
