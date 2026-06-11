@@ -41,7 +41,9 @@ mod duration_secs {
                 let secs = n
                     .as_u64()
                     .or_else(|| n.as_f64().map(|f| f as u64))
-                    .ok_or_else(|| serde::de::Error::custom("timeout must be a non-negative number"))?;
+                    .ok_or_else(|| {
+                        serde::de::Error::custom("timeout must be a non-negative number")
+                    })?;
                 Ok(Duration::from_secs(secs))
             }
             other => Err(serde::de::Error::custom(format!(

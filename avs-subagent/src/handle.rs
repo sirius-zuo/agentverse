@@ -21,7 +21,11 @@ impl SubAgentHandle {
         receiver: oneshot::Receiver<Result<SubAgentResult, SubAgentError>>,
         handle: JoinHandle<()>,
     ) -> Self {
-        Self { id, receiver: Some(receiver), handle }
+        Self {
+            id,
+            receiver: Some(receiver),
+            handle,
+        }
     }
 }
 

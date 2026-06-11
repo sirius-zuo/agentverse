@@ -45,10 +45,7 @@ pub fn load_skill_subagent_spec(skill_dir: &Path) -> Result<Option<SubAgentSpec>
         }
     };
     let raw: SkillSubAgentYaml = serde_yaml::from_str(&content).map_err(|e| {
-        SubAgentError::Config(format!(
-            "Failed to parse {}: {e}",
-            yaml_path.display()
-        ))
+        SubAgentError::Config(format!("Failed to parse {}: {e}", yaml_path.display()))
     })?;
 
     let model = raw.model.map(|m| match m {

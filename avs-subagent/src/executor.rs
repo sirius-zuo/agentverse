@@ -127,7 +127,10 @@ fn resolve_model_name(override_: &ModelOverride) -> String {
             "sonnet" => "claude-sonnet-4-6".to_string(),
             "opus" => "claude-opus-4-8".to_string(),
             other => {
-                tracing::warn!(alias = other, "unknown model alias — passing through as raw model ID");
+                tracing::warn!(
+                    alias = other,
+                    "unknown model alias — passing through as raw model ID"
+                );
                 other.to_string()
             }
         },
