@@ -11,3 +11,7 @@ pub use npv_calculator::NpvCalculator;
 pub use project_cost_estimator::ProjectCostEstimator;
 pub use risk_adjusted_schedule::RiskAdjustedSchedule;
 pub use runway_projector::RunwayProjector;
+
+pub(crate) fn round2(v: f64) -> f64 {
+    (v * 100.0).round() / 100.0
+}

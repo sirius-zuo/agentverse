@@ -1,4 +1,5 @@
 use agentverse::{Tool, ToolResult};
+use crate::round2;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
@@ -16,10 +17,6 @@ pub struct MarketSizingArgs {
 }
 
 pub struct MarketSizingCalculator;
-
-fn round2(v: f64) -> f64 {
-    (v * 100.0).round() / 100.0
-}
 
 #[async_trait::async_trait]
 impl Tool for MarketSizingCalculator {
