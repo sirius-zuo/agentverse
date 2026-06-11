@@ -28,11 +28,25 @@ pub enum ModelOverride {
 
 mod duration_secs {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde_json::Value;
     use std::time::Duration;
     pub fn serialize<S: Serializer>(d: &Duration, s: S) -> Result<S::Ok, S::Error> {
         d.as_secs().serialize(s)
     }
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Duration, D::Error> {
-        Ok(Duration::from_secs(u64::deserialize(d)?))
+        // Accept both integer (120) and float (120.5) seconds. Floats are truncated
+        // to whole seconds; sub-second precision is not meaningful for agent timeouts.
+        match Value::deserialize(d)? {
+            Value::Number(n) => {
+                let secs = n
+                    .as_u64()
+                    .or_else(|| n.as_f64().map(|f| f as u64))
+                    .ok_or_else(|| serde::de::Error::custom("timeout must be a non-negative number"))?;
+                Ok(Duration::from_secs(secs))
+            }
+            other => Err(serde::de::Error::custom(format!(
+                "timeout must be a number (integer or float seconds), got {other}"
+            ))),
+        }
     }
 }
