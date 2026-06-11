@@ -1,5 +1,5 @@
-use agentverse::{Tool, ToolResult};
 use crate::round2;
+use agentverse::{Tool, ToolResult};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
@@ -25,19 +25,20 @@ pub struct ProjectCostEstimator;
 #[async_trait::async_trait]
 impl Tool for ProjectCostEstimator {
     type Args = ProjectCostArgs;
-    fn name(&self) -> &str { "project_cost_estimator" }
+    fn name(&self) -> &str {
+        "project_cost_estimator"
+    }
     fn description(&self) -> &str {
         "Estimate software project development cost and ROI. Calculates total cost, \
          monthly burn rate, and 2-year ROI given team size, salaries, duration, \
          overhead, and projected revenues."
     }
     async fn execute(&self, args: ProjectCostArgs) -> ToolResult {
-        let monthly_burn = args.team_size as f64
-            * args.avg_monthly_salary_usd
-            * (1.0 + args.overhead_pct);
+        let monthly_burn =
+            args.team_size as f64 * args.avg_monthly_salary_usd * (1.0 + args.overhead_pct);
         let total_cost = monthly_burn * args.duration_months as f64;
-        let cumulative_revenue = args.projected_revenue_year1_usd
-            + args.projected_revenue_year2_usd;
+        let cumulative_revenue =
+            args.projected_revenue_year1_usd + args.projected_revenue_year2_usd;
         let net = cumulative_revenue - total_cost;
         let roi_pct = if total_cost > 0.0 {
             (net / total_cost) * 100.0

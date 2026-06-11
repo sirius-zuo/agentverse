@@ -10,22 +10,26 @@ Under the hood: a three-layer memory architecture (in-process cache → durable 
 
 ```
 your binary
-  └── agentverse_agent::Agent
-        ├── agentverse_strategy::build() → Arc<dyn RunStrategy>
-        │     ├── ReActStrategy  (avs-react)
-        │     ├── PlanStrategy   (avs-plan)
-        │     └── HierarchicalStrategy (avs-plan)
-        ├── LlmRunner  (avs-core)
-        ├── ToolRegistry  (avs-tools)
-        ├── SkillConfig  (avs-skill, optional)
-        │     ├── SkillRegistry — loaded from skills/system/ and skills/user/
-        │     ├── SkillMode — Open (any skill) or Constrained (allowlist)
-        │     └── SkillRouter — keyword-overlap routing on first invoke
-        ├── Memory layers
-        │     ├── Layer 1: CacheMemory   — in-process RAM buffer, TTL-evicted
-        │     ├── Layer 2: SessionMemory — durable per-user conversation transcript (SQLite/Postgres)
-        │     └── Layer 3: LongtermMemory — distilled cross-session knowledge (vector store, optional)
-        └── HTTP server (avs-agent `http` feature, optional)
+  ├── agentverse_agent::Agent
+  │     ├── agentverse_strategy::build() → Arc<dyn RunStrategy>
+  │     │     ├── ReActStrategy  (avs-react)
+  │     │     ├── PlanStrategy   (avs-plan)
+  │     │     └── HierarchicalStrategy (avs-plan)
+  │     ├── LlmRunner  (avs-core)
+  │     ├── ToolRegistry  (avs-tools)
+  │     ├── SkillConfig  (avs-skill, optional)
+  │     │     ├── SkillRegistry — loaded from skills/system/ and skills/user/
+  │     │     ├── SkillMode — Open (any skill) or Constrained (allowlist)
+  │     │     └── SkillRouter — keyword-overlap routing on first invoke
+  │     ├── Memory layers
+  │     │     ├── Layer 1: CacheMemory   — in-process RAM buffer, TTL-evicted
+  │     │     ├── Layer 2: SessionMemory — durable per-user conversation transcript (SQLite/Postgres)
+  │     │     └── Layer 3: LongtermMemory — distilled cross-session knowledge (vector store, optional)
+  │     └── HTTP server (avs-agent `http` feature, optional)
+  └── agentverse_subagent::SubAgentExecutor (optional, for multi-agent pipelines)
+        ├── run(&spec, ctx)              — single subagent, sequential
+        ├── run_many(tasks)              — parallel, results in completion order
+        └── spawn(spec, ctx) → Handle   — parallel, input order via await_result()
 ```
 
 `Agent` is the only way to invoke the LLM. You choose a strategy with `agentverse_strategy::build(StrategyKind::*)` and pass it to `Agent::new`. The agent handles session history, memory assembly, prompt construction, skill routing, and optional HTTP serving.
@@ -36,6 +40,7 @@ your binary
 - **Strategies**: ReAct, Plan-and-Execute, Hierarchical planning. Selected at construction via `agentverse-strategy::build`. Strategies are pure `Vec<Message> → String` with no memory coupling.
 - **Skill system**: `agentverse-skill` provides file-based skill discovery, keyword-overlap routing, and per-session skill context. Skills are Markdown files (`SKILL.md`) that declare LLM instructions, tool allowlists, and metadata. Two load slots — `system/` and `user/` — support operator overrides without code changes.
 - **Three-layer memory**: Layer 1 `CacheMemory` (in-process, TTL), Layer 2 `SessionMemory` (durable transcript), Layer 3 `LongtermMemory` (distilled cross-session knowledge, opt-in).
+- **Subagent runtime**: `agentverse-subagent` provides isolated, budget-limited worker agents (`SubAgentExecutor`). Each subagent runs its own ReAct loop with a scoped tool registry, a step/token/timeout budget, and returns a single text answer. Supports programmatic orchestration (`run`, `run_many`, `spawn`) and LLM-driven dispatch via the `spawn_subagent` tool.
 - **Multi-user sessions**: `Agent` routes through `SessionManager` for durable per-user conversation history with ownership enforcement.
 - **HTTP sidecar**: `Agent::new(..., enable_http_server: true)` spawns an HTTP server as a background task. The agent can run without it; the server cannot run without the agent.
 - **Agent-owned integrations**: `IntegrationRuntime` reads connector config, starts Slack/GitHub/WhatsApp or console connectors, calls an agent handler, and sends responses.
@@ -307,6 +312,68 @@ McpLoader::load(&registry, &configs).await?;
 
 Stdio transport spawns a subprocess; Streamable HTTP uses the MCP 2025-03-26 spec.
 
+## Subagents
+
+`agentverse-subagent` lets you orchestrate isolated, budget-limited worker agents from your binary or from within an agent's skill. Each subagent runs its own ReAct loop with a scoped tool set and returns a single text answer — invisible to the parent's session history.
+
+**Programmatic orchestration** — `SubAgentExecutor` drives subagents directly from Rust:
+
+```rust
+use agentverse_subagent::{
+    Budget, ResourceContent, SubAgentContext, SubAgentExecutor, SubAgentHandle, SubAgentSpec,
+};
+use std::sync::Arc;
+use std::time::Duration;
+
+let executor = SubAgentExecutor::new(
+    Arc::clone(&connection_manager),
+    Arc::clone(&tools),   // subagents only see tools named in spec.allowed_tools
+    Arc::clone(&prompts),
+);
+
+// Run one subagent sequentially
+let result = executor.run(&SubAgentSpec {
+    name: "analyst".into(),
+    objective: "Estimate the NPV for project X assuming 12% discount rate.".into(),
+    system_prompt: Some("You are a financial analyst.".into()),
+    model: None,   // inherit parent model; or Some(ModelOverride::Alias("haiku"))
+    allowed_tools: vec!["npv_calculator".into()],
+    budget: Budget { max_steps: 8, max_tokens: 4000, timeout: Duration::from_secs(90) },
+}, SubAgentContext { resources: vec![], depth: 0 }).await?;
+
+// Run multiple subagents in parallel — spawn+await_result preserves input order
+let labeled: Vec<(&str, SubAgentHandle)> = vec![
+    ("Financial", executor.spawn(financial_spec, ctx.clone())),
+    ("Timeline",  executor.spawn(timeline_spec,  ctx.clone())),
+    ("Risk",      executor.spawn(risk_spec,       ctx.clone())),
+];
+for (label, handle) in labeled {
+    println!("{}: {}", label, handle.await_result().await?.answer);
+}
+
+// Chain outputs via ResourceContent
+let synthesis_ctx = SubAgentContext {
+    resources: vec![
+        ResourceContent { label: "Financial".into(), content: financial.answer },
+        ResourceContent { label: "Risk".into(),      content: risk.answer },
+    ],
+    depth: 0,
+};
+```
+
+**LLM-driven orchestration** — register `SubAgentTool` so the LLM can call `spawn_subagent` as a tool. A `SKILL.md` body instructs the model when and how to delegate:
+
+```rust
+let executor = Arc::new(SubAgentExecutor::new(cm, tools, prompts));
+let agent_tools = ToolRegistry::new();
+SubAgentExecutor::register_tool(&executor, &agent_tools);
+// SKILL.md body tells the LLM to call spawn_subagent for specific workflows
+```
+
+Depth is hard-limited to 1 — subagents cannot spawn nested subagents.
+
+See `examples/project-feasibility` (programmatic) and `examples/business-report` (LLM-driven).
+
 ## Prompt Templates
 
 AgentVerse uses `PromptRegistry` to load embedded defaults and optional `.j2` templates from a prompts directory.
@@ -346,6 +413,7 @@ let registry = Arc::new(PromptRegistry::from_config(&PromptConfig {
 | `avs-router` | `agentverse-router` | Strategy router |
 | `avs-tools` | `agentverse-tools` | Built-in tools, `ToolRegistry` with BM25 search, `ActiveToolSet`, parallel dispatch |
 | `avs-mcp` | `agentverse-mcp` | MCP client (stdio + Streamable HTTP), `McpServer`, `McpCatalogSource`, `McpLoader` |
+| `avs-subagent` | `agentverse-subagent` | Subagent runtime: `SubAgentExecutor`, `SubAgentSpec`, `Budget`, `SubAgentHandle`, `SubAgentTool` (`spawn_subagent`) |
 | `avs-memory` | `agentverse-memory` | Layer-1 working buffer (`SimpleMemory`, `AgentMemory`) and `LongTermBackend` trait |
 | `avs-memory-lancedb` | `agentverse-memory-lancedb` | LanceDB long-term memory backend |
 | `avs-memory-pgvector` | `agentverse-memory-pgvector` | pgvector memory backend and Postgres session store |
@@ -361,6 +429,14 @@ The three skill examples form a progression of skill-system concepts:
 | `example-hello-agent` | `Open` | Auto-routing | General-purpose REPL; Extend pattern (user/ adds travel-advisor) |
 | `example-web-search-agent` | `Constrained(["web-search"])` | Auto-routing | Constrained routing; Shadow pattern (user/ overrides system web-search) |
 | `example-code-review-agent` | `Open` | Explicit (`create_session_with_skill`) | Explicit binding; tool restriction (file_search + shell only) |
+
+Multi-agent examples (require a local LLM — set `MODEL_BASE_URL`):
+
+| Package | Orchestration | Concept demonstrated |
+|---|---|---|
+| `agentverse-demo-tools` | — (library) | Six domain tools (`ProjectCostEstimator`, `NpvCalculator`, `MilestoneScheduler`, `RunwayProjector`, `MarketSizingCalculator`, `RiskAdjustedSchedule`) exposed via MCP; shared by both examples below |
+| `example-project-feasibility` | Programmatic | `SubAgentExecutor::spawn` fans out three analyst subagents in parallel; a synthesis subagent reads all three as `ResourceContent` |
+| `example-business-report` | LLM-driven | `SubAgentTool` registered in an `Agent`; `business-report` skill instructs the LLM to spawn three analyst subagents and synthesize a report |
 
 Other examples:
 
@@ -476,12 +552,16 @@ AgentVerse/
 |-- avs-router/
 |-- avs-tools/
 |-- avs-mcp/
+|-- avs-subagent/
 |-- avs-memory/
 |-- avs-memory-lancedb/
 |-- avs-memory-pgvector/
 |-- avs-guardrails/
 |-- avs-logging/
 `-- examples/
+    |-- demo-tools/          (library: 6 MCP-exposed domain tools)
+    |-- project-feasibility/ (programmatic multi-agent pipeline)
+    `-- business-report/     (LLM-driven multi-agent via skill)
 ```
 
 ## License

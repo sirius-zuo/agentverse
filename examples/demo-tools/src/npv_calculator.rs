@@ -1,5 +1,5 @@
-use agentverse::{Tool, ToolResult};
 use crate::round2;
+use agentverse::{Tool, ToolResult};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
@@ -28,7 +28,9 @@ pub struct NpvCalculator;
 #[async_trait::async_trait]
 impl Tool for NpvCalculator {
     type Args = NpvArgs;
-    fn name(&self) -> &str { "npv_calculator" }
+    fn name(&self) -> &str {
+        "npv_calculator"
+    }
     fn description(&self) -> &str {
         "Calculate Net Present Value (NPV), approximate Internal Rate of Return (IRR), \
          and payback period for a project given initial investment, annual cash flows, \
@@ -43,15 +45,26 @@ impl Tool for NpvCalculator {
 
         // IRR via bisection: find rate where NPV = 0
         let irr = {
-            let lo_val = npv_at_rate(&args.annual_cash_flows_usd, -0.99, args.initial_investment_usd);
-            let hi_val = npv_at_rate(&args.annual_cash_flows_usd, 10.0, args.initial_investment_usd);
+            let lo_val = npv_at_rate(
+                &args.annual_cash_flows_usd,
+                -0.99,
+                args.initial_investment_usd,
+            );
+            let hi_val = npv_at_rate(
+                &args.annual_cash_flows_usd,
+                10.0,
+                args.initial_investment_usd,
+            );
             if lo_val * hi_val < 0.0 {
                 let mut lo = -0.99_f64;
                 let mut hi = 10.0_f64;
                 for _ in 0..50 {
                     let mid = (lo + hi) / 2.0;
-                    if npv_at_rate(&args.annual_cash_flows_usd, mid, args.initial_investment_usd)
-                        > 0.0
+                    if npv_at_rate(
+                        &args.annual_cash_flows_usd,
+                        mid,
+                        args.initial_investment_usd,
+                    ) > 0.0
                     {
                         lo = mid;
                     } else {

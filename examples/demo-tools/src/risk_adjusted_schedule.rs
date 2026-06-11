@@ -1,5 +1,5 @@
-use agentverse::{Tool, ToolError, ToolResult};
 use crate::round2;
+use agentverse::{Tool, ToolError, ToolResult};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
@@ -25,7 +25,9 @@ pub struct RiskAdjustedSchedule;
 #[async_trait::async_trait]
 impl Tool for RiskAdjustedSchedule {
     type Args = RiskScheduleArgs;
-    fn name(&self) -> &str { "risk_adjusted_schedule" }
+    fn name(&self) -> &str {
+        "risk_adjusted_schedule"
+    }
     fn description(&self) -> &str {
         "Apply PERT analysis to quantify schedule risk. Returns expected duration, \
          standard deviation, and p80/p95 confidence intervals for the total project."

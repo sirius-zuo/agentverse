@@ -1,5 +1,5 @@
-use agentverse::{Tool, ToolResult};
 use crate::round2;
+use agentverse::{Tool, ToolResult};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
@@ -21,7 +21,9 @@ pub struct MarketSizingCalculator;
 #[async_trait::async_trait]
 impl Tool for MarketSizingCalculator {
     type Args = MarketSizingArgs;
-    fn name(&self) -> &str { "market_sizing_calculator" }
+    fn name(&self) -> &str {
+        "market_sizing_calculator"
+    }
     fn description(&self) -> &str {
         "Calculate TAM, SAM, and SOM from market size and capture assumptions. \
          Returns implied annual and monthly revenue targets at full market capture."
@@ -62,6 +64,9 @@ mod tests {
         assert_eq!(result["som_usd"], 5_000_000.0);
         let monthly = result["monthly_revenue_target_usd"].as_f64().unwrap();
         // SOM = $5M, years_to_som = 3 → monthly target = $5M / (3 × 12) = $138,888.89
-        assert!((monthly - 5_000_000.0 / 36.0).abs() < 0.01, "monthly {monthly}");
+        assert!(
+            (monthly - 5_000_000.0 / 36.0).abs() < 0.01,
+            "monthly {monthly}"
+        );
     }
 }

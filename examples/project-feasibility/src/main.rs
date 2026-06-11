@@ -4,7 +4,9 @@ use agentverse_demo_tools::{
 };
 use agentverse_logging as avs_logging;
 use agentverse_mcp::{McpCatalogSource, McpClient, McpServer, McpTransport};
-use agentverse_subagent::{Budget, ResourceContent, SubAgentContext, SubAgentExecutor, SubAgentHandle, SubAgentSpec};
+use agentverse_subagent::{
+    Budget, ResourceContent, SubAgentContext, SubAgentExecutor, SubAgentHandle, SubAgentSpec,
+};
 use agentverse_tools::ToolRegistry;
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,11 +22,11 @@ async fn main() {
     }
     let project = args[1..].join(" ");
 
-    let base_url = std::env::var("MODEL_BASE_URL")
-        .unwrap_or_else(|_| "http://localhost:9090/v1".to_string());
+    let base_url =
+        std::env::var("MODEL_BASE_URL").unwrap_or_else(|_| "http://localhost:9090/v1".to_string());
     let api_key = std::env::var("MODEL_API_KEY").unwrap_or_default();
-    let model_name = std::env::var("MODEL_NAME")
-        .unwrap_or_else(|_| "Qwen3.6-35B-A3B-GGUF".to_string());
+    let model_name =
+        std::env::var("MODEL_NAME").unwrap_or_else(|_| "Qwen3.6-35B-A3B-GGUF".to_string());
 
     // ── 1. MCP server ──────────────────────────────────────────────────────
     let server_registry = ToolRegistry::new();
@@ -56,9 +58,7 @@ async fn main() {
     let cm = Arc::new(ConnectionManager::openai(&base_url, &model_name, &api_key));
     let prompts = Arc::new(
         PromptRegistry::from_config(&PromptConfig {
-            prompts_dir: Some(
-                concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string(),
-            ),
+            prompts_dir: Some(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string()),
             ..Default::default()
         })
         .expect("prompts"),
@@ -66,7 +66,10 @@ async fn main() {
     let executor = SubAgentExecutor::new(cm, mcp_tools, prompts);
 
     // ── 4. Stage 1: three analysts in parallel ─────────────────────────────
-    let base_ctx = SubAgentContext { resources: vec![], depth: 0 };
+    let base_ctx = SubAgentContext {
+        resources: vec![],
+        depth: 0,
+    };
 
     let financial_spec = SubAgentSpec {
         name: "financial-analyst".into(),
@@ -82,10 +85,7 @@ async fn main() {
             project
         ),
         model: None,
-        allowed_tools: vec![
-            "project_cost_estimator".into(),
-            "npv_calculator".into(),
-        ],
+        allowed_tools: vec!["project_cost_estimator".into(), "npv_calculator".into()],
         budget: Budget {
             max_steps: 8,
             max_tokens: 4000,
@@ -141,8 +141,14 @@ async fn main() {
     // Spawn all 3 concurrently — each starts immediately. Storing (label, handle) pairs
     // before awaiting keeps labels bound to the right task regardless of completion order.
     let labeled: Vec<(&str, SubAgentHandle)> = vec![
-        ("Financial Analysis", executor.spawn(financial_spec, base_ctx.clone())),
-        ("Timeline Analysis", executor.spawn(timeline_spec, base_ctx.clone())),
+        (
+            "Financial Analysis",
+            executor.spawn(financial_spec, base_ctx.clone()),
+        ),
+        (
+            "Timeline Analysis",
+            executor.spawn(timeline_spec, base_ctx.clone()),
+        ),
         ("Risk Analysis", executor.spawn(risk_spec, base_ctx.clone())),
     ];
 
@@ -189,7 +195,10 @@ async fn main() {
             timeout: Duration::from_secs(90),
         },
     };
-    let synthesis_ctx = SubAgentContext { resources, depth: 0 };
+    let synthesis_ctx = SubAgentContext {
+        resources,
+        depth: 0,
+    };
 
     match executor.run(&synthesis_spec, synthesis_ctx).await {
         Ok(r) => println!("{}", r.answer),

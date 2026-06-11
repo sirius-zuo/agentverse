@@ -28,7 +28,9 @@ pub struct MilestoneScheduler;
 #[async_trait::async_trait]
 impl Tool for MilestoneScheduler {
     type Args = MilestoneArgs;
-    fn name(&self) -> &str { "milestone_scheduler" }
+    fn name(&self) -> &str {
+        "milestone_scheduler"
+    }
     fn description(&self) -> &str {
         "Schedule project phases from a start date, respecting phase dependencies. \
          Returns per-phase start/end dates, total project duration in weeks and months."
@@ -96,7 +98,11 @@ mod tests {
         let args = MilestoneArgs {
             start_date: "2026-01-01".into(),
             phases: vec![
-                Phase { name: "Discovery".into(), duration_weeks: 4, depends_on: vec![] },
+                Phase {
+                    name: "Discovery".into(),
+                    duration_weeks: 4,
+                    depends_on: vec![],
+                },
                 Phase {
                     name: "MVP".into(),
                     duration_weeks: 8,
@@ -107,9 +113,9 @@ mod tests {
         let result = tool.execute(args).await.unwrap();
         let phases = result["phases"].as_array().unwrap();
         assert_eq!(phases[0]["start"], "2026-01-01");
-        assert_eq!(phases[0]["end"], "2026-01-29");   // +28 days
+        assert_eq!(phases[0]["end"], "2026-01-29"); // +28 days
         assert_eq!(phases[1]["start"], "2026-01-29");
-        assert_eq!(phases[1]["end"], "2026-03-26");   // +56 days
+        assert_eq!(phases[1]["end"], "2026-03-26"); // +56 days
         assert_eq!(result["total_duration_weeks"], 12);
     }
 

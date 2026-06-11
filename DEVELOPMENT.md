@@ -31,6 +31,7 @@ AgentVerse/
 ├── avs-skill/             # Skill system: SKILL.md parser, SkillRegistry, SkillRouter, SkillMode, SkillConfig
 ├── avs-strategy/          # build() factory + StrategyKind enum; re-exports all strategies
 ├── avs-session/           # Session model, SessionManager, SessionMemory trait, SqliteSessionMemory
+├── avs-subagent/          # Subagent runtime: SubAgentExecutor, SubAgentSpec, Budget, SubAgentHandle, SubAgentTool
 ├── avs-logging/           # avs_logging::init() (RUST_LOG / LOG_FORMAT)
 ├── avs-react/             # ReAct strategy loop
 ├── avs-plan/              # Plan-and-Execute + Hierarchical strategies
@@ -50,7 +51,10 @@ AgentVerse/
     ├── code-review-agent/  # Explicit skill binding; Hierarchical planning with FileSearch + ShellTool
     ├── slack-hr-assistant/ # IntegrationRuntime Slack/console bot
     ├── http-agent/         # Agent with enable_http_server=true
-    └── mcp-demo/           # Full MCP round-trip: McpServer + McpCatalogSource + agent
+    ├── mcp-demo/           # Full MCP round-trip: McpServer + McpCatalogSource + agent
+    ├── demo-tools/         # Library: 6 MCP-exposed domain tools used by multi-agent examples
+    ├── project-feasibility/ # Programmatic multi-agent pipeline (SubAgentExecutor::spawn + synthesis)
+    └── business-report/    # LLM-driven multi-agent via business-report skill + SubAgentTool
 ```
 
 ### Key Concepts
@@ -69,6 +73,10 @@ AgentVerse/
 | **SessionMemory** | `agentverse-session` | Layer-2 durable conversation transcript; `SessionManager` wraps it with ownership checks |
 | **LongtermMemory** | `agentverse` | Layer-3 cross-session knowledge store; opt-in via `Agent::new(..., Some(store))` |
 | **RunStrategy** | `agentverse` | Trait implemented by all strategies; pure `Vec<Message> → String`, no memory coupling |
+| **SubAgentExecutor** | `agentverse-subagent` | Orchestrates isolated worker agents; cloneable; built alongside (not inside) `Agent` |
+| **SubAgentSpec** / **Budget** | `agentverse-subagent` | Describes one worker: objective, system prompt, allowed tools, model override, step/token/timeout budget |
+| **SubAgentHandle** | `agentverse-subagent` | Returned by `executor.spawn()`; call `await_result().await` to get the result in input order |
+| **ResourceContent** | `agentverse-subagent` | Named artifact (`label`, `content`) injected into a subagent's prompt via `SubAgentContext.resources` |
 
 ---
 
@@ -649,6 +657,165 @@ See `examples/mcp-demo` for a self-contained round-trip demonstration.
 
 ---
 
+## Using the SubAgent Runtime
+
+`agentverse-subagent` provides isolated worker agents for multi-agent pipelines. Each subagent runs its own ReAct loop with a scoped tool registry, a step/token/timeout budget, and returns a single text answer — invisible to the parent's session history.
+
+### Core Types
+
+| Type | Description |
+|---|---|
+| `SubAgentExecutor` | Cloneable orchestrator; wraps `ConnectionManager`, `ToolRegistry`, and `PromptRegistry` |
+| `SubAgentSpec` | Name, objective, optional system_prompt, model override, allowed tools, `Budget` |
+| `Budget` | `max_steps: usize`, `max_tokens: u32`, `timeout: Duration` |
+| `SubAgentContext` | `resources: Vec<ResourceContent>`, `depth: usize` (must be 0 for root callers) |
+| `ResourceContent` | `label: String`, `content: String` — appears as `### label\ncontent` in the subagent's prompt |
+| `SubAgentHandle` | Returned by `spawn()`; `await_result().await` returns `Result<SubAgentResult, SubAgentError>` |
+| `SubAgentResult` | `answer: String`, `usage: UsageStats`, `steps: usize` |
+| `SubAgentError` | `DepthExceeded`, `StepBudgetExceeded { steps }`, `TokenBudgetExceeded { used, limit }`, `Timeout { elapsed }`, `Llm(AgentError)`, `Panic(String)` |
+
+### Building the Executor
+
+`SubAgentExecutor` is created alongside, not inside, `Agent`. It shares the same `ConnectionManager` and `ToolRegistry`:
+
+```rust
+use agentverse_subagent::{Budget, SubAgentContext, SubAgentExecutor, SubAgentSpec};
+use std::sync::Arc;
+use std::time::Duration;
+
+let executor = SubAgentExecutor::new(
+    Arc::clone(&connection_manager),
+    Arc::clone(&tool_registry),   // subagents only see tools listed in allowed_tools
+    Arc::clone(&prompt_registry),
+);
+```
+
+### Running Subagents
+
+**Sequential (`run`):**
+
+```rust
+let result = executor.run(&SubAgentSpec {
+    name: "analyst".into(),
+    objective: "Estimate the NPV for project X assuming 12% discount rate.".into(),
+    system_prompt: Some("You are a financial analyst.".into()),
+    model: None,   // inherit parent; or Some(ModelOverride::Alias("haiku".into()))
+    allowed_tools: vec!["npv_calculator".into()],
+    budget: Budget {
+        max_steps: 8,
+        max_tokens: 4000,
+        timeout: Duration::from_secs(90),
+    },
+}, SubAgentContext { resources: vec![], depth: 0 }).await?;
+
+println!("{}", result.answer);    // final answer text
+println!("steps={} tokens={}", result.steps,
+    result.usage.input_tokens + result.usage.output_tokens);
+```
+
+**Parallel, input order preserved (`spawn` + `await_result`):**
+
+All three subagents start immediately via `tokio::spawn`. Awaiting handles in input order costs no extra wall-clock time — the slowest task determines total duration.
+
+```rust
+use agentverse_subagent::SubAgentHandle;
+
+let labeled: Vec<(&str, SubAgentHandle)> = vec![
+    ("Financial", executor.spawn(financial_spec, ctx.clone())),
+    ("Timeline",  executor.spawn(timeline_spec,  ctx.clone())),
+    ("Risk",      executor.spawn(risk_spec,       ctx.clone())),
+];
+for (label, handle) in labeled {
+    match handle.await_result().await {
+        Ok(r)  => println!("{}: {}", label, r.answer),
+        Err(e) => println!("{}: FAILED — {}", label, e),
+    }
+}
+```
+
+**Parallel, completion order (`run_many`):**
+
+`run_many` uses `JoinSet::join_next` and returns results as tasks complete — not in input order. Use `spawn` + `await_result` whenever labels or sequence matter.
+
+```rust
+let results = executor.run_many(tasks).await;  // Vec<Result<SubAgentResult, SubAgentError>>
+```
+
+### Chaining with ResourceContent
+
+Pass prior results into a downstream subagent via `SubAgentContext.resources`. Resources appear as `### label` sections in the subagent's initial user message:
+
+```rust
+use agentverse_subagent::ResourceContent;
+
+let synthesis_ctx = SubAgentContext {
+    resources: vec![
+        ResourceContent { label: "Financial Analysis".into(), content: financial.answer },
+        ResourceContent { label: "Risk Analysis".into(),      content: risk.answer },
+    ],
+    depth: 0,
+};
+let report = executor.run(&synthesis_spec, synthesis_ctx).await?;
+```
+
+### LLM-Driven Orchestration via SubAgentTool
+
+Register `SubAgentTool` so the LLM can call `spawn_subagent` as a tool. Pair with a `SKILL.md` that instructs the LLM when to delegate:
+
+```rust
+let executor = Arc::new(SubAgentExecutor::new(cm, tools, prompts));
+let agent_tools = ToolRegistry::new();
+SubAgentExecutor::register_tool(&executor, &agent_tools);   // registers "spawn_subagent"
+
+let agent = Agent::new(runner, agent_tools, prompts, session, strategy, false, None, Some(skills));
+```
+
+In `SKILL.md`, use prose — not template variables — to reference the user's input. The parser stores the body verbatim with no substitution:
+
+```markdown
+## Step 1 — spawn analyst
+Call spawn_subagent with name="market-analyst". The objective should ask the analyst
+to assess the market opportunity for the user's specific company/product...
+```
+
+### Model Overrides
+
+```rust
+use agentverse_subagent::ModelOverride;
+
+spec.model = Some(ModelOverride::Alias("haiku".into()));        // → claude-haiku-4-5-20251001
+spec.model = Some(ModelOverride::Alias("sonnet".into()));       // → claude-sonnet-4-6
+spec.model = Some(ModelOverride::Alias("opus".into()));         // → claude-opus-4-8
+spec.model = Some(ModelOverride::Id("custom-model-id".into())); // raw ID passthrough
+```
+
+### Depth Limit
+
+Subagents cannot spawn nested subagents. `filter_by_names` always excludes `spawn_subagent` from scoped tool registries, and a depth guard in `SubAgentExecutor::run` returns `SubAgentError::DepthExceeded` as defense-in-depth. Maximum supported depth is 1.
+
+### Testing Tools Used by Subagents
+
+Test tool computation logic directly — no executor or LLM required:
+
+```rust
+#[tokio::test]
+async fn runway_projector_breakeven() {
+    let tool = RunwayProjector;
+    let result = tool.execute(RunwayArgs {
+        initial_funding_usd: 500_000.0,
+        monthly_burn_usd: 10_000.0,
+        monthly_revenue_usd: 8_000.0,
+        monthly_revenue_growth_pct: 0.05,
+    }).await.unwrap();
+    // Month 5: revenue ≈ $9,724 ≥ $10,000? → verify break-even timing
+    assert!(result["breakeven_month"].as_u64().unwrap() <= 6);
+}
+```
+
+Integration tests for full subagent pipelines require a running model server (`MODEL_BASE_URL`).
+
+---
+
 ## Prompt Engineering
 
 AgentVerse uses a **three-layer prompt system** designed to maximize LLM prompt cache reuse.
@@ -988,6 +1155,7 @@ Strategy completed        iteration=3
 | `agentverse-guardrails` | `check_prompt`, `check_output`, `RateLimiter` |
 | `agentverse-tools` | `ToolRegistry`, `ActiveToolSet`, `ToolOptions`, `ExecutionMode`, `FindToolsTool`, `Calculator`, `DateTimeTool`, `FileSearch`, `HttpClient`, `ShellTool`, `WebSearch` |
 | `agentverse-mcp` | `McpClient`, `McpServer`, `McpTransport`, `McpCatalogSource`, `McpLoader`, `McpServerConfig`, `McpToolAdapter`, `McpError` |
+| `agentverse-subagent` | `SubAgentExecutor`, `SubAgentSpec`, `Budget`, `ModelOverride`, `SubAgentContext`, `ResourceContent`, `SubAgentHandle`, `SubAgentResult`, `SubAgentError`, `SubAgentTool` |
 | `agentverse-integration` | `IntegrationRuntime`, `Event` |
 
 ### ProviderConfig Enum
