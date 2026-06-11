@@ -1,0 +1,15 @@
+[package]
+name = "example-project-feasibility"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+agentverse              = { path = "../../avs-core" }
+agentverse-demo-tools   = { path = "../demo-tools" }
+agentverse-logging      = { path = "../../avs-logging" }
+agentverse-mcp          = { path = "../../avs-mcp" }
+agentverse-subagent     = { path = "../../avs-subagent" }
+agentverse-tools        = { path = "../../avs-tools" }
+tokio   = { workspace = true, features = ["time"] }
+tracing = { workspace = true }
