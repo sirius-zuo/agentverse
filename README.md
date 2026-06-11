@@ -438,6 +438,13 @@ Multi-agent examples (require a local LLM — set `MODEL_BASE_URL`):
 | `example-project-feasibility` | Programmatic | `SubAgentExecutor::spawn` fans out three analyst subagents in parallel; a synthesis subagent reads all three as `ResourceContent` |
 | `example-business-report` | LLM-driven | `SubAgentTool` registered in an `Agent`; `business-report` skill instructs the LLM to spawn three analyst subagents and synthesize a report |
 
+Staged skill workflow examples (require `ANTHROPIC_API_KEY` + `MODEL_NAME`):
+
+| Package | Pattern | Strategies | Concept demonstrated |
+|---|---|---|---|
+| `example-doc-pipeline` | A — self-directing chain | ReAct → Plan → ReAct | Skills declare their own successors via `NEXT_SKILL: <name>`; chain topology lives in skills, not in `main.rs` |
+| `example-support-router` | C — coordinator dispatch | React (coordinator) + Hierarchical (billing) + React (specialists) | Coordinator emits a JSON routing plan; `main.rs` dispatches each step to the specialist agent with the matching skill |
+
 Other examples:
 
 | Package | Description |
