@@ -161,6 +161,38 @@ impl ConnectionManager {
         self
     }
 
+    /// Return a new `ConnectionManager` targeting a different model. Used by
+    /// `SubAgentExecutor` for per-SubAgent model overrides.
+    pub fn with_model(&self, model_name: &str) -> Self {
+        let provider: Box<dyn ModelProvider> = match self.provider.name() {
+            "anthropic" => Box::new(AnthropicProvider::new()),
+            "gemini" => Box::new(GeminiProvider::new()),
+            "openai" => Box::new(OpenAICompatible::new()),
+            other => panic!("with_model: unknown provider name {:?}", other),
+        };
+        Self {
+            client: self.client.clone(),
+            api_base: self.api_base.clone(),
+            api_key: self.api_key.clone(),
+            model_name: model_name.to_string(),
+            provider,
+            // SubAgent model overrides start with a fresh circuit breaker —
+            // the old breaker's state is irrelevant for a different model endpoint.
+            circuit_breaker: Arc::new(Mutex::new(CircuitBreaker::new(5, 30))),
+            max_retries: self.max_retries,
+            retry_delay_ms: self.retry_delay_ms,
+        }
+    }
+
+    /// Expose provider's `build_request` for tests only. Not for production use.
+    #[doc(hidden)]
+    pub fn provider_build_request_for_test(
+        &self,
+        request: crate::model::GenerateRequest,
+    ) -> Result<serde_json::Value, crate::error::ModelError> {
+        self.provider.build_request(&self.model_name, request)
+    }
+
     pub async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, ModelError> {
         // 1. Log prompt
         tracing::debug!(">>>>>>>>>> LLM PROMPT BEGIN <<<<<<<<<<");

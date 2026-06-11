@@ -19,6 +19,7 @@ agentverse-skill = { path = "../avs-skill" }
 agentverse = { path = "../avs-core" }
 agentverse-session = { path = "../avs-session" }
 agentverse-strategy = { path = "../avs-strategy" }
+agentverse-subagent  = { path = "../avs-subagent" }
 agentverse-tools = { path = "../avs-tools" }
 thiserror.workspace = true
 tokio = { workspace = true }

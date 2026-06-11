@@ -1,0 +1,24 @@
+[package]
+name = "agentverse-subagent"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+agentverse          = { path = "../avs-core" }
+agentverse-tools    = { path = "../avs-tools" }
+agentverse-react    = { path = "../avs-react" }
+async-trait         = { workspace = true }
+schemars            = { version = "0.8", features = ["derive"] }
+serde               = { workspace = true, features = ["derive"] }
+serde_json          = { workspace = true }
+serde_yaml          = { workspace = true }
+thiserror           = { workspace = true }
+tokio               = { workspace = true, features = ["time", "sync"] }
+tracing             = { workspace = true }
+uuid                = { workspace = true }
+
+[dev-dependencies]
+tokio       = { workspace = true, features = ["rt-multi-thread", "macros"] }
+httpmock    = { workspace = true }
+tempfile    = "3"

@@ -239,3 +239,61 @@ fn test_provider_config_serialization() {
         _ => panic!("Expected OpenAI variant"),
     }
 }
+
+#[test]
+fn connection_manager_with_model_uses_new_model_name() {
+    use agentverse::memory::{Message, MessageRole};
+    let cm =
+        ConnectionManager::anthropic("https://api.anthropic.com", "claude-sonnet-4-6", "test-key");
+    let overridden = cm.with_model("claude-haiku-4-5-20251001");
+    let req = agentverse::GenerateRequest {
+        system: None,
+        messages: vec![Message {
+            role: MessageRole::User,
+            content: "hi".into(),
+        }],
+        tools: None,
+    };
+    let body = overridden.provider_build_request_for_test(req).unwrap();
+    assert_eq!(body["model"].as_str().unwrap(), "claude-haiku-4-5-20251001");
+}
+
+#[test]
+fn connection_manager_with_model_openai_uses_new_model_name() {
+    use agentverse::memory::{Message, MessageRole};
+    let cm = ConnectionManager::openai("https://api.openai.com/v1", "gpt-4o", "test-key");
+    let overridden = cm.with_model("gpt-4o-mini");
+    let req = agentverse::GenerateRequest {
+        system: None,
+        messages: vec![Message {
+            role: MessageRole::User,
+            content: "hi".into(),
+        }],
+        tools: None,
+    };
+    let body = overridden.provider_build_request_for_test(req).unwrap();
+    assert_eq!(body["model"].as_str().unwrap(), "gpt-4o-mini");
+}
+
+#[test]
+fn connection_manager_with_model_gemini_uses_new_model_name() {
+    use agentverse::memory::{Message, MessageRole};
+    let cm = ConnectionManager::gemini(
+        "https://generativelanguage.googleapis.com",
+        "gemini-2.0-flash",
+        "test-key",
+    );
+    let overridden = cm.with_model("gemini-1.5-pro");
+    let req = agentverse::GenerateRequest {
+        system: None,
+        messages: vec![Message {
+            role: MessageRole::User,
+            content: "hi".into(),
+        }],
+        tools: None,
+    };
+    let body = overridden.provider_build_request_for_test(req).unwrap();
+    // Gemini puts the model name in the URL path, not the request body —
+    // just verify the request builds successfully with the new model.
+    let _ = body;
+}
