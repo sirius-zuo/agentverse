@@ -2,6 +2,7 @@ use crate::context::{ResourceContent, SubAgentContext};
 use crate::executor::SubAgentExecutor;
 use crate::spec::{Budget, ModelOverride, SubAgentSpec};
 use agentverse::{Tool, ToolResult};
+use agentverse_tools::SPAWN_SUBAGENT_TOOL_NAME;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
@@ -56,7 +57,7 @@ impl Tool for SubAgentTool {
     type Args = SubAgentArgs;
 
     fn name(&self) -> &str {
-        "spawn_subagent"
+        SPAWN_SUBAGENT_TOOL_NAME
     }
 
     fn description(&self) -> &str {

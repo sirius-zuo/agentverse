@@ -3,6 +3,10 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
+/// Tool name used by SubAgentTool. Defined here so both the tool implementation
+/// and the registry filter can reference a single authoritative constant.
+pub const SPAWN_SUBAGENT_TOOL_NAME: &str = "spawn_subagent";
+
 use crate::find_tools::FindToolsTool;
 use crate::search::{BM25Index, ToolInfo};
 
@@ -212,7 +216,7 @@ impl ToolRegistry {
         });
         let tools = self.tools.read().unwrap();
         for name in names {
-            if name == "spawn_subagent" {
+            if name == SPAWN_SUBAGENT_TOOL_NAME {
                 continue;
             }
             if let Some((tool, opts)) = tools.get(name) {
