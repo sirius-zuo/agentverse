@@ -45,6 +45,16 @@ impl Tool for MilestoneScheduler {
         let mut schedule = Vec::new();
 
         for phase in &args.phases {
+            for dep in &phase.depends_on {
+                if !end_by_name.contains_key(dep.as_str()) {
+                    return Err(ToolError::Execution(format!(
+                        "Phase '{}' depends on '{}', which has not been scheduled yet — \
+                         list phases in dependency order",
+                        phase.name, dep
+                    )));
+                }
+            }
+
             let phase_start = phase
                 .depends_on
                 .iter()
@@ -109,6 +119,22 @@ mod tests {
         let args = MilestoneArgs {
             start_date: "not-a-date".into(),
             phases: vec![],
+        };
+        assert!(tool.execute(args).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn milestone_scheduler_rejects_unknown_dependency() {
+        // "MVP" lists "Discovery" as a dependency, but "Discovery" is not in the phase list.
+        // The tool must return an error rather than silently starting MVP at the project start.
+        let tool = MilestoneScheduler;
+        let args = MilestoneArgs {
+            start_date: "2026-01-01".into(),
+            phases: vec![Phase {
+                name: "MVP".into(),
+                duration_weeks: 8,
+                depends_on: vec!["Discovery".into()],
+            }],
         };
         assert!(tool.execute(args).await.is_err());
     }
