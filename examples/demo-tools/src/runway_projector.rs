@@ -1,5 +1,5 @@
-use agentverse::{Tool, ToolError, ToolResult};
 use crate::round2;
+use agentverse::{Tool, ToolError, ToolResult};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
@@ -21,7 +21,9 @@ pub struct RunwayProjector;
 #[async_trait::async_trait]
 impl Tool for RunwayProjector {
     type Args = RunwayArgs;
-    fn name(&self) -> &str { "runway_projector" }
+    fn name(&self) -> &str {
+        "runway_projector"
+    }
     fn description(&self) -> &str {
         "Project cash runway, break-even month, and cash position over time given \
          initial funding, monthly burn, current revenue, and MoM revenue growth rate."
@@ -65,8 +67,8 @@ impl Tool for RunwayProjector {
 
         let beyond_horizon = runway_months.is_none();
         let runway = runway_months.unwrap_or(MAX_MONTHS);
-        let series_a_ready = (beyond_horizon || runway > 12)
-            && breakeven_month.map_or(false, |b| b <= 18);
+        let series_a_ready =
+            (beyond_horizon || runway > 12) && breakeven_month.is_some_and(|b| b <= 18);
 
         Ok(json!({
             "runway_months":    runway,
