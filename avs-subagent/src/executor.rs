@@ -80,6 +80,11 @@ impl SubAgentExecutor {
         }
     }
 
+    /// Run multiple SubAgents concurrently and collect all results.
+    ///
+    /// **Note:** Results are returned in completion order, not input order.
+    /// Callers that need to correlate results with inputs should include an
+    /// identifier in the spec name or objective.
     pub async fn run_many(
         &self,
         tasks: Vec<(SubAgentSpec, SubAgentContext)>,
@@ -99,10 +104,10 @@ impl SubAgentExecutor {
     pub fn spawn(&self, spec: SubAgentSpec, ctx: SubAgentContext) -> SubAgentHandle {
         let (tx, rx) = oneshot::channel();
         let executor = self.clone();
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             let _ = tx.send(executor.run(&spec, ctx).await);
         });
-        SubAgentHandle::from_parts(Uuid::new_v4(), rx)
+        SubAgentHandle::from_parts(Uuid::new_v4(), rx, handle)
     }
 
     /// Register a `SubAgentTool` into `registry` so the LLM can invoke subagents via tool calls.
@@ -121,7 +126,10 @@ fn resolve_model_name(override_: &ModelOverride) -> String {
             "haiku" => "claude-haiku-4-5-20251001".to_string(),
             "sonnet" => "claude-sonnet-4-6".to_string(),
             "opus" => "claude-opus-4-8".to_string(),
-            other => other.to_string(),
+            other => {
+                tracing::warn!(alias = other, "unknown model alias — passing through as raw model ID");
+                other.to_string()
+            }
         },
     }
 }
@@ -170,6 +178,8 @@ async fn run_cycle(
         }
         steps += 1;
 
+        // buf.clone() is O(n) in the message history. For realistic budgets
+        // (≤20 steps) this is negligible; revisit if budgets grow large.
         let response = skeleton
             .runner
             .invoke(buf.clone())
@@ -226,6 +236,10 @@ async fn run_cycle(
                     .execute_many(calls)
                     .await
                     .map_err(SubAgentError::Llm)?;
+                // Individual tool errors are soft-degraded into observation strings
+                // rather than aborting the cycle. This asymmetry vs ToolCall (which
+                // aborts) is intentional: parallel tool calls shouldn't fail the
+                // entire step if only one tool errors; the LLM can adapt.
                 let obs = results
                     .iter()
                     .map(|r| {
