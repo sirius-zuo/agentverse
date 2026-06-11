@@ -28,6 +28,8 @@ members = [
     "examples/demo-tools",
     "examples/project-feasibility",
     "examples/business-report",
+    "examples/doc-pipeline",
+    "examples/support-router",
 ]
 resolver = "2"
 

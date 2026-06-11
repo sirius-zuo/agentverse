@@ -1,0 +1,15 @@
+[package]
+name = "example-doc-pipeline"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+agentverse            = { path = "../../avs-core" }
+agentverse-agent      = { path = "../../avs-agent" }
+agentverse-demo-tools = { path = "../demo-tools" }
+agentverse-logging    = { path = "../../avs-logging" }
+agentverse-session    = { path = "../../avs-session" }
+agentverse-strategy   = { path = "../../avs-strategy" }
+agentverse-tools      = { path = "../../avs-tools" }
+tokio                 = { workspace = true }
