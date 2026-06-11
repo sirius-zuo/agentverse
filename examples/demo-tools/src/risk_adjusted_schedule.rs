@@ -1,4 +1,5 @@
-use agentverse::{Tool, ToolResult};
+use agentverse::{Tool, ToolError, ToolResult};
+use crate::round2;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
@@ -21,10 +22,6 @@ pub struct RiskScheduleArgs {
 
 pub struct RiskAdjustedSchedule;
 
-fn round2(v: f64) -> f64 {
-    (v * 100.0).round() / 100.0
-}
-
 #[async_trait::async_trait]
 impl Tool for RiskAdjustedSchedule {
     type Args = RiskScheduleArgs;
@@ -34,6 +31,15 @@ impl Tool for RiskAdjustedSchedule {
          standard deviation, and p80/p95 confidence intervals for the total project."
     }
     async fn execute(&self, args: RiskScheduleArgs) -> ToolResult {
+        for p in &args.phases {
+            if p.optimistic_weeks > p.pessimistic_weeks {
+                return Err(ToolError::Execution(format!(
+                    "Phase '{}': optimistic_weeks ({}) must be ≤ pessimistic_weeks ({})",
+                    p.name, p.optimistic_weeks, p.pessimistic_weeks
+                )));
+            }
+        }
+
         let mut total_mean = 0.0_f64;
         let mut total_variance = 0.0_f64;
 
@@ -91,5 +97,20 @@ mod tests {
         let p95 = result["p95_weeks"].as_f64().unwrap();
         assert!((p80 - 8.40).abs() < 0.02, "p80 {p80}");
         assert!((p95 - 9.76).abs() < 0.02, "p95 {p95}");
+    }
+
+    #[tokio::test]
+    async fn pert_rejects_inverted_range() {
+        // optimistic (10w) > pessimistic (4w) is an invalid PERT input
+        let tool = RiskAdjustedSchedule;
+        let args = RiskScheduleArgs {
+            phases: vec![PertPhase {
+                name: "Build".into(),
+                optimistic_weeks: 10.0,
+                likely_weeks: 7.0,
+                pessimistic_weeks: 4.0,
+            }],
+        };
+        assert!(tool.execute(args).await.is_err());
     }
 }

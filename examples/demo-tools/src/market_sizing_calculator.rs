@@ -1,4 +1,5 @@
 use agentverse::{Tool, ToolResult};
+use crate::round2;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
@@ -17,10 +18,6 @@ pub struct MarketSizingArgs {
 
 pub struct MarketSizingCalculator;
 
-fn round2(v: f64) -> f64 {
-    (v * 100.0).round() / 100.0
-}
-
 #[async_trait::async_trait]
 impl Tool for MarketSizingCalculator {
     type Args = MarketSizingArgs;
@@ -38,7 +35,7 @@ impl Tool for MarketSizingCalculator {
             "sam_usd":                           round2(sam),
             "som_usd":                           round2(som),
             "annual_revenue_at_som_usd":         round2(som),
-            "monthly_revenue_target_usd":        round2(som / 12.0),
+            "monthly_revenue_target_usd":        round2(som / (args.years_to_som as f64 * 12.0)),
             "years_to_som":                      args.years_to_som,
         }))
     }
@@ -64,6 +61,7 @@ mod tests {
         assert_eq!(result["sam_usd"], 100_000_000.0);
         assert_eq!(result["som_usd"], 5_000_000.0);
         let monthly = result["monthly_revenue_target_usd"].as_f64().unwrap();
-        assert!((monthly - 5_000_000.0 / 12.0).abs() < 0.01, "monthly {monthly}");
+        // SOM = $5M, years_to_som = 3 → monthly target = $5M / (3 × 12) = $138,888.89
+        assert!((monthly - 5_000_000.0 / 36.0).abs() < 0.01, "monthly {monthly}");
     }
 }

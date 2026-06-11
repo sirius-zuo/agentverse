@@ -1,11 +1,8 @@
 use agentverse::{Tool, ToolResult};
+use crate::round2;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
-
-fn round2(v: f64) -> f64 {
-    (v * 100.0).round() / 100.0
-}
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ProjectCostArgs {
