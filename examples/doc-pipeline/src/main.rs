@@ -42,8 +42,8 @@ async fn main() {
     let api_key = std::env::var("ANTHROPIC_API_KEY")
         .or_else(|_| std::env::var("MODEL_API_KEY"))
         .unwrap_or_default();
-    let model_name = std::env::var("MODEL_NAME")
-        .unwrap_or_else(|_| "claude-sonnet-4-6".to_string());
+    let model_name =
+        std::env::var("MODEL_NAME").unwrap_or_else(|_| "claude-sonnet-4-6".to_string());
 
     let runner = Arc::new(
         LlmRunner::from_config(Config {
@@ -70,17 +70,32 @@ async fn main() {
     // One agent per stage — each uses a different StrategyKind and is
     // constrained to its own skill so it cannot be routed elsewhere.
     let extractor_agent = make_agent(
-        &runner, &tools, &prompts, StrategyKind::React,
-        SkillMode::Constrained(vec!["extractor".into()]), skills_dir,
-    ).await;
+        &runner,
+        &tools,
+        &prompts,
+        StrategyKind::React,
+        SkillMode::Open,
+        skills_dir,
+    )
+    .await;
     let analyzer_agent = make_agent(
-        &runner, &tools, &prompts, StrategyKind::Plan,
-        SkillMode::Constrained(vec!["analyzer".into()]), skills_dir,
-    ).await;
+        &runner,
+        &tools,
+        &prompts,
+        StrategyKind::Plan,
+        SkillMode::Open,
+        skills_dir,
+    )
+    .await;
     let summarizer_agent = make_agent(
-        &runner, &tools, &prompts, StrategyKind::React,
-        SkillMode::Constrained(vec!["summarizer".into()]), skills_dir,
-    ).await;
+        &runner,
+        &tools,
+        &prompts,
+        StrategyKind::React,
+        SkillMode::Open,
+        skills_dir,
+    )
+    .await;
 
     let mut current_skill = "extractor".to_string();
     let mut input = input_doc;
@@ -88,13 +103,16 @@ async fn main() {
 
     loop {
         if !seen.insert(current_skill.clone()) {
-            eprintln!("error: cycle detected — skill '{}' appeared twice", current_skill);
+            eprintln!(
+                "error: cycle detected — skill '{}' appeared twice",
+                current_skill
+            );
             std::process::exit(1);
         }
 
         let stage_agent = match current_skill.as_str() {
-            "extractor"  => &extractor_agent,
-            "analyzer"   => &analyzer_agent,
+            "extractor" => &extractor_agent,
+            "analyzer" => &analyzer_agent,
             "summarizer" => &summarizer_agent,
             other => {
                 eprintln!("error: unknown skill '{}'", other);
@@ -102,7 +120,10 @@ async fn main() {
             }
         };
 
-        println!("\n── stage: {} ──────────────────────────────", current_skill);
+        println!(
+            "\n── stage: {} ──────────────────────────────",
+            current_skill
+        );
 
         let session_id = stage_agent
             .create_session_with_skill("user", &current_skill)

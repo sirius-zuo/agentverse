@@ -14,7 +14,9 @@ pub struct LookupInvoice;
 #[async_trait::async_trait]
 impl Tool for LookupInvoice {
     type Args = LookupInvoiceArgs;
-    fn name(&self) -> &str { "lookup_invoice" }
+    fn name(&self) -> &str {
+        "lookup_invoice"
+    }
     fn description(&self) -> &str {
         "Look up an invoice by ID. Returns invoice amount, date, status, and plan."
     }
@@ -37,11 +39,12 @@ mod tests {
     #[tokio::test]
     async fn lookup_invoice_returns_paid_invoice() {
         let tool = LookupInvoice;
-        let result = tool.execute(LookupInvoiceArgs {
-            invoice_id: "1042".to_string(),
-        })
-        .await
-        .unwrap();
+        let result = tool
+            .execute(LookupInvoiceArgs {
+                invoice_id: "1042".to_string(),
+            })
+            .await
+            .unwrap();
         assert_eq!(result["status"], "paid");
         assert_eq!(result["amount_usd"], 99.00);
         assert_eq!(result["invoice_id"], "1042");

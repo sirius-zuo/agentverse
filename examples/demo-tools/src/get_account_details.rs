@@ -14,7 +14,9 @@ pub struct GetAccountDetails;
 #[async_trait::async_trait]
 impl Tool for GetAccountDetails {
     type Args = GetAccountDetailsArgs;
-    fn name(&self) -> &str { "get_account_details" }
+    fn name(&self) -> &str {
+        "get_account_details"
+    }
     fn description(&self) -> &str {
         "Retrieve account details. Returns plan, seats, billing cycle, and renewal date."
     }
@@ -37,11 +39,12 @@ mod tests {
     #[tokio::test]
     async fn get_account_details_returns_pro_plan() {
         let tool = GetAccountDetails;
-        let result = tool.execute(GetAccountDetailsArgs {
-            account_id: "user@example.com".to_string(),
-        })
-        .await
-        .unwrap();
+        let result = tool
+            .execute(GetAccountDetailsArgs {
+                account_id: "user@example.com".to_string(),
+            })
+            .await
+            .unwrap();
         assert_eq!(result["plan"], "Pro");
         assert_eq!(result["status"], "active");
         assert_eq!(result["seats"], 5);

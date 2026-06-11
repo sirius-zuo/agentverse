@@ -14,7 +14,9 @@ pub struct CheckServiceStatus;
 #[async_trait::async_trait]
 impl Tool for CheckServiceStatus {
     type Args = CheckServiceStatusArgs;
-    fn name(&self) -> &str { "check_service_status" }
+    fn name(&self) -> &str {
+        "check_service_status"
+    }
     fn description(&self) -> &str {
         "Check the current operational status of a service or region. \
          Returns status (operational/degraded/outage) and incident details."
@@ -37,11 +39,12 @@ mod tests {
     #[tokio::test]
     async fn check_service_status_returns_degraded() {
         let tool = CheckServiceStatus;
-        let result = tool.execute(CheckServiceStatusArgs {
-            service: "api".to_string(),
-        })
-        .await
-        .unwrap();
+        let result = tool
+            .execute(CheckServiceStatusArgs {
+                service: "api".to_string(),
+            })
+            .await
+            .unwrap();
         assert_eq!(result["status"], "degraded");
         assert_eq!(result["service"], "api");
     }

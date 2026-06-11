@@ -50,8 +50,8 @@ async fn main() {
     let api_key = std::env::var("ANTHROPIC_API_KEY")
         .or_else(|_| std::env::var("MODEL_API_KEY"))
         .unwrap_or_default();
-    let model_name = std::env::var("MODEL_NAME")
-        .unwrap_or_else(|_| "claude-sonnet-4-6".to_string());
+    let model_name =
+        std::env::var("MODEL_NAME").unwrap_or_else(|_| "claude-sonnet-4-6".to_string());
 
     let runner = Arc::new(
         LlmRunner::from_config(Config {
@@ -78,7 +78,7 @@ async fn main() {
         &coordinator_tools,
         &prompts,
         StrategyKind::React,
-        SkillMode::Constrained(vec!["coordinator".into()]),
+        SkillMode::Open,
         skills_dir,
     )
     .await;
@@ -98,7 +98,7 @@ async fn main() {
         &specialist_tools,
         &prompts,
         StrategyKind::Hierarchical,
-        SkillMode::Constrained(vec!["billing".into()]),
+        SkillMode::Open,
         skills_dir,
     )
     .await;
@@ -108,7 +108,7 @@ async fn main() {
         &specialist_tools,
         &prompts,
         StrategyKind::React,
-        SkillMode::Constrained(vec!["tech-support".into()]),
+        SkillMode::Open,
         skills_dir,
     )
     .await;
@@ -118,7 +118,7 @@ async fn main() {
         &specialist_tools,
         &prompts,
         StrategyKind::React,
-        SkillMode::Constrained(vec!["account-mgmt".into()]),
+        SkillMode::Open,
         skills_dir,
     )
     .await;
@@ -146,10 +146,14 @@ async fn main() {
     let mut context = String::new();
 
     for (i, step) in steps.iter().enumerate() {
-        println!("\n── step {}: {} ─────────────────────────────────", i + 1, step.skill);
+        println!(
+            "\n── step {}: {} ─────────────────────────────────",
+            i + 1,
+            step.skill
+        );
 
         let specialist = match step.skill.as_str() {
-            "billing"      => &billing_agent,
+            "billing" => &billing_agent,
             "tech-support" => &tech_support_agent,
             "account-mgmt" => &account_mgmt_agent,
             other => {
@@ -161,18 +165,24 @@ async fn main() {
         let input = if context.is_empty() {
             step.task.clone()
         } else {
-            format!("Task: {}\n\nContext from previous steps:\n{}", step.task, context)
+            format!(
+                "Task: {}\n\nContext from previous steps:\n{}",
+                step.task, context
+            )
         };
 
         let session_id = specialist
             .create_session_with_skill("user", &step.skill)
             .await
             .unwrap_or_else(|e| {
-                eprintln!("error: create_session_with_skill '{}' failed: {e}", step.skill);
+                eprintln!(
+                    "error: create_session_with_skill '{}' failed: {e}",
+                    step.skill
+                );
                 std::process::exit(1);
             });
 
-        context = specialist
+        let output = specialist
             .invoke("user", session_id, &input)
             .await
             .unwrap_or_else(|e| {
@@ -180,7 +190,12 @@ async fn main() {
                 std::process::exit(1);
             });
 
-        println!("{}", context);
+        println!("{}", output);
+
+        if !context.is_empty() {
+            context.push('\n');
+        }
+        context.push_str(&format!("[{}]\n{}", step.skill, output));
     }
 }
 
@@ -227,6 +242,10 @@ fn parse_plan(json: &str) -> Vec<PlanStep> {
     let s = s.trim();
     let start = s.find('[').unwrap_or(0);
     let end = s.rfind(']').map(|i| i + 1).unwrap_or(s.len());
+    if start > end {
+        eprintln!("error: failed to parse coordinator plan: malformed response (']' before '[')\nraw:\n{json}");
+        std::process::exit(1);
+    }
     let slice = &s[start..end];
     serde_json::from_str(slice).unwrap_or_else(|e| {
         eprintln!("error: failed to parse coordinator plan: {e}\nraw:\n{json}");

@@ -19,39 +19,70 @@ use serde_json::Value;
 /// that follow an indented format example is handled correctly.
 /// ToolCall(s) take priority over Answer to prevent returning hallucinated answers.
 /// Multiple Action/Action Input pairs produce a ToolCalls batch for parallel dispatch.
+///
+/// `Action Input:` JSON may span multiple lines; accumulation stops at the next
+/// keyword line (Thought/Action/Action Input/Observation/Answer).
 pub fn parse_response(response: &str) -> CycleAction {
     let lines: Vec<&str> = response.lines().collect();
     let mut answer_idx: Option<usize> = None;
     let mut tool_calls: Vec<agentverse::ToolCall> = Vec::new();
     let mut pending_action: Option<String> = None;
+    // Buffer for accumulating (possibly multiline) Action Input JSON.
+    let mut collecting_input: Option<String> = None;
 
     for (i, &line) in lines.iter().enumerate() {
         let trimmed = line.trim();
         let lower = trimmed.to_lowercase();
+        let is_kw = lower.starts_with("thought:")
+            || lower.starts_with("action input:")
+            || lower.starts_with("action:")
+            || lower.starts_with("observation:")
+            || lower.starts_with("answer:");
 
-        if lower.starts_with("answer:") && answer_idx.is_none() {
-            answer_idx = Some(i);
-        } else if lower.starts_with("action input:") {
-            let raw = trimmed["Action Input:".len()..].trim().to_string();
-            let args = serde_json::from_str(&raw).unwrap_or(Value::Null);
-            if let Some(name) = pending_action.take() {
-                tool_calls.push(agentverse::ToolCall { name, args });
+        if is_kw {
+            // Flush any in-progress Action Input collection before handling this keyword.
+            if let Some(raw) = collecting_input.take() {
+                let args = serde_json::from_str(raw.trim()).unwrap_or(Value::Null);
+                if let Some(name) = pending_action.take() {
+                    tool_calls.push(agentverse::ToolCall { name, args });
+                }
             }
-        } else if lower.starts_with("action:") {
-            // Flush unpaired action (no Action Input line following)
-            if let Some(name) = pending_action.take() {
-                tool_calls.push(agentverse::ToolCall {
-                    name,
-                    args: Value::Null,
-                });
+
+            if lower.starts_with("answer:") && answer_idx.is_none() {
+                answer_idx = Some(i);
+            } else if lower.starts_with("action input:") {
+                collecting_input = Some(trimmed["Action Input:".len()..].trim().to_string());
+            } else if lower.starts_with("action:") {
+                // Flush unpaired action (no Action Input following)
+                if let Some(name) = pending_action.take() {
+                    tool_calls.push(agentverse::ToolCall {
+                        name,
+                        args: Value::Null,
+                    });
+                }
+                let val = trimmed["Action:".len()..].trim().to_string();
+                if !val.is_empty() {
+                    pending_action = Some(val);
+                }
             }
-            let val = trimmed["Action:".len()..].trim().to_string();
-            if !val.is_empty() {
-                pending_action = Some(val);
+            // thought: and observation: need no further handling
+        } else if let Some(ref mut buf) = collecting_input {
+            // Non-keyword line while collecting: append to JSON buffer.
+            if !buf.is_empty() {
+                buf.push('\n');
             }
+            buf.push_str(trimmed);
         }
     }
-    // Flush trailing unpaired action
+
+    // Flush trailing Action Input collection.
+    if let Some(raw) = collecting_input.take() {
+        let args = serde_json::from_str(raw.trim()).unwrap_or(Value::Null);
+        if let Some(name) = pending_action.take() {
+            tool_calls.push(agentverse::ToolCall { name, args });
+        }
+    }
+    // Flush trailing unpaired action (Action: with no Action Input:).
     if let Some(name) = pending_action.take() {
         tool_calls.push(agentverse::ToolCall {
             name,
@@ -266,6 +297,37 @@ mod tests {
                 assert_eq!(calls[0].name, "calculator");
             }
             other => panic!("Expected tool call, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_action_input_on_next_line() {
+        // Model puts the JSON on the line after "Action Input:" (common with larger models).
+        let result = parse_response(
+            "Thought: I should spawn a worker.\nAction: spawn_subagent\nAction Input:\n{\"name\": \"worker\", \"objective\": \"do stuff\"}",
+        );
+        match result {
+            CycleAction::ToolCall { tool_name, args } => {
+                assert_eq!(tool_name, "spawn_subagent");
+                assert_eq!(args["name"], "worker");
+                assert_eq!(args["objective"], "do stuff");
+            }
+            other => panic!("Expected ToolCall, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_action_input_multiline_json() {
+        // Model formats JSON with indented newlines across multiple lines.
+        let result = parse_response(
+            "Action: spawn_subagent\nAction Input: {\n  \"name\": \"worker\",\n  \"objective\": \"do stuff\"\n}",
+        );
+        match result {
+            CycleAction::ToolCall { tool_name, args } => {
+                assert_eq!(tool_name, "spawn_subagent");
+                assert_eq!(args["name"], "worker");
+            }
+            other => panic!("Expected ToolCall, got {:?}", other),
         }
     }
 

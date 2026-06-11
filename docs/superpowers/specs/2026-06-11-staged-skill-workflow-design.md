@@ -117,7 +117,7 @@ examples/support-router/
 
 | Agent | Strategy | Role |
 |---|---|---|
-| `coordinator_agent` | `Plan` | reads request, emits JSON plan with skill assignments |
+| `coordinator_agent` | `React` (no tools) | reads request, emits JSON plan with skill assignments; React with zero tools = one-shot LLM call; `Plan` cannot be used here because `PlanStrategy` both generates and executes its plan rather than emitting it for external dispatch |
 | `specialist_agent` | varies by skill (see below) | executes one plan step |
 
 ### Specialist skills and strategies
