@@ -168,7 +168,7 @@ impl ConnectionManager {
             "anthropic" => Box::new(AnthropicProvider::new()),
             "gemini" => Box::new(GeminiProvider::new()),
             "openai" => Box::new(OpenAICompatible::new()),
-            other => panic!("with_model: unknown provider name {:?}", other),
+            other => unreachable!("with_model: unknown provider name {:?}", other),
         };
         Self {
             client: self.client.clone(),
