@@ -25,6 +25,9 @@ members = [
     "examples/mcp-demo",
     "avs-session",
     "avs-subagent",
+    "examples/demo-tools",
+    "examples/project-feasibility",
+    "examples/business-report",
 ]
 resolver = "2"
 
