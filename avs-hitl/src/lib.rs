@@ -7,6 +7,8 @@ pub mod queue;
 pub mod sqlite;
 pub mod types;
 
+pub use checkpoint::RequestCheckpointTool;
+pub use context::HitlContext;
 pub use error::HitlError;
 pub use memory::InMemoryQueue;
 pub use policy::HitlPolicy;
