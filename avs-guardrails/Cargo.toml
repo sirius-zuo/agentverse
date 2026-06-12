@@ -5,7 +5,9 @@ edition.workspace = true
 
 [dependencies]
 agentverse = { path = "../avs-core" }
+agentverse-hitl = { path = "../avs-hitl" }
 regex = "1.10"
+uuid.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
