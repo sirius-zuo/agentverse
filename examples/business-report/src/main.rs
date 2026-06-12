@@ -118,6 +118,7 @@ async fn main() {
         false,
         None,
         Some(skills),
+        None,
     );
 
     // ── 8. Invoke ──────────────────────────────────────────────────────────

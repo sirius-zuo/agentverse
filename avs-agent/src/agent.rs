@@ -83,7 +83,8 @@ pub struct PhaseTransition {
 }
 
 /// Output of a single agent invocation.
-#[derive(Debug)]
+/// The output of an agent run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentOutput {
     /// The agent completed successfully with this string response.
     Done(String),
@@ -91,6 +92,17 @@ pub enum AgentOutput {
     /// The `kind` field matches what was submitted to the ApprovalQueue, so callers
     /// can display which interrupt type fired without re-querying the queue.
     Interrupted { approval_id: Uuid, kind: InterruptKind },
+}
+
+impl std::fmt::Display for AgentOutput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AgentOutput::Done(text) => write!(f, "{text}"),
+            AgentOutput::Interrupted { approval_id, kind } => {
+                write!(f, "HITL interruption: approval_id={approval_id}, kind={kind:?}")
+            }
+        }
+    }
 }
 
 /// HITL configuration attached to an agent at construction time.

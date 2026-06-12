@@ -73,6 +73,7 @@ async fn main() {
         true,
         None,
         None,
+        None,
     );
 
     tracing::info!("Agent started. Press Ctrl-C to stop.");

@@ -18,8 +18,15 @@ pub trait RunStrategy: Send + Sync {
         self.run(messages).await
     }
 
-    /// Run with HITL support. Default delegates to run_with_active_tools (no HITL).
-    /// ReActStrategy overrides this to intercept dangerous tool calls.
+    /// Run with HITL support.
+    ///
+    /// **WARNING — SECURITY RISK IF NOT OVERRIDDEN:** The default implementation
+    /// ignores `hook` entirely and falls back to `run_with_active_tools`. Any
+    /// strategy that does not override this method will execute all tool calls
+    /// without HITL interception, even when the agent has a `HitlConfig` configured.
+    ///
+    /// Override this in any strategy that has a tool-execution loop.
+    /// `ReActStrategy` provides the reference implementation.
     async fn run_hitl(
         &self,
         messages: Vec<Message>,

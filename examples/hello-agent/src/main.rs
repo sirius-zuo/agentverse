@@ -104,6 +104,7 @@ async fn main() {
         false,
         None,
         Some(skills),
+        None,
     );
 
     let session_id = agent.create_session("user").await.expect("create session");

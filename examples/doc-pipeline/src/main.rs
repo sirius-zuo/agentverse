@@ -87,6 +87,7 @@ async fn main() {
         false,
         None,
         Some(skills),
+        None,
     );
 
     // One session spans all three phases.
@@ -109,8 +110,9 @@ async fn main() {
                 std::process::exit(1);
             });
 
-        match agent.advance_phase("user", session_id, &output).await {
-            Ok(Some(transition)) => {
+        let output_text = output.to_string();
+        match agent.advance_phase("user", session_id, &output_text).await {
+            Ok(Some(agentverse_agent::PhaseAdvanceResult::Advanced(transition))) => {
                 if !visited.insert(transition.next_skill.clone()) {
                     eprintln!(
                         "error: pipeline cycle detected — '{}' has already been visited",
@@ -120,6 +122,10 @@ async fn main() {
                 }
                 println!("\n── phase complete → {} ──", transition.next_skill);
                 input = transition.deliverable;
+            }
+            Ok(Some(agentverse_agent::PhaseAdvanceResult::Pending { .. })) => {
+                eprintln!("error: phase gate pending — manual approval required");
+                std::process::exit(1);
             }
             Ok(None) => {
                 println!("\n── final output ──────────────────────────");
