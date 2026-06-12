@@ -86,6 +86,21 @@ impl SessionManager {
         self.store.get_skill_context(session_id).await
     }
 
+    pub async fn set_phase_opening_context(
+        &self,
+        session_id: SessionId,
+        context: Option<&str>,
+    ) -> Result<(), SessionMemoryError> {
+        self.store.set_phase_opening_context(session_id, context).await
+    }
+
+    pub async fn get_phase_opening_context(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Option<String>, SessionMemoryError> {
+        self.store.get_phase_opening_context(session_id).await
+    }
+
     pub async fn create_session_with_skill_context(
         &self,
         user_id: &str,
