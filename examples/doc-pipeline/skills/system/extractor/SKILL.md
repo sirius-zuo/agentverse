@@ -3,7 +3,7 @@ name: extractor
 description: >
   Extracts key facts, named entities, and dates from raw text.
   First stage of the document pipeline — declares NEXT_SKILL: analyzer.
-version: 1.0.0
+version: 1.1.0
 agentverse:
   tools:
     - find_dates
@@ -35,5 +35,6 @@ of a three-stage pipeline. When you finish, you pass your output to the analyzer
 **Dates and Timeline:**
 - [date]: [event]
 
-On the very last line of your response, output exactly this — no trailing text:
+On the last two lines of your response, output exactly these — no trailing text after them:
 NEXT_SKILL: analyzer
+SUMMARY: <one sentence: what types of facts you found and the date range covered>
