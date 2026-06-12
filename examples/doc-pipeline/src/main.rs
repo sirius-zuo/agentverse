@@ -22,6 +22,7 @@ use agentverse_logging as avs_logging;
 use agentverse_session::SqliteSessionMemory;
 use agentverse_strategy::{build, StrategyKind};
 use agentverse_tools::ToolRegistry;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 #[tokio::main]
@@ -95,6 +96,9 @@ async fn main() {
         .expect("create session");
 
     let mut input = input_doc;
+    // Track visited skills to detect cycles — a skill emitting NEXT_SKILL pointing back
+    // to an already-run skill would loop forever without this guard.
+    let mut visited: HashSet<String> = HashSet::from(["extractor".to_string()]);
 
     loop {
         let output = agent
@@ -107,6 +111,13 @@ async fn main() {
 
         match agent.advance_phase("user", session_id, &output).await {
             Ok(Some(transition)) => {
+                if !visited.insert(transition.next_skill.clone()) {
+                    eprintln!(
+                        "error: pipeline cycle detected — '{}' has already been visited",
+                        transition.next_skill
+                    );
+                    std::process::exit(1);
+                }
                 println!("\n── phase complete → {} ──", transition.next_skill);
                 input = transition.deliverable;
             }
