@@ -42,8 +42,15 @@ impl HitlHook for HitlContext {
         match self.queue.submit(req.clone()).await {
             Ok(id) => Some((id, kind_json)),
             Err(e) => {
-                tracing::error!(error = %e, "failed to submit HITL approval request");
-                None
+                tracing::error!(
+                    error = %e,
+                    tool = tool_name,
+                    "HITL queue submit failed; blocking tool as fail-safe (sentinel approval_id)"
+                );
+                // Return a sentinel id that won't be in the queue.
+                // The tool is blocked. Any resume attempt will surface HitlError::NotFound,
+                // making the queue failure visible to the operator.
+                Some((uuid::Uuid::new_v4(), kind_json))
             }
         }
     }

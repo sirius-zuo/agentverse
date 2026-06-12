@@ -93,3 +93,32 @@ async fn hitl_context_intercepts_request_checkpoint() {
     let result = ctx.check_tool("request_checkpoint", &serde_json::json!({"name": "draft_ready", "payload": {}})).await;
     assert!(result.is_some(), "request_checkpoint must be intercepted");
 }
+
+#[tokio::test]
+async fn hitl_context_blocks_when_queue_submit_fails() {
+    use agentverse::hitl::HitlHook;
+
+    // Build a queue that always fails on submit
+    struct FailQueue;
+    #[async_trait::async_trait]
+    impl agentverse_hitl::ApprovalQueue for FailQueue {
+        async fn submit(&self, _: agentverse_hitl::ApprovalRequest) -> Result<agentverse_hitl::ApprovalId, agentverse_hitl::HitlError> {
+            Err(agentverse_hitl::HitlError::Database("injected failure".into()))
+        }
+        async fn resolve(&self, id: agentverse_hitl::ApprovalId, _: agentverse_hitl::ApprovalDecision) -> Result<(), agentverse_hitl::HitlError> {
+            Err(agentverse_hitl::HitlError::NotFound(id))
+        }
+        async fn poll(&self, id: agentverse_hitl::ApprovalId) -> Result<agentverse_hitl::ApprovalStatus, agentverse_hitl::HitlError> {
+            Err(agentverse_hitl::HitlError::NotFound(id))
+        }
+        async fn sweep_expired(&self) -> Result<u64, agentverse_hitl::HitlError> { Ok(0) }
+    }
+
+    let policy = HitlPolicy::new(); // exec_command in global blocklist
+    let queue = Arc::new(FailQueue) as Arc<dyn agentverse_hitl::ApprovalQueue>;
+    let ctx = HitlContext::new(Uuid::new_v4(), None, policy, queue);
+
+    // exec_command is in the global blocklist; even with a broken queue, it must be blocked
+    let result = ctx.check_tool("exec_command", &serde_json::json!({})).await;
+    assert!(result.is_some(), "queue failure must NOT silently allow dangerous tool");
+}

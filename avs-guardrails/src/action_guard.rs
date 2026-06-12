@@ -52,8 +52,9 @@ impl ActionGuard {
                 Some(id)
             }
             Err(e) => {
-                tracing::error!(error = %e, "HITL: failed to submit approval; blocking tool");
-                None // conservative: block if queue fails
+                tracing::error!(error = %e, "HITL: queue submit failed; blocking tool as fail-safe");
+                // Return a sentinel id — the tool is blocked. Resume will surface NotFound.
+                Some(uuid::Uuid::new_v4())
             }
         }
     }
