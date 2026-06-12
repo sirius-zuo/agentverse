@@ -25,6 +25,10 @@ impl SqliteQueue {
         Ok(q)
     }
 
+    pub fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
+
     async fn migrate(&self) -> Result<(), HitlError> {
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS hitl_approvals (
@@ -49,7 +53,9 @@ impl SqliteQueue {
             "resolved" => {
                 let dec: ApprovalDecision = decision
                     .and_then(|d| serde_json::from_str(d).ok())
-                    .unwrap_or(ApprovalDecision::Approved);
+                    .unwrap_or_else(|| ApprovalDecision::Rejected {
+                        reason: "data integrity error: decision missing or unparseable".into(),
+                    });
                 ApprovalStatus::Resolved(dec)
             }
             "expired" => ApprovalStatus::Expired,

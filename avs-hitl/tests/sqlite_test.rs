@@ -48,3 +48,29 @@ async fn sqlite_sweep_expired_marks_expired() {
     assert_eq!(swept, 1);
     assert_eq!(q.poll(id).await.unwrap(), ApprovalStatus::Expired);
 }
+
+#[tokio::test]
+async fn sqlite_null_decision_does_not_auto_approve() {
+    let q = make_queue().await;
+    let id = q.submit(ApprovalRequest::new(
+        Uuid::new_v4(),
+        InterruptKind::ToolApproval {
+            tool_name: "exec_command".into(),
+            args: serde_json::json!({}),
+        },
+    )).await.unwrap();
+
+    // Directly corrupt the decision column: set status=resolved but leave decision NULL
+    sqlx::query("UPDATE hitl_approvals SET status='resolved', decision=NULL WHERE id=?")
+        .bind(id.to_string())
+        .execute(q.pool())
+        .await
+        .unwrap();
+
+    // Must NOT be Approved — a missing decision must reject, not approve
+    let status = q.poll(id).await.unwrap();
+    assert!(
+        !matches!(status, ApprovalStatus::Resolved(ApprovalDecision::Approved)),
+        "NULL decision must not auto-approve"
+    );
+}
