@@ -1,4 +1,10 @@
-use agentverse::{AgentError, ErasedTool, ToolCall, ToolCallResult, ToolError, ToolResult};
+use agentverse::{ErasedTool, ToolCall, ToolCallResult, ToolError, ToolResult};
+
+/// Carries HITL interrupt info when execute_many_hitl intercepts a call.
+pub struct HitlInterruptResult {
+    pub approval_id: uuid::Uuid,
+    pub kind_json:   String,
+}
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -137,17 +143,17 @@ impl ToolRegistry {
     }
 
     /// Execute tool calls, intercepting any that require HITL approval.
-    /// Returns Err(AgentError::Interrupted(approval_id)) if any call is intercepted.
+    /// Returns Err(HitlInterruptResult) for the first intercepted call.
     /// Does NOT execute any calls if any one requires approval — all or nothing.
     pub async fn execute_many_hitl(
         &self,
         calls: Vec<ToolCall>,
         hook: &Arc<dyn agentverse::hitl::HitlHook>,
-    ) -> Result<Vec<ToolCallResult>, AgentError> {
+    ) -> Result<Vec<ToolCallResult>, HitlInterruptResult> {
         // Check all calls first — intercept before executing any
         for call in &calls {
-            if let Some((approval_id, _kind_json)) = hook.check_tool(&call.name, &call.args).await {
-                return Err(AgentError::Interrupted(approval_id));
+            if let Some((approval_id, kind_json)) = hook.check_tool(&call.name, &call.args).await {
+                return Err(HitlInterruptResult { approval_id, kind_json });
             }
         }
         // No HITL needed — execute normally
