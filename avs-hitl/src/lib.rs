@@ -11,4 +11,5 @@ pub use error::HitlError;
 pub use memory::InMemoryQueue;
 pub use policy::HitlPolicy;
 pub use queue::ApprovalQueue;
+pub use sqlite::SqliteQueue;
 pub use types::{ApprovalDecision, ApprovalId, ApprovalRequest, ApprovalStatus, InterruptKind};
