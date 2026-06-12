@@ -6,22 +6,23 @@
 use super::cycle::{CycleAction, CycleSkeleton};
 use super::parse::parse_response;
 use agentverse::{AgentError, LlmRunner, Message, ModelError, PromptRegistry, ToolCall};
-use agentverse_tools::{ActiveToolSet, ToolRegistry};
-use std::fmt::Write;
+use agentverse_tools::{ActiveToolSet, HitlInterruptResult, ToolRegistry};
 use std::sync::Arc;
 use tracing::info;
 
-fn base64_encode(s: &str) -> String {
-    // Simple percent-encoding to avoid colon conflicts in the HITL: message format
-    let mut out = String::new();
-    for b in s.bytes() {
-        if b == b':' || b == b'%' {
-            let _ = write!(out, "%{:02X}", b);
-        } else {
-            out.push(b as char);
-        }
-    }
-    out
+fn hitl_encode(s: &str) -> String {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    STANDARD.encode(s.as_bytes())
+}
+
+#[allow(dead_code)]
+fn hitl_decode(s: &str) -> String {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    STANDARD
+        .decode(s)
+        .ok()
+        .and_then(|b| String::from_utf8(b).ok())
+        .unwrap_or_default()
 }
 
 /// The high-level ReAct strategy interface.
@@ -231,6 +232,9 @@ impl agentverse::RunStrategy for ReActStrategy {
                 }
                 CycleAction::ToolCall { tool_name, args } => {
                     pending_answer = None;
+                    // Snapshot BEFORE pushing assistant message so history on suspend
+                    // does not contain a dangling tool-call with no observation.
+                    let history_snapshot = buf.clone();
                     buf.push(Message {
                         role: agentverse::MessageRole::Assistant,
                         content: response.content.clone(),
@@ -251,58 +255,64 @@ impl agentverse::RunStrategy for ReActStrategy {
                                 content: format!("Tool: {}\nResult: {}", tool_name, v),
                             });
                         }
-                        Err(AgentError::Interrupted(approval_id)) => {
-                            let history_json = serde_json::to_string(&buf).unwrap_or_default();
+                        Err(HitlInterruptResult { approval_id, kind_json }) => {
                             let pending_json = serde_json::to_string(&[serde_json::json!({
                                 "name": tool_name,
                                 "args": args,
-                            })]).unwrap_or_default();
+                            })])
+                            .unwrap_or_default();
                             return Err(AgentError::Memory(format!(
-                                "HITL:{}:{}:{}",
+                                "HITL:{}:{}:{}:{}",
                                 approval_id,
-                                base64_encode(&history_json),
-                                base64_encode(&pending_json),
+                                hitl_encode(&kind_json),
+                                hitl_encode(&serde_json::to_string(&history_snapshot).unwrap_or_default()),
+                                hitl_encode(&pending_json),
                             )));
                         }
-                        Err(e) => return Err(e),
                     }
                 }
                 CycleAction::ToolCalls { calls } => {
                     pending_answer = None;
+                    // Snapshot BEFORE pushing assistant message (same reason as ToolCall branch).
+                    let history_snapshot = buf.clone();
                     buf.push(Message {
                         role: agentverse::MessageRole::Assistant,
                         content: response.content.clone(),
                     });
                     match self.skeleton.tools.execute_many_hitl(calls.clone(), &hook).await {
                         Ok(results) => {
-                            let observation = results.iter().map(|r| {
-                                let v = match &r.result {
-                                    Ok(v) => v.to_string(),
-                                    Err(e) => format!("Error: {e}"),
-                                };
-                                format!("Tool: {}\nResult: {}", r.name, v)
-                            }).collect::<Vec<_>>().join("\n\n");
+                            let observation = results
+                                .iter()
+                                .map(|r| {
+                                    let v = match &r.result {
+                                        Ok(v) => v.to_string(),
+                                        Err(e) => format!("Error: {e}"),
+                                    };
+                                    format!("Tool: {}\nResult: {}", r.name, v)
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n\n");
                             buf.push(Message {
                                 role: agentverse::MessageRole::User,
                                 content: observation,
                             });
                         }
-                        Err(AgentError::Interrupted(approval_id)) => {
-                            let history_json = serde_json::to_string(&buf).unwrap_or_default();
-                            let pending_json = serde_json::Value::Array(
-                                calls.iter().map(|c| {
-                                    serde_json::json!({"name": c.name, "args": c.args})
-                                }).collect()
-                            );
-                            let pending_json = serde_json::to_string(&pending_json).unwrap_or_default();
+                        Err(HitlInterruptResult { approval_id, kind_json }) => {
+                            let pending_json = serde_json::to_string(
+                                &calls
+                                    .iter()
+                                    .map(|c| serde_json::json!({"name": c.name, "args": c.args}))
+                                    .collect::<Vec<_>>(),
+                            )
+                            .unwrap_or_default();
                             return Err(AgentError::Memory(format!(
-                                "HITL:{}:{}:{}",
+                                "HITL:{}:{}:{}:{}",
                                 approval_id,
-                                base64_encode(&history_json),
-                                base64_encode(&pending_json),
+                                hitl_encode(&kind_json),
+                                hitl_encode(&serde_json::to_string(&history_snapshot).unwrap_or_default()),
+                                hitl_encode(&pending_json),
                             )));
                         }
-                        Err(e) => return Err(e),
                     }
                 }
                 CycleAction::Done { answer } => {
@@ -315,5 +325,28 @@ impl agentverse::RunStrategy for ReActStrategy {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod encoding_tests {
+    use super::{hitl_decode, hitl_encode};
+
+    #[test]
+    fn round_trips_ascii() {
+        let s = r#"{"tool":"exec_command","args":{"cmd":"ls"}}"#;
+        assert_eq!(hitl_decode(&hitl_encode(s)), s);
+    }
+
+    #[test]
+    fn round_trips_utf8_multibyte() {
+        let s = "résumé: こんにちは";
+        assert_eq!(hitl_decode(&hitl_encode(s)), s);
+    }
+
+    #[test]
+    fn encoded_contains_no_colons() {
+        let s = r#"http://example.com:8080/path?a=b:c"#;
+        assert!(!hitl_encode(s).contains(':'), "base64 must not contain colons");
     }
 }
