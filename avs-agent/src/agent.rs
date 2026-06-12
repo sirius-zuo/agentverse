@@ -361,7 +361,11 @@ impl Agent {
         // Check for a phase opening context set by advance_phase.
         // If present: clear stale history from cache, inject context as the sole prior context,
         // and clear the stored context so subsequent invokes accumulate normally.
-        let phase_ctx = self.sessions.get_phase_opening_context(session_id).await?;
+        let phase_ctx = if self.skills.is_some() {
+            self.sessions.get_phase_opening_context(session_id).await?
+        } else {
+            None
+        };
 
         let (history, effective_input) = if let Some(ctx_str) = phase_ctx {
             // Phase transition: clear stale cache from the previous phase.
