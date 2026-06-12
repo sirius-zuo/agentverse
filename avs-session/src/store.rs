@@ -97,6 +97,13 @@ pub trait SessionMemory: Send + Sync {
         _session_id: SessionId,
         _context: Option<&str>,
     ) -> Result<(), SessionMemoryError> {
+        if _context.is_some() {
+            tracing::warn!(
+                "set_phase_opening_context called on a SessionMemory implementation that uses \
+                the default no-op. Phase transition context will not be persisted. \
+                Override this method in your SessionMemory implementation if you use advance_phase."
+            );
+        }
         Ok(())
     }
 
