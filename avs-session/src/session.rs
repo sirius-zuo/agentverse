@@ -7,6 +7,7 @@ pub type SessionId = Uuid;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SessionStatus {
     Active,
+    Interrupted,
     Completed,
 }
 
@@ -14,6 +15,7 @@ impl std::fmt::Display for SessionStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SessionStatus::Active => write!(f, "active"),
+            SessionStatus::Interrupted => write!(f, "interrupted"),
             SessionStatus::Completed => write!(f, "completed"),
         }
     }
@@ -24,6 +26,7 @@ impl std::str::FromStr for SessionStatus {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "active" => Ok(Self::Active),
+            "interrupted" => Ok(Self::Interrupted),
             "completed" => Ok(Self::Completed),
             other => Err(format!("unknown status: {}", other)),
         }

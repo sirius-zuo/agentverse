@@ -163,6 +163,21 @@ impl SqliteSessionMemory {
                 .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
         }
 
+        // Interrupted state column (HITL suspend/resume)
+        let has_interrupted: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'interrupted_state'"
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+
+        if has_interrupted == 0 {
+            sqlx::query("ALTER TABLE sessions ADD COLUMN interrupted_state TEXT")
+                .execute(&self.pool)
+                .await
+                .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+        }
+
         Ok(())
     }
 }
@@ -595,6 +610,41 @@ impl SessionMemory for SqliteSessionMemory {
 
         Ok(session)
     }
+
+    async fn set_interrupted_state(
+        &self,
+        session_id: SessionId,
+        state_json: Option<&str>,
+    ) -> Result<(), SessionMemoryError> {
+        let result = sqlx::query("UPDATE sessions SET interrupted_state = ? WHERE id = ?")
+            .bind(state_json)
+            .bind(session_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+
+        if result.rows_affected() == 0 {
+            return Err(SessionMemoryError::NotFound(session_id));
+        }
+        Ok(())
+    }
+
+    async fn get_interrupted_state(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Option<String>, SessionMemoryError> {
+        let row: Option<Option<String>> =
+            sqlx::query_scalar("SELECT interrupted_state FROM sessions WHERE id = ?")
+                .bind(session_id.to_string())
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+
+        match row {
+            None => Err(SessionMemoryError::NotFound(session_id)),
+            Some(v) => Ok(v),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -806,5 +856,44 @@ mod watermark_tests {
         assert_eq!(deleted, 2);
         let all = store.load_messages(session.id).await.unwrap();
         assert!(all.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod interrupted_state_tests {
+    use super::*;
+    use crate::store::InterruptedState;
+
+    #[tokio::test]
+    async fn set_and_get_interrupted_state() {
+        let mem = SqliteSessionMemory::new("sqlite::memory:").await.unwrap();
+        let session = mem.create("alice").await.unwrap();
+
+        let state = InterruptedState::PendingToolCall {
+            approval_id:        uuid::Uuid::new_v4().to_string(),
+            kind_json:          "{}".to_string(),
+            history_json:       "[]".to_string(),
+            pending_calls_json: "[]".to_string(),
+            active_tool_names:  vec!["file_read".to_string()],
+            skill_context_json: None,
+        };
+        let json = serde_json::to_string(&state).unwrap();
+
+        mem.set_interrupted_state(session.id, Some(&json)).await.unwrap();
+        let loaded = mem.get_interrupted_state(session.id).await.unwrap();
+        assert!(loaded.is_some());
+        let loaded_state: InterruptedState = serde_json::from_str(&loaded.unwrap()).unwrap();
+        assert_eq!(loaded_state.approval_id_str(), state.approval_id_str());
+    }
+
+    #[tokio::test]
+    async fn clear_interrupted_state() {
+        let mem = SqliteSessionMemory::new("sqlite::memory:").await.unwrap();
+        let session = mem.create("alice").await.unwrap();
+        let state_json = serde_json::json!({"approval_id": "x"}).to_string();
+        mem.set_interrupted_state(session.id, Some(&state_json)).await.unwrap();
+        mem.set_interrupted_state(session.id, None).await.unwrap();
+        let loaded = mem.get_interrupted_state(session.id).await.unwrap();
+        assert!(loaded.is_none());
     }
 }
