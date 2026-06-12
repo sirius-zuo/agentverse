@@ -595,7 +595,7 @@ impl Agent {
         user_id: &str,
         session_id: SessionId,
         output: &str,
-    ) -> Result<Option<PhaseTransition>, AgentError> {
+    ) -> Result<Option<PhaseAdvanceResult>, AgentError> {
         self.sessions.assert_owner(user_id, session_id).await?;
 
         let transition = match parse_phase_transition(output) {
@@ -623,6 +623,51 @@ impl Agent {
             }
         };
 
+        // Phase gate check — runs before applying the transition.
+        if let Some(ref hitl_cfg) = self.hitl {
+            // skill_id is stored directly on SkillContext (added in Task 5).
+            let current_skill_id = self
+                .sessions
+                .get_skill_context(session_id)
+                .await?
+                .and_then(|j| serde_json::from_str::<agentverse_skill::SkillContext>(&j).ok())
+                .map(|ctx| ctx.skill_id);
+
+            if let Some(ref skill_id) = current_skill_id {
+                if hitl_cfg.policy.requires_phase_gate(skill_id) {
+                    let kind = agentverse_hitl::InterruptKind::PhaseGate {
+                        from_skill:  skill_id.clone(),
+                        to_skill:    transition.next_skill.clone(),
+                        deliverable: transition.deliverable.clone(),
+                    };
+                    let req = agentverse_hitl::ApprovalRequest::new(session_id, kind);
+                    let approval_id = hitl_cfg
+                        .queue
+                        .submit(req)
+                        .await
+                        .map_err(|e| {
+                            AgentError::Session(agentverse_session::SessionMemoryError::Database(
+                                e.to_string(),
+                            ))
+                        })?;
+
+                    let state = InterruptedState::PendingPhaseGate {
+                        approval_id:     approval_id.to_string(),
+                        transition_json: serde_json::to_string(&transition)?,
+                    };
+                    self.sessions
+                        .set_interrupted_state(session_id, Some(&serde_json::to_string(&state)?))
+                        .await?;
+                    self.sessions
+                        .update_status(session_id, agentverse_session::SessionStatus::Interrupted)
+                        .await?;
+
+                    return Ok(Some(PhaseAdvanceResult::Pending { approval_id }));
+                }
+            }
+        }
+
+        // No gate (or gate not required) — apply the transition immediately.
         let skills = self.skills.as_ref().ok_or_else(|| {
             SkillError::NotConfigured("no skill registry configured on this agent".into())
         })?;
@@ -639,7 +684,7 @@ impl Agent {
             .apply_phase_transition(session_id, &new_ctx_json, &phase_ctx_str)
             .await?;
 
-        Ok(Some(transition))
+        Ok(Some(PhaseAdvanceResult::Advanced(transition)))
     }
 
     /// Reload the skill registry from disk. Existing sessions are unaffected;
@@ -1705,11 +1750,14 @@ mod skill_tests {
 
         let output =
             "Extracted data.\n\nNEXT_SKILL: skill-b\nSUMMARY: Found 5 items; selected approach X.";
-        let transition = agent
+        let PhaseAdvanceResult::Advanced(transition) = agent
             .advance_phase("alice", session_id, output)
             .await
             .unwrap()
-            .expect("expected a phase transition");
+            .expect("expected Advanced, got Pending")
+        else {
+            panic!("expected Advanced, got Pending");
+        };
 
         assert_eq!(transition.next_skill, "skill-b");
         assert_eq!(transition.summary, "Found 5 items; selected approach X.");
