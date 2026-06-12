@@ -109,7 +109,6 @@ pub struct Agent {
 /// Parse `NEXT_SKILL: <id>` and `SUMMARY: <text>` from the last non-empty lines of output.
 /// Both directives must be present (in order) for a transition to be returned.
 /// Returns `None` if either directive is missing.
-#[allow(dead_code)]
 pub(crate) fn parse_phase_transition(output: &str) -> Option<PhaseTransition> {
     let trimmed = output.trim_end();
     let mut lines: Vec<&str> = trimmed.lines().collect();
@@ -148,6 +147,13 @@ pub(crate) fn parse_phase_transition(output: &str) -> Option<PhaseTransition> {
     }
 
     let deliverable = lines.join("\n");
+    if deliverable.trim().is_empty() {
+        tracing::warn!(
+            "parse_phase_transition: NEXT_SKILL/SUMMARY directives found but deliverable \
+            body is empty; treating as terminal output"
+        );
+        return None;
+    }
 
     Some(PhaseTransition {
         next_skill,
@@ -790,6 +796,14 @@ mod tests {
         let output = "Line one.\nLine two.\nNEXT_SKILL: b\nSUMMARY: summary text";
         let t = parse_phase_transition(output).unwrap();
         assert_eq!(t.deliverable, "Line one.\nLine two.");
+    }
+
+    #[test]
+    fn returns_none_when_deliverable_is_empty() {
+        // Directives only, no body at all
+        assert!(parse_phase_transition("NEXT_SKILL: analyzer\nSUMMARY: done").is_none());
+        // Only blank lines before directives
+        assert!(parse_phase_transition("\n  \n\nNEXT_SKILL: analyzer\nSUMMARY: done").is_none());
     }
 
     #[tokio::test]
