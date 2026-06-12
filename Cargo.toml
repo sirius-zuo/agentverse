@@ -25,6 +25,7 @@ members = [
     "examples/mcp-demo",
     "avs-session",
     "avs-subagent",
+    "avs-hitl",
     "examples/demo-tools",
     "examples/project-feasibility",
     "examples/business-report",
