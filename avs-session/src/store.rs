@@ -108,4 +108,21 @@ pub trait SessionMemory: Send + Sync {
     ) -> Result<Option<String>, SessionMemoryError> {
         Ok(None)
     }
+
+    /// Apply a skill phase transition atomically: update `skill_context_json` and
+    /// `phase_opening_context` in a single operation.
+    /// The default falls back to two sequential writes for backward compatibility
+    /// with custom implementations that have not yet overridden this method.
+    async fn apply_phase_transition(
+        &self,
+        session_id: SessionId,
+        skill_ctx_json: &str,
+        phase_ctx: &str,
+    ) -> Result<(), SessionMemoryError> {
+        self.set_skill_context(session_id, Some(skill_ctx_json))
+            .await?;
+        self.set_phase_opening_context(session_id, Some(phase_ctx))
+            .await?;
+        Ok(())
+    }
 }

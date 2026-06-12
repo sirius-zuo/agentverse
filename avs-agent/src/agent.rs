@@ -575,16 +575,9 @@ impl Agent {
         };
         let new_ctx_json = serde_json::to_string(&new_ctx)?;
 
-        // Rebind the session to the new skill
+        let phase_ctx_str = format!("Context from previous phase: {}", transition.summary);
         self.sessions
-            .set_skill_context(session_id, Some(&new_ctx_json))
-            .await?;
-
-        // Store only the summary. The deliverable travels as the `input` param on the
-        // next invoke; invoke prepends this summary to form the effective LLM input.
-        let phase_ctx = format!("Context from previous phase: {}", transition.summary);
-        self.sessions
-            .set_phase_opening_context(session_id, Some(&phase_ctx))
+            .apply_phase_transition(session_id, &new_ctx_json, &phase_ctx_str)
             .await?;
 
         Ok(Some(transition))
