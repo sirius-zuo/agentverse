@@ -241,4 +241,19 @@ You are a billing agent.
         assert!(!skill.phase_gate);
         assert!(skill.checkpoints.is_empty());
     }
+
+    #[test]
+    fn parses_example_hitl_billing_review() {
+        let example_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("examples/hitl-billing-review.md");
+        if example_path.exists() {
+            let content = std::fs::read_to_string(&example_path).unwrap();
+            let skill = parse_skill_file(&example_path, &content).unwrap();
+            assert_eq!(skill.id, "billing-review");
+            assert_eq!(skill.hitl_tools, vec!["ledger_post"]);
+            assert!(skill.phase_gate);
+            assert_eq!(skill.checkpoints, vec!["review_complete", "approved_to_post"]);
+            assert!(skill.instructions.contains("Phase 1"));
+        }
+    }
 }
