@@ -822,11 +822,35 @@ Integration tests for full subagent pipelines require a running model server (`M
 
 AgentVerse uses a **three-layer prompt system** designed to maximize LLM prompt cache reuse.
 
+### Two Patterns
+
+How you configure the prompt layers depends on whether your agent needs a cross-skill baseline.
+
+**Pattern A — prompts-primary** (recommended for multi-skill agents or any agent where safety/behavioral invariants apply across all skills)
+
+Include a `prompts/` directory with:
+- `system.j2` — cross-skill baseline only. Permitted: one-line agent identity, behavioral invariants, safety rules. Prohibited: domain logic, workflow steps, tool guidance, output formats tied to a specific skill. **Rule: if the instruction would change when switching skills, it belongs in `SKILL.md`, not `system.j2`.**
+- A strategy template (`react.j2`, `hierarchical.j2`, `plan_and_execute.j2`) if the strategy requires format instructions.
+
+`SKILL.md` is the authoritative source for everything domain-specific: persona, workflow, tool guidance, output format.
+
+Example thin `system.j2`:
+```jinja2
+You are a helpful assistant. Be concise, accurate, and honest.
+Do not fabricate information.
+```
+
+**Pattern B — skills-only** (for agents whose behavior is entirely defined by skills)
+
+Use `PromptRegistry::new()` with no `prompts/` directory. `SKILL.md` carries all instructions. Demonstrates that `system.j2` is optional — `doc-pipeline` and `support-router` use this pattern.
+
+---
+
 ### Template Roles
 
 | Layer | File | Contains | Cache behaviour |
 |---|---|---|---|
-| System | `system.j2` | Agent identity + rules — prepended by `[skill instructions + docs]` when a skill is active, or by skill summaries during the routing phase | Cached in the system block — paid once per session |
+| System | `system.j2` | Cross-skill baseline: agent identity + behavioral invariants + safety rules — prepended by `[skill instructions + docs]` when a skill is active, or by skill summaries during the routing phase | Cached in the system block — paid once per session |
 | Preamble | `react.j2` | Tool descriptions + format instructions + few-shot examples — **only inserted when a `prompts/` directory with a `react.j2` file is configured** (`PromptRegistry::new()` without a directory skips this layer entirely) | Inserted after the System message (first non-System position); captured by the penultimate-message cache breakpoint |
 | Conversation | *(memory)* | Thought / Action / Tool Result / Answer exchanges | Volatile |
 
