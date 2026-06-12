@@ -352,7 +352,32 @@ impl Agent {
     ) -> Result<String, AgentError> {
         self.sessions.assert_owner(user_id, session_id).await?;
 
-        let history = self.get_cache_memory(user_id, session_id).await?;
+        // Check for a phase opening context set by advance_phase.
+        // If present: clear stale history from cache, inject context as the sole prior context,
+        // and clear the stored context so subsequent invokes accumulate normally.
+        let phase_ctx = self
+            .sessions
+            .get_phase_opening_context(session_id)
+            .await?;
+
+        let (history, effective_input) = if let Some(ctx_str) = phase_ctx {
+            // Phase transition: clear stale cache from the previous phase.
+            let cache_key = (user_id.to_string(), session_id);
+            self.cache_memory.lock().await.remove(&cache_key);
+
+            // Clear the stored context — subsequent invokes in this phase accumulate normally.
+            self.sessions
+                .set_phase_opening_context(session_id, None)
+                .await?;
+
+            // ctx_str is the summary only; input is the deliverable passed by the caller.
+            // Combine into one coherent user message: no duplication, no separator needed.
+            let combined = format!("{ctx_str}\n\n{input}");
+            (vec![], combined)
+        } else {
+            let history = self.get_cache_memory(user_id, session_id).await?;
+            (history, input.to_string())
+        };
 
         // Resolve skill context. On first invoke with no context, attempt routing.
         // Each read lock is scoped to a single synchronous operation and released
@@ -443,13 +468,13 @@ impl Agent {
 
         let user_msg = Message {
             role: MessageRole::User,
-            content: input.to_string(),
+            content: effective_input.clone(),
         };
         let messages = self.assemble_messages_with_context(
             self.assemble_system(skill_ctx.as_ref(), summaries_block.as_deref()),
             long_term_text,
             history,
-            input,
+            &effective_input,
         );
         let response = self
             .strategy
@@ -468,7 +493,7 @@ impl Agent {
 
         if let Some(ms) = self.longterm_memory.clone() {
             let uid = user_id.to_string();
-            let record = LongtermRecord::now(format!("User: {input}\nAssistant: {response}"), 0.5);
+            let record = LongtermRecord::now(format!("User: {effective_input}\nAssistant: {response}"), 0.5);
             tokio::spawn(async move {
                 let _ = ms.write(&uid, record).await;
             });
@@ -1319,5 +1344,41 @@ mod skill_tests {
         let output = "Output.\nNEXT_SKILL: nonexistent\nSUMMARY: done";
         let result = agent.advance_phase("alice", session_id, output).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn phase_opening_context_is_cleared_after_detection() {
+        // Verifies that advance_phase stores the context and that the session
+        // reports it as set. The clearing itself happens inside invoke (which
+        // requires a live LLM), but we can verify the storage side here.
+        let dir = tempdir().unwrap();
+        write_skill(dir.path(), "system", "stage-one", "Stage one.");
+        write_skill(dir.path(), "system", "stage-two", "Stage two.");
+        let skills = SkillConfig::load(dir.path(), SkillMode::Open).ok();
+        let agent = make_agent_with_skills(skills).await;
+
+        let session_id = agent
+            .create_session_with_skill("alice", "stage-one")
+            .await
+            .unwrap();
+
+        // Simulate advance_phase storing context
+        let output = "Done.\nNEXT_SKILL: stage-two\nSUMMARY: Completed stage one.";
+        agent
+            .advance_phase("alice", session_id, output)
+            .await
+            .unwrap();
+
+        // Context must be stored before any invoke
+        let phase_ctx = agent
+            .sessions
+            .get_phase_opening_context(session_id)
+            .await
+            .unwrap();
+        assert!(
+            phase_ctx.is_some(),
+            "phase opening context must be present before first invoke of new phase"
+        );
+        assert!(phase_ctx.unwrap().contains("Completed stage one."));
     }
 }
