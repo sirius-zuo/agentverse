@@ -88,4 +88,24 @@ pub trait SessionMemory: Send + Sync {
             .await?;
         Ok(session)
     }
+
+    /// Store the phase opening context for a session (None clears it).
+    /// Injected as the sole prior context on the first invoke after a skill transition.
+    /// Default is a no-op so existing impls compile unchanged.
+    async fn set_phase_opening_context(
+        &self,
+        _session_id: SessionId,
+        _context: Option<&str>,
+    ) -> Result<(), SessionMemoryError> {
+        Ok(())
+    }
+
+    /// Retrieve the phase opening context for a session, if any.
+    /// Default returns None.
+    async fn get_phase_opening_context(
+        &self,
+        _session_id: SessionId,
+    ) -> Result<Option<String>, SessionMemoryError> {
+        Ok(None)
+    }
 }
