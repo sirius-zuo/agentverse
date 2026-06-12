@@ -131,7 +131,9 @@ impl SessionManager {
         session_id: SessionId,
         state_json: Option<&str>,
     ) -> Result<(), SessionMemoryError> {
-        self.store.set_interrupted_state(session_id, state_json).await
+        self.store
+            .set_interrupted_state(session_id, state_json)
+            .await
     }
 
     pub async fn get_interrupted_state(

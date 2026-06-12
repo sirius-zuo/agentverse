@@ -1,5 +1,5 @@
-pub mod context;
 pub mod checkpoint;
+pub mod context;
 pub mod error;
 pub mod memory;
 pub mod policy;

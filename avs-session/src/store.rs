@@ -157,22 +157,22 @@ pub trait SessionMemory: Send + Sync {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum InterruptedState {
     PendingToolCall {
-        approval_id:        String,
-        kind_json:          String,
-        history_json:       String,
+        approval_id: String,
+        kind_json: String,
+        history_json: String,
         pending_calls_json: String,
-        active_tool_names:  Vec<String>,
+        active_tool_names: Vec<String>,
         skill_context_json: Option<String>,
     },
     PendingPhaseGate {
-        approval_id:     String,
+        approval_id: String,
         transition_json: String,
     },
     PendingCheckpoint {
-        approval_id:        String,
-        kind_json:          String,
-        history_json:       String,
-        active_tool_names:  Vec<String>,
+        approval_id: String,
+        kind_json: String,
+        history_json: String,
+        active_tool_names: Vec<String>,
         skill_context_json: Option<String>,
     },
 }
@@ -180,8 +180,8 @@ pub enum InterruptedState {
 impl InterruptedState {
     pub fn approval_id_str(&self) -> &str {
         match self {
-            Self::PendingToolCall   { approval_id, .. } => approval_id,
-            Self::PendingPhaseGate  { approval_id, .. } => approval_id,
+            Self::PendingToolCall { approval_id, .. } => approval_id,
+            Self::PendingPhaseGate { approval_id, .. } => approval_id,
             Self::PendingCheckpoint { approval_id, .. } => approval_id,
         }
     }

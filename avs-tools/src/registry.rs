@@ -3,7 +3,7 @@ use agentverse::{ErasedTool, ToolCall, ToolCallResult, ToolError, ToolResult};
 /// Carries HITL interrupt info when execute_many_hitl intercepts a call.
 pub struct HitlInterruptResult {
     pub approval_id: uuid::Uuid,
-    pub kind_json:   String,
+    pub kind_json: String,
 }
 use serde_json::Value;
 use std::collections::HashMap;
@@ -153,7 +153,10 @@ impl ToolRegistry {
         // Check all calls first — intercept before executing any
         for call in &calls {
             if let Some((approval_id, kind_json)) = hook.check_tool(&call.name, &call.args).await {
-                return Err(HitlInterruptResult { approval_id, kind_json });
+                return Err(HitlInterruptResult {
+                    approval_id,
+                    kind_json,
+                });
             }
         }
         // No HITL needed — execute normally

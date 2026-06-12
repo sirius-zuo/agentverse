@@ -59,7 +59,7 @@ impl SqliteQueue {
                 ApprovalStatus::Resolved(dec)
             }
             "expired" => ApprovalStatus::Expired,
-            _         => ApprovalStatus::Pending,
+            _ => ApprovalStatus::Pending,
         }
     }
 }
@@ -67,17 +67,22 @@ impl SqliteQueue {
 #[async_trait::async_trait]
 impl ApprovalQueue for SqliteQueue {
     async fn submit(&self, req: ApprovalRequest) -> Result<ApprovalId, HitlError> {
-        let id     = req.id.to_string();
-        let sid    = req.session_id.to_string();
-        let kind   = serde_json::to_string(&req.kind).map_err(|e| HitlError::Database(e.to_string()))?;
-        let now    = Utc::now().timestamp();
-        let exp    = req.expires_at.map(|t| t.timestamp());
+        let id = req.id.to_string();
+        let sid = req.session_id.to_string();
+        let kind =
+            serde_json::to_string(&req.kind).map_err(|e| HitlError::Database(e.to_string()))?;
+        let now = Utc::now().timestamp();
+        let exp = req.expires_at.map(|t| t.timestamp());
 
         sqlx::query(
             "INSERT INTO hitl_approvals (id, session_id, kind_json, status, created_at, expires_at)
-             VALUES (?, ?, ?, 'pending', ?, ?)"
+             VALUES (?, ?, ?, 'pending', ?, ?)",
         )
-        .bind(&id).bind(&sid).bind(&kind).bind(now).bind(exp)
+        .bind(&id)
+        .bind(&sid)
+        .bind(&kind)
+        .bind(now)
+        .bind(exp)
         .execute(&self.pool)
         .await
         .map_err(|e| HitlError::Database(e.to_string()))?;
@@ -86,15 +91,18 @@ impl ApprovalQueue for SqliteQueue {
     }
 
     async fn resolve(&self, id: ApprovalId, decision: ApprovalDecision) -> Result<(), HitlError> {
-        let id_str  = id.to_string();
-        let dec_str = serde_json::to_string(&decision).map_err(|e| HitlError::Database(e.to_string()))?;
-        let now     = Utc::now().timestamp();
+        let id_str = id.to_string();
+        let dec_str =
+            serde_json::to_string(&decision).map_err(|e| HitlError::Database(e.to_string()))?;
+        let now = Utc::now().timestamp();
 
         let rows = sqlx::query(
             "UPDATE hitl_approvals SET status='resolved', decision=?, resolved_at=?
-             WHERE id=? AND status='pending'"
+             WHERE id=? AND status='pending'",
         )
-        .bind(&dec_str).bind(now).bind(&id_str)
+        .bind(&dec_str)
+        .bind(now)
+        .bind(&id_str)
         .execute(&self.pool)
         .await
         .map_err(|e| HitlError::Database(e.to_string()))?;
@@ -102,8 +110,15 @@ impl ApprovalQueue for SqliteQueue {
         if rows.rows_affected() == 0 {
             // Check whether it exists at all
             let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM hitl_approvals WHERE id=?")
-                .bind(&id_str).fetch_one(&self.pool).await.unwrap_or(0);
-            if exists == 0 { Err(HitlError::NotFound(id)) } else { Err(HitlError::AlreadyResolved(id)) }
+                .bind(&id_str)
+                .fetch_one(&self.pool)
+                .await
+                .unwrap_or(0);
+            if exists == 0 {
+                Err(HitlError::NotFound(id))
+            } else {
+                Err(HitlError::AlreadyResolved(id))
+            }
         } else {
             Ok(())
         }
@@ -126,7 +141,7 @@ impl ApprovalQueue for SqliteQueue {
         let now = Utc::now().timestamp();
         let rows = sqlx::query(
             "UPDATE hitl_approvals SET status='expired'
-             WHERE status='pending' AND expires_at IS NOT NULL AND expires_at < ?"
+             WHERE status='pending' AND expires_at IS NOT NULL AND expires_at < ?",
         )
         .bind(now)
         .execute(&self.pool)

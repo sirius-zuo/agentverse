@@ -16,7 +16,9 @@ pub struct RequestCheckpointTool;
 #[async_trait::async_trait]
 impl Tool for RequestCheckpointTool {
     type Args = CheckpointArgs;
-    fn name(&self)        -> &str { "request_checkpoint" }
+    fn name(&self) -> &str {
+        "request_checkpoint"
+    }
     fn description(&self) -> &str {
         "Pause execution and request human approval at a named checkpoint."
     }

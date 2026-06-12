@@ -185,7 +185,10 @@ async fn execute_many_hitl_intercepts_blocked_tool() {
 
     let registry = ToolRegistry::new();
     let hook: Arc<dyn HitlHook> = Arc::new(BlockAll);
-    let calls = vec![ToolCall { name: "find_tools".to_string(), args: json!({}) }];
+    let calls = vec![ToolCall {
+        name: "find_tools".to_string(),
+        args: json!({}),
+    }];
     let result = registry.execute_many_hitl(calls, &hook).await;
     assert!(result.is_err(), "intercepted call must return Err");
 }
@@ -199,14 +202,23 @@ async fn execute_many_hitl_returns_kind_json_on_intercept() {
     #[async_trait::async_trait]
     impl HitlHook for BlockAll {
         async fn check_tool(&self, _: &str, _: &serde_json::Value) -> Option<(uuid::Uuid, String)> {
-            Some((uuid::Uuid::new_v4(), r#"{"type":"ToolApproval"}"#.to_string()))
+            Some((
+                uuid::Uuid::new_v4(),
+                r#"{"type":"ToolApproval"}"#.to_string(),
+            ))
         }
     }
 
     let registry = ToolRegistry::new();
     let hook: Arc<dyn HitlHook> = Arc::new(BlockAll);
-    let calls = vec![ToolCall { name: "find_tools".to_string(), args: json!({}) }];
+    let calls = vec![ToolCall {
+        name: "find_tools".to_string(),
+        args: json!({}),
+    }];
     let result = registry.execute_many_hitl(calls, &hook).await;
     let err = result.unwrap_err();
-    assert!(!err.kind_json.is_empty(), "kind_json must be forwarded from hook");
+    assert!(
+        !err.kind_json.is_empty(),
+        "kind_json must be forwarded from hook"
+    );
 }

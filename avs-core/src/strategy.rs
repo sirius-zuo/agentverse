@@ -33,6 +33,7 @@ pub trait RunStrategy: Send + Sync {
         active_tool_names: &[String],
         _hook: Arc<dyn HitlHook>,
     ) -> Result<String, AgentError> {
-        self.run_with_active_tools(messages, active_tool_names).await
+        self.run_with_active_tools(messages, active_tool_names)
+            .await
     }
 }

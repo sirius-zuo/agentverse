@@ -7,7 +7,7 @@ use std::sync::Mutex;
 
 struct Entry {
     request: ApprovalRequest,
-    status:  ApprovalStatus,
+    status: ApprovalStatus,
 }
 
 pub struct InMemoryQueue {
@@ -16,19 +16,29 @@ pub struct InMemoryQueue {
 
 impl InMemoryQueue {
     pub fn new() -> Self {
-        Self { entries: Mutex::new(HashMap::new()) }
+        Self {
+            entries: Mutex::new(HashMap::new()),
+        }
     }
 }
 
 impl Default for InMemoryQueue {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[async_trait::async_trait]
 impl ApprovalQueue for InMemoryQueue {
     async fn submit(&self, req: ApprovalRequest) -> Result<ApprovalId, HitlError> {
         let id = req.id;
-        self.entries.lock().unwrap().insert(id, Entry { request: req, status: ApprovalStatus::Pending });
+        self.entries.lock().unwrap().insert(
+            id,
+            Entry {
+                request: req,
+                status: ApprovalStatus::Pending,
+            },
+        );
         Ok(id)
     }
 
@@ -44,7 +54,8 @@ impl ApprovalQueue for InMemoryQueue {
 
     async fn poll(&self, id: ApprovalId) -> Result<ApprovalStatus, HitlError> {
         self.entries
-            .lock().unwrap()
+            .lock()
+            .unwrap()
             .get(&id)
             .map(|e| e.status.clone())
             .ok_or(HitlError::NotFound(id))
