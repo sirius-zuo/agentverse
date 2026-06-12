@@ -376,26 +376,34 @@ See `examples/project-feasibility` (programmatic) and `examples/business-report`
 
 ## Prompt Templates
 
-AgentVerse uses `PromptRegistry` to load embedded defaults and optional `.j2` templates from a prompts directory.
+AgentVerse supports two prompt patterns — choose based on whether your agent needs a shared baseline across skills.
 
-Common layout:
+**Pattern A — prompts-primary:** Include a `prompts/` directory. `system.j2` holds cross-skill invariants (identity, safety rules — nothing domain-specific). A strategy template (`react.j2`, `hierarchical.j2`, or `plan_and_execute.j2`) carries format instructions. `SKILL.md` owns all domain logic.
+
+**Pattern B — skills-only:** Use `PromptRegistry::new()` with no `prompts/` directory. `SKILL.md` carries everything. Simpler when each skill fully defines the agent's behavior and no shared baseline is needed.
+
+> **Rule:** if an instruction would change when switching skills, it belongs in `SKILL.md` not `system.j2`.
+
+Common Pattern A layout:
 
 ```text
 prompts/
-  system.j2
-  react.j2
-  react_examples.toml
+  system.j2            # Cross-skill baseline — identity + safety only
+  react.j2             # ReAct format instructions (strategy-specific)
+  react_examples.toml  # Few-shot examples (optional)
 ```
-
-Example:
 
 ```rust
 use agentverse::{PromptConfig, PromptRegistry};
 
+// Pattern A — load from directory
 let registry = Arc::new(PromptRegistry::from_config(&PromptConfig {
     prompts_dir: Some(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string()),
     ..Default::default()
 })?);
+
+// Pattern B — no directory needed
+let registry = Arc::new(PromptRegistry::new());
 ```
 
 ## Crates
