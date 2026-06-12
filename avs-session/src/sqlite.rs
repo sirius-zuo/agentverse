@@ -148,6 +148,21 @@ impl SqliteSessionMemory {
                 .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
         }
 
+        // Phase opening context column (single-agent multi-phase model)
+        let has_phase_ctx: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'phase_opening_context'",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+
+        if has_phase_ctx == 0 {
+            sqlx::query("ALTER TABLE sessions ADD COLUMN phase_opening_context TEXT")
+                .execute(&self.pool)
+                .await
+                .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+        }
+
         Ok(())
     }
 }
@@ -495,6 +510,42 @@ impl SessionMemory for SqliteSessionMemory {
         }
     }
 
+    async fn set_phase_opening_context(
+        &self,
+        session_id: SessionId,
+        context: Option<&str>,
+    ) -> Result<(), SessionMemoryError> {
+        let result =
+            sqlx::query("UPDATE sessions SET phase_opening_context = ? WHERE id = ?")
+                .bind(context)
+                .bind(session_id.to_string())
+                .execute(&self.pool)
+                .await
+                .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+
+        if result.rows_affected() == 0 {
+            return Err(SessionMemoryError::NotFound(session_id));
+        }
+        Ok(())
+    }
+
+    async fn get_phase_opening_context(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Option<String>, SessionMemoryError> {
+        let row: Option<Option<String>> =
+            sqlx::query_scalar("SELECT phase_opening_context FROM sessions WHERE id = ?")
+                .bind(session_id.to_string())
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+
+        match row {
+            None => Err(SessionMemoryError::NotFound(session_id)),
+            Some(v) => Ok(v),
+        }
+    }
+
     async fn create_with_skill_context(
         &self,
         user_id: &str,
@@ -570,6 +621,42 @@ mod skill_context_tests {
         store.set_skill_context(session.id, None).await.unwrap();
         let ctx = store.get_skill_context(session.id).await.unwrap();
         assert!(ctx.is_none());
+    }
+
+    #[tokio::test]
+    async fn set_and_get_phase_opening_context() {
+        let store = SqliteSessionMemory::new("sqlite::memory:").await.unwrap();
+        let session = store.create("bob").await.unwrap();
+
+        // Initially None
+        let ctx = store.get_phase_opening_context(session.id).await.unwrap();
+        assert!(ctx.is_none());
+
+        // Set it
+        store
+            .set_phase_opening_context(session.id, Some("Summary of previous phase: Found 3 entities."))
+            .await
+            .unwrap();
+
+        // Retrieve it
+        let ctx = store.get_phase_opening_context(session.id).await.unwrap();
+        assert_eq!(ctx.unwrap(), "Summary of previous phase: Found 3 entities.");
+
+        // Clear it
+        store
+            .set_phase_opening_context(session.id, None)
+            .await
+            .unwrap();
+        let ctx = store.get_phase_opening_context(session.id).await.unwrap();
+        assert!(ctx.is_none());
+    }
+
+    #[tokio::test]
+    async fn get_phase_opening_context_errors_on_missing_session() {
+        let store = SqliteSessionMemory::new("sqlite::memory:").await.unwrap();
+        let fake_id: SessionId = uuid::Uuid::new_v4().into();
+        let result = store.get_phase_opening_context(fake_id).await;
+        assert!(result.is_err());
     }
 }
 
