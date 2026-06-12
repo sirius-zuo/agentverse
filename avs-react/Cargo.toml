@@ -7,6 +7,7 @@ rust-version.workspace = true
 [dependencies]
 agentverse = { path = "../avs-core" }
 agentverse-guardrails = { path = "../avs-guardrails" }
+agentverse-hitl = { path = "../avs-hitl" }
 agentverse-tools = { path = "../avs-tools" }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
