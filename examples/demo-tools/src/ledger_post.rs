@@ -45,9 +45,9 @@ mod tests {
         let tool = LedgerPost;
         let result = tool
             .execute(LedgerPostArgs {
-                entry_id:    "je-2026-06".to_string(),
+                entry_id: "je-2026-06".to_string(),
                 description: "June payroll".to_string(),
-                amount_usd:  -15000.00,
+                amount_usd: -15000.00,
             })
             .await
             .unwrap();
