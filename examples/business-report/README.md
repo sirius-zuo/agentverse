@@ -1,10 +1,10 @@
 # business-report
 
-A multi-agent report generator that demonstrates LLM-driven subagent orchestration: a skill instructs the agent to spawn specialist analyst subagents via tool calls.
+A report generator that demonstrates LLM-driven subagent orchestration: a skill instructs the agent to spawn specialist analyst subagents via tool calls.
 
 ## What this shows
 
-**LLM-driven multi-agent orchestration** — The `business-report` SKILL.md instructs the agent to call `spawn_subagent` three times (financial, market, timeline analysts). The orchestration logic — which analysts to spawn, what objective to give each, and how to synthesise results — lives in the skill file, not in Rust.
+**LLM-driven subagent orchestration** — The `business-report` SKILL.md instructs the agent to call `spawn_subagent` three times (financial, market, timeline analysts). The orchestration logic — which analyst subagents to spawn, what objective to give each, and how to synthesise results — lives in the skill file, not in Rust.
 
 **SubAgentTool integration** — `SubAgentExecutor::register_tool` registers `spawn_subagent` in the agent's tool registry as a first-class ReAct tool. From the agent's perspective, spawning a subagent is identical to calling any other tool.
 

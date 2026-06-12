@@ -6,7 +6,7 @@ A multi-domain support agent that demonstrates coordinator dispatch: a coordinat
 
 **Coordinator dispatch** — A coordinator agent (React, no tools) reads the support request and outputs a JSON plan `[{skill, task}, ...]`. `main.rs` parses the plan and dispatches each step to the specialist agent that owns the matching skill.
 
-**Mixed strategies per role** — Each agent uses the strategy suited to its task: coordinator=React (zero tools, one-shot JSON), billing=Hierarchical (multi-step decomposition), tech-support and account-mgmt=React (single tool call each).
+**Mixed strategies per role** — Each role runs in its own `Agent` instance configured with the strategy suited to its task: coordinator=React (zero tools, one-shot JSON), billing=Hierarchical (multi-step decomposition), tech-support and account-mgmt=React (single tool call each).
 
 **Context threading** — Each specialist receives the previous step's output prepended as `Context from previous steps:`. Later specialists can reference earlier findings without the coordinator predicting dependencies upfront.
 
@@ -25,7 +25,7 @@ cargo run -p example-support-router -- "I was charged twice last month and my AP
 
 ## How it's built
 
-Four agents are created with `make_agent()`:
+One `Agent` instance is created per role with `make_agent()`. Each is a separate isolated context; roles differ in strategy and tool access:
 
 | Role | Strategy | Tools | Skill |
 |---|---|---|---|

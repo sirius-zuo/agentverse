@@ -1,10 +1,10 @@
 # project-feasibility
 
-A programmatic multi-agent feasibility analysis pipeline that demonstrates parallel subagent fan-out, ResourceContent for result passing, and Budget limits for load control.
+A feasibility analysis pipeline that demonstrates programmatic subagent fan-out, ResourceContent for result passing, and Budget limits for load control.
 
 ## What this shows
 
-**Programmatic multi-agent with SubAgentExecutor** — Three analyst subagents are spawned directly in Rust via `executor.spawn()`. All three start immediately and run concurrently. No LLM decides what to spawn or when.
+**Programmatic subagent fan-out** — Three analyst subagents are spawned directly in Rust via `executor.spawn()`. All three start immediately and run concurrently. No LLM decides what to spawn or when.
 
 **Parallel fan-out + sequential synthesis** — `executor.spawn()` returns a `SubAgentHandle` immediately (non-blocking). All three handles are collected before any `.await_result()` call — this is what achieves true parallelism. A synthesis subagent then runs sequentially once all three complete.
 
@@ -76,7 +76,7 @@ Each `SubAgentSpec` carries a `system_prompt` field — this is where safety rul
 
 ## Design background
 
-Built as the programmatic counterpart to `business-report`. The core question: when should the multi-agent topology be hardcoded in Rust vs driven by the LLM? When the pipeline is fixed and well-defined — feasibility analysis always needs financial, timeline, and risk — hardcoded topology gives reliability guarantees that LLM orchestration cannot: the three analysts always run, always in parallel, always within their budgets. The LLM cannot skip a step or spawn a fourth analyst.
+Built as the programmatic counterpart to `business-report`. The core question: when should the subagent topology be hardcoded in Rust vs driven by the LLM? When the pipeline is fixed and well-defined — feasibility analysis always needs financial, timeline, and risk — hardcoded topology gives reliability guarantees that LLM orchestration cannot: the three analysts always run, always in parallel, always within their budgets. The LLM cannot skip a step or spawn a fourth analyst.
 
 `ResourceContent` was chosen over tool-based result passing because the synthesis agent needs all three reports simultaneously to write a coherent analysis. Injecting them as context at creation time is simpler and cheaper than having the synthesis agent request each report via a tool call.
 

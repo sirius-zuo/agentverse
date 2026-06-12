@@ -25,7 +25,7 @@ cargo run -p example-doc-pipeline -- "your document text here"
 
 ## How it's built
 
-Three agents are created with `make_agent()` — same runner, tools, and prompts; each loads its own `SkillConfig` from the same `skills_dir`. They differ only in `StrategyKind`:
+One `Agent` instance is created per stage with `make_agent()` — each is a separate isolated context with the same runner, tools, and prompts, but its own `SkillConfig` and `StrategyKind`:
 
 | Stage | Strategy | Tools | Emits |
 |---|---|---|---|
