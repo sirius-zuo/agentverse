@@ -91,7 +91,9 @@ impl SessionManager {
         session_id: SessionId,
         context: Option<&str>,
     ) -> Result<(), SessionMemoryError> {
-        self.store.set_phase_opening_context(session_id, context).await
+        self.store
+            .set_phase_opening_context(session_id, context)
+            .await
     }
 
     pub async fn get_phase_opening_context(

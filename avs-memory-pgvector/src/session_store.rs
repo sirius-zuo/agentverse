@@ -511,13 +511,12 @@ impl SessionMemory for PostgresSessionMemory {
         session_id: SessionId,
         context: Option<&str>,
     ) -> Result<(), SessionMemoryError> {
-        let result =
-            sqlx::query("UPDATE sessions SET phase_opening_context = $1 WHERE id = $2")
-                .bind(context)
-                .bind(session_id.to_string())
-                .execute(&self.pool)
-                .await
-                .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+        let result = sqlx::query("UPDATE sessions SET phase_opening_context = $1 WHERE id = $2")
+            .bind(context)
+            .bind(session_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
 
         if result.rows_affected() == 0 {
             return Err(SessionMemoryError::NotFound(session_id));

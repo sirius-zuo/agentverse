@@ -355,10 +355,7 @@ impl Agent {
         // Check for a phase opening context set by advance_phase.
         // If present: clear stale history from cache, inject context as the sole prior context,
         // and clear the stored context so subsequent invokes accumulate normally.
-        let phase_ctx = self
-            .sessions
-            .get_phase_opening_context(session_id)
-            .await?;
+        let phase_ctx = self.sessions.get_phase_opening_context(session_id).await?;
 
         let (history, effective_input) = if let Some(ctx_str) = phase_ctx {
             // Phase transition: clear stale cache from the previous phase.
@@ -493,7 +490,10 @@ impl Agent {
 
         if let Some(ms) = self.longterm_memory.clone() {
             let uid = user_id.to_string();
-            let record = LongtermRecord::now(format!("User: {effective_input}\nAssistant: {response}"), 0.5);
+            let record = LongtermRecord::now(
+                format!("User: {effective_input}\nAssistant: {response}"),
+                0.5,
+            );
             tokio::spawn(async move {
                 let _ = ms.write(&uid, record).await;
             });
@@ -1296,7 +1296,8 @@ mod skill_tests {
             .await
             .unwrap();
 
-        let output = "Extracted data.\n\nNEXT_SKILL: skill-b\nSUMMARY: Found 5 items; selected approach X.";
+        let output =
+            "Extracted data.\n\nNEXT_SKILL: skill-b\nSUMMARY: Found 5 items; selected approach X.";
         let transition = agent
             .advance_phase("alice", session_id, output)
             .await
@@ -1326,7 +1327,10 @@ mod skill_tests {
         assert!(phase_ctx.is_some());
         let ctx_str = phase_ctx.unwrap();
         assert!(ctx_str.contains("Found 5 items"));
-        assert!(!ctx_str.contains("Extracted data."), "deliverable must not be stored in phase_opening_context");
+        assert!(
+            !ctx_str.contains("Extracted data."),
+            "deliverable must not be stored in phase_opening_context"
+        );
     }
 
     #[tokio::test]
