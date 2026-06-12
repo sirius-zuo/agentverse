@@ -10,8 +10,6 @@ http = [
     "dep:tower",
     "dep:tower-http",
     "dep:reqwest",
-    "dep:serde",
-    "dep:uuid",
 ]
 
 [dependencies]
@@ -21,20 +19,22 @@ agentverse-session = { path = "../avs-session" }
 agentverse-strategy = { path = "../avs-strategy" }
 agentverse-subagent  = { path = "../avs-subagent" }
 agentverse-tools = { path = "../avs-tools" }
+agentverse-hitl = { path = "../avs-hitl" }
 thiserror.workspace = true
 tokio = { workspace = true }
 async-trait.workspace = true
 tracing.workspace = true
 chrono = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+base64 = { workspace = true }
+uuid = { workspace = true }
 
 # Optional — only compiled with `http` feature
 axum = { workspace = true, optional = true }
 tower = { workspace = true, optional = true }
 tower-http = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
-serde = { workspace = true, optional = true }
-uuid = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

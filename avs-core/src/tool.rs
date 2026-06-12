@@ -1,5 +1,5 @@
 use schemars::JsonSchema;
-use serde::de::DeserializeOwned;
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::oneshot;
 use uuid::Uuid;
@@ -57,7 +57,7 @@ impl<T: Tool> ErasedTool for T {
 }
 
 /// A single tool invocation request.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
     pub name: String,
     pub args: Value,
