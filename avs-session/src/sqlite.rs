@@ -701,9 +701,7 @@ mod skill_context_tests {
 
         let skill_ctx = store.get_skill_context(session.id).await.unwrap();
         assert!(
-            skill_ctx
-                .unwrap()
-                .contains("new skill"),
+            skill_ctx.unwrap().contains("new skill"),
             "skill_context_json must be updated"
         );
 
