@@ -545,6 +545,30 @@ impl SessionMemory for SqliteSessionMemory {
         }
     }
 
+    async fn apply_phase_transition(
+        &self,
+        session_id: SessionId,
+        skill_ctx_json: &str,
+        phase_ctx: &str,
+    ) -> Result<(), SessionMemoryError> {
+        let result = sqlx::query(
+            "UPDATE sessions \
+             SET skill_context_json = ?, phase_opening_context = ? \
+             WHERE id = ?",
+        )
+        .bind(skill_ctx_json)
+        .bind(phase_ctx)
+        .bind(session_id.to_string())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+
+        if result.rows_affected() == 0 {
+            return Err(SessionMemoryError::NotFound(session_id));
+        }
+        Ok(())
+    }
+
     async fn create_with_skill_context(
         &self,
         user_id: &str,
@@ -659,6 +683,34 @@ mod skill_context_tests {
         let fake_id: SessionId = uuid::Uuid::new_v4().into();
         let result = store.get_phase_opening_context(fake_id).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn apply_phase_transition_sets_both_fields() {
+        let store = SqliteSessionMemory::new("sqlite::memory:").await.unwrap();
+        let session = store.create("alice").await.unwrap();
+
+        store
+            .apply_phase_transition(
+                session.id,
+                r#"{"instructions":"new skill","tools":[],"strategy":null}"#,
+                "Context from previous phase: Found 5 items.",
+            )
+            .await
+            .unwrap();
+
+        let skill_ctx = store.get_skill_context(session.id).await.unwrap();
+        assert!(
+            skill_ctx.unwrap().contains("new skill"),
+            "skill_context_json must be updated"
+        );
+
+        let phase_ctx = store.get_phase_opening_context(session.id).await.unwrap();
+        assert_eq!(
+            phase_ctx.unwrap(),
+            "Context from previous phase: Found 5 items.",
+            "phase_opening_context must be updated"
+        );
     }
 }
 

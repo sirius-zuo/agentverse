@@ -103,6 +103,17 @@ impl SessionManager {
         self.store.get_phase_opening_context(session_id).await
     }
 
+    pub async fn apply_phase_transition(
+        &self,
+        session_id: SessionId,
+        skill_ctx_json: &str,
+        phase_ctx: &str,
+    ) -> Result<(), SessionMemoryError> {
+        self.store
+            .apply_phase_transition(session_id, skill_ctx_json, phase_ctx)
+            .await
+    }
+
     pub async fn create_session_with_skill_context(
         &self,
         user_id: &str,

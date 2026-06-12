@@ -541,6 +541,30 @@ impl SessionMemory for PostgresSessionMemory {
         }
     }
 
+    async fn apply_phase_transition(
+        &self,
+        session_id: SessionId,
+        skill_ctx_json: &str,
+        phase_ctx: &str,
+    ) -> Result<(), SessionMemoryError> {
+        let result = sqlx::query(
+            "UPDATE sessions \
+             SET skill_context_json = $1, phase_opening_context = $2 \
+             WHERE id = $3",
+        )
+        .bind(skill_ctx_json)
+        .bind(phase_ctx)
+        .bind(session_id.to_string())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+
+        if result.rows_affected() == 0 {
+            return Err(SessionMemoryError::NotFound(session_id));
+        }
+        Ok(())
+    }
+
     async fn create_with_skill_context(
         &self,
         user_id: &str,

@@ -97,6 +97,13 @@ pub trait SessionMemory: Send + Sync {
         _session_id: SessionId,
         _context: Option<&str>,
     ) -> Result<(), SessionMemoryError> {
+        if _context.is_some() {
+            tracing::warn!(
+                "set_phase_opening_context called on a SessionMemory implementation that uses \
+                the default no-op. Phase transition context will not be persisted. \
+                Override this method in your SessionMemory implementation if you use advance_phase."
+            );
+        }
         Ok(())
     }
 
@@ -107,5 +114,22 @@ pub trait SessionMemory: Send + Sync {
         _session_id: SessionId,
     ) -> Result<Option<String>, SessionMemoryError> {
         Ok(None)
+    }
+
+    /// Apply a skill phase transition atomically: update `skill_context_json` and
+    /// `phase_opening_context` in a single operation.
+    /// The default falls back to two sequential writes for backward compatibility
+    /// with custom implementations that have not yet overridden this method.
+    async fn apply_phase_transition(
+        &self,
+        session_id: SessionId,
+        skill_ctx_json: &str,
+        phase_ctx: &str,
+    ) -> Result<(), SessionMemoryError> {
+        self.set_skill_context(session_id, Some(skill_ctx_json))
+            .await?;
+        self.set_phase_opening_context(session_id, Some(phase_ctx))
+            .await?;
+        Ok(())
     }
 }

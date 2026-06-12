@@ -109,7 +109,6 @@ pub struct Agent {
 /// Parse `NEXT_SKILL: <id>` and `SUMMARY: <text>` from the last non-empty lines of output.
 /// Both directives must be present (in order) for a transition to be returned.
 /// Returns `None` if either directive is missing.
-#[allow(dead_code)]
 pub(crate) fn parse_phase_transition(output: &str) -> Option<PhaseTransition> {
     let trimmed = output.trim_end();
     let mut lines: Vec<&str> = trimmed.lines().collect();
@@ -148,6 +147,13 @@ pub(crate) fn parse_phase_transition(output: &str) -> Option<PhaseTransition> {
     }
 
     let deliverable = lines.join("\n");
+    if deliverable.trim().is_empty() {
+        tracing::warn!(
+            "parse_phase_transition: NEXT_SKILL/SUMMARY directives found but deliverable \
+            body is empty; treating as terminal output"
+        );
+        return None;
+    }
 
     Some(PhaseTransition {
         next_skill,
@@ -355,7 +361,11 @@ impl Agent {
         // Check for a phase opening context set by advance_phase.
         // If present: clear stale history from cache, inject context as the sole prior context,
         // and clear the stored context so subsequent invokes accumulate normally.
-        let phase_ctx = self.sessions.get_phase_opening_context(session_id).await?;
+        let phase_ctx = if self.skills.is_some() {
+            self.sessions.get_phase_opening_context(session_id).await?
+        } else {
+            None
+        };
 
         let (history, effective_input) = if let Some(ctx_str) = phase_ctx {
             // Phase transition: clear stale cache from the previous phase.
@@ -442,7 +452,7 @@ impl Agent {
         // Layer 3: retrieve scored memories
         let long_term_text = if let Some(ref ms) = self.longterm_memory {
             let memories = ms
-                .retrieve(user_id, input, 5)
+                .retrieve(user_id, &effective_input, 5)
                 .await
                 .unwrap_or_else(|e| {
                     tracing::warn!(error = %e, "layer-3 memory retrieve failed, proceeding without context");
@@ -535,7 +545,27 @@ impl Agent {
 
         let transition = match parse_phase_transition(output) {
             Some(t) => t,
-            None => return Ok(None),
+            None => {
+                // Warn if NEXT_SKILL: appears near the end but SUMMARY: is absent —
+                // this likely means the skill emitted only one of the two required directives.
+                let near_end_has_next_skill = output
+                    .trim_end()
+                    .lines()
+                    .rev()
+                    .take(5)
+                    .filter(|l| !l.trim().is_empty())
+                    .any(|l| l.trim().starts_with("NEXT_SKILL:"));
+                let has_summary = output.lines().any(|l| l.trim().starts_with("SUMMARY:"));
+                if near_end_has_next_skill && !has_summary {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        "advance_phase: NEXT_SKILL: directive found near end of output but \
+                        SUMMARY: is missing — treating as terminal output. Ensure the skill \
+                        emits both directives as its last two lines."
+                    );
+                }
+                return Ok(None);
+            }
         };
 
         let skills = self.skills.as_ref().ok_or_else(|| {
@@ -549,16 +579,9 @@ impl Agent {
         };
         let new_ctx_json = serde_json::to_string(&new_ctx)?;
 
-        // Rebind the session to the new skill
+        let phase_ctx_str = format!("Context from previous phase: {}", transition.summary);
         self.sessions
-            .set_skill_context(session_id, Some(&new_ctx_json))
-            .await?;
-
-        // Store only the summary. The deliverable travels as the `input` param on the
-        // next invoke; invoke prepends this summary to form the effective LLM input.
-        let phase_ctx = format!("Context from previous phase: {}", transition.summary);
-        self.sessions
-            .set_phase_opening_context(session_id, Some(&phase_ctx))
+            .apply_phase_transition(session_id, &new_ctx_json, &phase_ctx_str)
             .await?;
 
         Ok(Some(transition))
@@ -790,6 +813,14 @@ mod tests {
         let output = "Line one.\nLine two.\nNEXT_SKILL: b\nSUMMARY: summary text";
         let t = parse_phase_transition(output).unwrap();
         assert_eq!(t.deliverable, "Line one.\nLine two.");
+    }
+
+    #[test]
+    fn returns_none_when_deliverable_is_empty() {
+        // Directives only, no body at all
+        assert!(parse_phase_transition("NEXT_SKILL: analyzer\nSUMMARY: done").is_none());
+        // Only blank lines before directives
+        assert!(parse_phase_transition("\n  \n\nNEXT_SKILL: analyzer\nSUMMARY: done").is_none());
     }
 
     #[tokio::test]
