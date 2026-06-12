@@ -1,5 +1,7 @@
 use crate::error::AgentError;
+use crate::hitl::HitlHook;
 use crate::memory::Message;
+use std::sync::Arc;
 
 #[async_trait::async_trait]
 pub trait RunStrategy: Send + Sync {
@@ -14,5 +16,16 @@ pub trait RunStrategy: Send + Sync {
         _active_tool_names: &[String],
     ) -> Result<String, AgentError> {
         self.run(messages).await
+    }
+
+    /// Run with HITL support. Default delegates to run_with_active_tools (no HITL).
+    /// ReActStrategy overrides this to intercept dangerous tool calls.
+    async fn run_hitl(
+        &self,
+        messages: Vec<Message>,
+        active_tool_names: &[String],
+        _hook: Arc<dyn HitlHook>,
+    ) -> Result<String, AgentError> {
+        self.run_with_active_tools(messages, active_tool_names).await
     }
 }
