@@ -497,6 +497,48 @@ impl Agent {
             .await?)
     }
 
+    /// Parse a skill transition from `output`. If `NEXT_SKILL:` + `SUMMARY:` are found:
+    /// rebinds the active skill on the session and stores the phase opening context.
+    /// Returns `None` if the output contains no transition directives (terminal skill).
+    pub async fn advance_phase(
+        &self,
+        user_id: &str,
+        session_id: SessionId,
+        output: &str,
+    ) -> Result<Option<PhaseTransition>, AgentError> {
+        self.sessions.assert_owner(user_id, session_id).await?;
+
+        let transition = match parse_phase_transition(output) {
+            Some(t) => t,
+            None => return Ok(None),
+        };
+
+        let skills = self.skills.as_ref().ok_or_else(|| {
+            SkillError::NotConfigured("no skill registry configured on this agent".into())
+        })?;
+
+        let new_ctx = {
+            let reg = skills.registry.read().await;
+            reg.compile_context(&transition.next_skill)
+                .map_err(AgentError::Skill)?
+        };
+        let new_ctx_json = serde_json::to_string(&new_ctx)?;
+
+        // Rebind the session to the new skill
+        self.sessions
+            .set_skill_context(session_id, Some(&new_ctx_json))
+            .await?;
+
+        // Store only the summary. The deliverable travels as the `input` param on the
+        // next invoke; invoke prepends this summary to form the effective LLM input.
+        let phase_ctx = format!("Context from previous phase: {}", transition.summary);
+        self.sessions
+            .set_phase_opening_context(session_id, Some(&phase_ctx))
+            .await?;
+
+        Ok(Some(transition))
+    }
+
     /// Reload the skill registry from disk. Existing sessions are unaffected;
     /// new routing calls pick up the refreshed registry.
     pub async fn reload_skills(&self) -> Result<(), AgentError> {
@@ -1194,5 +1236,88 @@ mod skill_tests {
             ctx_json.is_none(),
             "code-review is not in Constrained allow-list, should not bind"
         );
+    }
+
+    #[tokio::test]
+    async fn advance_phase_returns_none_for_terminal_output() {
+        let dir = tempdir().unwrap();
+        write_skill(dir.path(), "system", "skill-a", "Skill A.");
+        let skills = SkillConfig::load(dir.path(), SkillMode::Open).ok();
+        let agent = make_agent_with_skills(skills).await;
+
+        let session_id = agent
+            .create_session_with_skill("alice", "skill-a")
+            .await
+            .unwrap();
+
+        let result = agent
+            .advance_phase("alice", session_id, "Final output. No directives.")
+            .await
+            .unwrap();
+
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn advance_phase_rebinds_skill_and_stores_context() {
+        let dir = tempdir().unwrap();
+        write_skill(dir.path(), "system", "skill-a", "Skill A instructions.");
+        write_skill(dir.path(), "system", "skill-b", "Skill B instructions.");
+        let skills = SkillConfig::load(dir.path(), SkillMode::Open).ok();
+        let agent = make_agent_with_skills(skills).await;
+
+        let session_id = agent
+            .create_session_with_skill("alice", "skill-a")
+            .await
+            .unwrap();
+
+        let output = "Extracted data.\n\nNEXT_SKILL: skill-b\nSUMMARY: Found 5 items; selected approach X.";
+        let transition = agent
+            .advance_phase("alice", session_id, output)
+            .await
+            .unwrap()
+            .expect("expected a phase transition");
+
+        assert_eq!(transition.next_skill, "skill-b");
+        assert_eq!(transition.summary, "Found 5 items; selected approach X.");
+        assert_eq!(transition.deliverable, "Extracted data.");
+
+        // Skill context must now point to skill-b
+        let ctx_json = agent
+            .sessions
+            .get_skill_context(session_id)
+            .await
+            .unwrap()
+            .expect("skill context must be set");
+        let ctx: agentverse_skill::SkillContext = serde_json::from_str(&ctx_json).unwrap();
+        assert!(ctx.instructions.contains("Skill B instructions."));
+
+        // Phase opening context must store the summary only (deliverable travels as input)
+        let phase_ctx = agent
+            .sessions
+            .get_phase_opening_context(session_id)
+            .await
+            .unwrap();
+        assert!(phase_ctx.is_some());
+        let ctx_str = phase_ctx.unwrap();
+        assert!(ctx_str.contains("Found 5 items"));
+        assert!(!ctx_str.contains("Extracted data."), "deliverable must not be stored in phase_opening_context");
+    }
+
+    #[tokio::test]
+    async fn advance_phase_errors_on_unknown_next_skill() {
+        let dir = tempdir().unwrap();
+        write_skill(dir.path(), "system", "skill-a", "Skill A.");
+        let skills = SkillConfig::load(dir.path(), SkillMode::Open).ok();
+        let agent = make_agent_with_skills(skills).await;
+
+        let session_id = agent
+            .create_session_with_skill("alice", "skill-a")
+            .await
+            .unwrap();
+
+        let output = "Output.\nNEXT_SKILL: nonexistent\nSUMMARY: done";
+        let result = agent.advance_phase("alice", session_id, output).await;
+        assert!(result.is_err());
     }
 }
