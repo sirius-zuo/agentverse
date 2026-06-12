@@ -71,6 +71,14 @@ fn format_skill_summaries(skills: &[&agentverse_skill::Skill]) -> String {
     )
 }
 
+/// Result of a skill phase transition parsed from an agent's output.
+#[derive(Debug, PartialEq)]
+pub struct PhaseTransition {
+    pub next_skill: String,
+    pub summary: String,
+    pub deliverable: String,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum AgentError {
     #[error("session error: {0}")]
@@ -96,6 +104,56 @@ pub struct Agent {
     buffer_ttl: Duration,
     longterm_memory: Option<Arc<dyn LongtermMemory>>,
     skills: Option<SkillConfig>,
+}
+
+/// Parse `NEXT_SKILL: <id>` and `SUMMARY: <text>` from the last non-empty lines of output.
+/// Both directives must be present (in order) for a transition to be returned.
+/// Returns `None` if either directive is missing.
+#[allow(dead_code)]
+pub(crate) fn parse_phase_transition(output: &str) -> Option<PhaseTransition> {
+    let trimmed = output.trim_end();
+    let mut lines: Vec<&str> = trimmed.lines().collect();
+
+    // Strip trailing blank lines
+    while lines.last().map(|l| l.trim().is_empty()).unwrap_or(false) {
+        lines.pop();
+    }
+
+    if lines.len() < 2 {
+        return None;
+    }
+
+    let last = lines.last()?.trim();
+    let summary = last.strip_prefix("SUMMARY:")?.trim().to_string();
+    if summary.is_empty() {
+        return None;
+    }
+    lines.pop();
+
+    // Strip blank lines between NEXT_SKILL and SUMMARY
+    while lines.last().map(|l| l.trim().is_empty()).unwrap_or(false) {
+        lines.pop();
+    }
+
+    let next_line = lines.last()?.trim();
+    let next_skill = next_line.strip_prefix("NEXT_SKILL:")?.trim().to_string();
+    if next_skill.is_empty() {
+        return None;
+    }
+    lines.pop();
+
+    // Strip trailing blank lines from deliverable body
+    while lines.last().map(|l| l.trim().is_empty()).unwrap_or(false) {
+        lines.pop();
+    }
+
+    let deliverable = lines.join("\n");
+
+    Some(PhaseTransition {
+        next_skill,
+        summary,
+        deliverable,
+    })
 }
 
 impl Agent {
@@ -623,6 +681,48 @@ mod tests {
         let agent = make_agent().await;
         let result = agent.invoke_stateless("hello").await;
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn parses_both_directives() {
+        let output = "Extracted facts.\n\nNEXT_SKILL: analyzer\nSUMMARY: Found 3 entities; dates span 2020–2023.";
+        let t = parse_phase_transition(output).unwrap();
+        assert_eq!(t.next_skill, "analyzer");
+        assert_eq!(t.summary, "Found 3 entities; dates span 2020–2023.");
+        assert_eq!(t.deliverable, "Extracted facts.");
+    }
+
+    #[test]
+    fn returns_none_when_no_directives() {
+        let output = "Final summary. No directives here.";
+        assert!(parse_phase_transition(output).is_none());
+    }
+
+    #[test]
+    fn returns_none_when_only_next_skill() {
+        let output = "Some output.\nNEXT_SKILL: analyzer";
+        assert!(parse_phase_transition(output).is_none());
+    }
+
+    #[test]
+    fn returns_none_when_only_summary() {
+        let output = "Some output.\nSUMMARY: did something";
+        assert!(parse_phase_transition(output).is_none());
+    }
+
+    #[test]
+    fn handles_trailing_whitespace() {
+        let output = "body\nNEXT_SKILL: writer  \nSUMMARY: Done.  \n  ";
+        let t = parse_phase_transition(output).unwrap();
+        assert_eq!(t.next_skill, "writer");
+        assert_eq!(t.summary, "Done.");
+    }
+
+    #[test]
+    fn strips_directives_from_deliverable() {
+        let output = "Line one.\nLine two.\nNEXT_SKILL: b\nSUMMARY: summary text";
+        let t = parse_phase_transition(output).unwrap();
+        assert_eq!(t.deliverable, "Line one.\nLine two.");
     }
 
     #[tokio::test]
