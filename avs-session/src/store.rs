@@ -1,6 +1,7 @@
 use crate::session::{Session, SessionId, SessionStatus};
 use agentverse::memory::Message;
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SessionMemoryError {
@@ -131,5 +132,57 @@ pub trait SessionMemory: Send + Sync {
         self.set_phase_opening_context(session_id, Some(phase_ctx))
             .await?;
         Ok(())
+    }
+
+    /// Store serialised interrupted state for a session (None clears it).
+    async fn set_interrupted_state(
+        &self,
+        _session_id: SessionId,
+        _state_json: Option<&str>,
+    ) -> Result<(), SessionMemoryError> {
+        Ok(())
+    }
+
+    /// Retrieve the serialised interrupted state for a session.
+    async fn get_interrupted_state(
+        &self,
+        _session_id: SessionId,
+    ) -> Result<Option<String>, SessionMemoryError> {
+        Ok(None)
+    }
+}
+
+/// Serialised state stored when a session is suspended awaiting HITL approval.
+/// Stored as JSON in the `interrupted_state` column.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum InterruptedState {
+    PendingToolCall {
+        approval_id:        String,
+        kind_json:          String,
+        history_json:       String,
+        pending_calls_json: String,
+        active_tool_names:  Vec<String>,
+        skill_context_json: Option<String>,
+    },
+    PendingPhaseGate {
+        approval_id:     String,
+        transition_json: String,
+    },
+    PendingCheckpoint {
+        approval_id:        String,
+        kind_json:          String,
+        history_json:       String,
+        active_tool_names:  Vec<String>,
+        skill_context_json: Option<String>,
+    },
+}
+
+impl InterruptedState {
+    pub fn approval_id_str(&self) -> &str {
+        match self {
+            Self::PendingToolCall   { approval_id, .. } => approval_id,
+            Self::PendingPhaseGate  { approval_id, .. } => approval_id,
+            Self::PendingCheckpoint { approval_id, .. } => approval_id,
+        }
     }
 }

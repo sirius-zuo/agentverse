@@ -7,12 +7,14 @@ rust-version.workspace = true
 [dependencies]
 agentverse = { path = "../avs-core" }
 agentverse-guardrails = { path = "../avs-guardrails" }
+agentverse-hitl = { path = "../avs-hitl" }
 agentverse-tools = { path = "../avs-tools" }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
+base64 = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }

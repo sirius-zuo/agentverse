@@ -125,4 +125,27 @@ impl SessionManager {
             .await?;
         Ok(session.id)
     }
+
+    pub async fn set_interrupted_state(
+        &self,
+        session_id: SessionId,
+        state_json: Option<&str>,
+    ) -> Result<(), SessionMemoryError> {
+        self.store.set_interrupted_state(session_id, state_json).await
+    }
+
+    pub async fn get_interrupted_state(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Option<String>, SessionMemoryError> {
+        self.store.get_interrupted_state(session_id).await
+    }
+
+    pub async fn update_status(
+        &self,
+        session_id: SessionId,
+        status: SessionStatus,
+    ) -> Result<(), SessionMemoryError> {
+        self.store.update_status(session_id, status).await
+    }
 }

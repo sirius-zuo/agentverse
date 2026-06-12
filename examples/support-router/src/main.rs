@@ -138,9 +138,9 @@ async fn main() {
             std::process::exit(1);
         });
 
-    println!("Plan: {}", plan_json.trim());
+    println!("Plan: {plan_json}");
 
-    let steps = parse_plan(&plan_json);
+    let steps = parse_plan(&plan_json.to_string());
 
     // ── 2. Execute each step with the assigned specialist ─────────────────
     let mut context = String::new();
@@ -190,12 +190,12 @@ async fn main() {
                 std::process::exit(1);
             });
 
-        println!("{}", output);
+        println!("{output}");
 
         if !context.is_empty() {
             context.push('\n');
         }
-        context.push_str(&format!("[{}]\n{}", step.skill, output));
+        context.push_str(&format!("[{}]\n{output}", step.skill));
     }
 }
 
@@ -229,6 +229,7 @@ async fn make_agent(
         false,
         None,
         Some(skills),
+        None,
     )
 }
 

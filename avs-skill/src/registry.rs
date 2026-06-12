@@ -59,6 +59,7 @@ impl SkillRegistry {
             .ok_or_else(|| SkillError::NotFound(id.to_string()))?;
 
         Ok(SkillContext {
+            skill_id: skill.id.clone(),
             instructions: skill.instructions.clone(),
             documents: skill.documents.clone(),
             tools: skill.tools.clone(),

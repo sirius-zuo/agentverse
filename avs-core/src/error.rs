@@ -1,4 +1,5 @@
 use thiserror::Error;
+use uuid::Uuid;
 
 #[derive(Error, Debug)]
 pub enum AgentError {
@@ -12,6 +13,8 @@ pub enum AgentError {
     Guardrail(#[from] GuardrailError),
     #[error("Memory error: {0}")]
     Memory(String),
+    #[error("Interrupted: approval {0}")]
+    Interrupted(Uuid),
 }
 
 #[derive(Error, Debug, Clone)]

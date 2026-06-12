@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 agentverse = { path = "../avs-core" }
+agentverse-hitl = { path = "../avs-hitl" }
 async-trait = { workspace = true }
 reqwest.workspace = true
 serde.workspace = true

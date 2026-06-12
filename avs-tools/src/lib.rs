@@ -15,7 +15,7 @@ pub use datetime::DateTimeTool;
 pub use file_search::FileSearch;
 pub use find_tools::FindToolsTool;
 pub use http_client::HttpClient;
-pub use registry::{ExecutionMode, ToolOptions, ToolRegistry, SPAWN_SUBAGENT_TOOL_NAME};
+pub use registry::{ExecutionMode, HitlInterruptResult, ToolOptions, ToolRegistry, SPAWN_SUBAGENT_TOOL_NAME};
 pub use search::ToolInfo;
 pub use shell::ShellTool;
 pub use web_search::WebSearch;

@@ -120,6 +120,7 @@ async fn main() {
         false,
         None,
         Some(skills),
+        None,
     );
 
     // Explicit binding: skill is set before the first user message.

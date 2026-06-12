@@ -25,6 +25,7 @@ members = [
     "examples/mcp-demo",
     "avs-session",
     "avs-subagent",
+    "avs-hitl",
     "examples/demo-tools",
     "examples/project-feasibility",
     "examples/business-report",
@@ -61,3 +62,4 @@ tower-http = { version = "0.5", features = ["cors"] }
 toml = "0.8"
 httpmock = "0.7"
 schemars = { version = "0.8", features = ["derive"] }
+base64 = "0.22"
