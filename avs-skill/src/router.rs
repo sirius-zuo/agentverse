@@ -88,6 +88,9 @@ mod tests {
             instructions: String::new(),
             documents: vec![],
             max_iterations: None,
+            hitl_tools: vec![],
+            phase_gate: false,
+            checkpoints: vec![],
         }
     }
 

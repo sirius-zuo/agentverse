@@ -18,6 +18,10 @@ pub struct Skill {
     pub documents: Vec<String>,
     /// max_iterations hint — parsed but not applied to strategy in v1.
     pub max_iterations: Option<usize>,
+    // HITL fields (system skills only; user skill values are ignored by HitlPolicy builder)
+    pub hitl_tools: Vec<String>,
+    pub phase_gate: bool,
+    pub checkpoints: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

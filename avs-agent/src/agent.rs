@@ -900,6 +900,9 @@ mod tests {
                 instructions: String::new(),
                 documents: vec![],
                 max_iterations: None,
+                hitl_tools: vec![],
+                phase_gate: false,
+                checkpoints: vec![],
             },
             Skill {
                 id: "a-skill".into(),
@@ -911,6 +914,9 @@ mod tests {
                 instructions: String::new(),
                 documents: vec![],
                 max_iterations: None,
+                hitl_tools: vec![],
+                phase_gate: false,
+                checkpoints: vec![],
             },
         ];
         let refs: Vec<&Skill> = skills.iter().collect();

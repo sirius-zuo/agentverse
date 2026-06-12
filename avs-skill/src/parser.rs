@@ -23,6 +23,10 @@ struct AgentverseExt {
     // memory_scope and output are parsed-and-dropped for now
     memory_scope: Option<serde_yaml::Value>,
     output: Option<serde_yaml::Value>,
+    // HITL fields
+    hitl_tools: Option<Vec<String>>,
+    phase_gate: Option<bool>,
+    checkpoints: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, Default)]
@@ -63,6 +67,9 @@ pub fn parse_skill_file(path: &Path, content: &str) -> Result<Skill, SkillError>
         instructions: body.trim().to_string(),
         documents: vec![],
         max_iterations: avs.max_iterations,
+        hitl_tools: avs.hitl_tools.unwrap_or_default(),
+        phase_gate: avs.phase_gate.unwrap_or(false),
+        checkpoints: avs.checkpoints.unwrap_or_default(),
     })
 }
 
@@ -199,5 +206,39 @@ You are an architect.
             skill.instructions.contains("Second paragraph."),
             "missing second para"
         );
+    }
+
+    #[test]
+    fn parses_hitl_frontmatter_fields() {
+        let content = r#"---
+name: billing-agent
+description: Handles billing.
+agentverse:
+  tools:
+    - ledger_post
+    - request_checkpoint
+  hitl_tools:
+    - ledger_post
+  phase_gate: true
+  checkpoints:
+    - draft_ready
+    - before_send
+---
+
+You are a billing agent.
+"#;
+        let skill = parse_skill_file(&dummy_path(), content).unwrap();
+        assert_eq!(skill.hitl_tools, vec!["ledger_post"]);
+        assert!(skill.phase_gate);
+        assert_eq!(skill.checkpoints, vec!["draft_ready", "before_send"]);
+    }
+
+    #[test]
+    fn hitl_fields_default_to_empty_when_absent() {
+        let content = "---\nname: simple\ndescription: Simple.\n---\nInstructions.";
+        let skill = parse_skill_file(&dummy_path(), content).unwrap();
+        assert!(skill.hitl_tools.is_empty());
+        assert!(!skill.phase_gate);
+        assert!(skill.checkpoints.is_empty());
     }
 }
