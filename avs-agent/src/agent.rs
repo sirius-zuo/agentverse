@@ -541,7 +541,27 @@ impl Agent {
 
         let transition = match parse_phase_transition(output) {
             Some(t) => t,
-            None => return Ok(None),
+            None => {
+                // Warn if NEXT_SKILL: appears near the end but SUMMARY: is absent —
+                // this likely means the skill emitted only one of the two required directives.
+                let near_end_has_next_skill = output
+                    .trim_end()
+                    .lines()
+                    .rev()
+                    .take(5)
+                    .filter(|l| !l.trim().is_empty())
+                    .any(|l| l.trim().starts_with("NEXT_SKILL:"));
+                let has_summary = output.lines().any(|l| l.trim().starts_with("SUMMARY:"));
+                if near_end_has_next_skill && !has_summary {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        "advance_phase: NEXT_SKILL: directive found near end of output but \
+                        SUMMARY: is missing — treating as terminal output. Ensure the skill \
+                        emits both directives as its last two lines."
+                    );
+                }
+                return Ok(None);
+            }
         };
 
         let skills = self.skills.as_ref().ok_or_else(|| {
