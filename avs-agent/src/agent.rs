@@ -845,6 +845,7 @@ mod tests {
     async fn assemble_system_with_active_skill_contains_instructions_and_docs() {
         let agent = make_agent().await;
         let ctx = SkillContext {
+            skill_id: "test-skill".into(),
             instructions: "You are an expert reviewer.".into(),
             documents: vec!["## Principles\nBe thorough.".into()],
             tools: vec![],
@@ -871,6 +872,7 @@ mod tests {
     async fn assemble_system_skill_active_excludes_summaries() {
         let agent = make_agent().await;
         let ctx = SkillContext {
+            skill_id: "test-skill".into(),
             instructions: "Skill active.".into(),
             documents: vec![],
             tools: vec![],
