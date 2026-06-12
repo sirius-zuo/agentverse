@@ -1,4 +1,4 @@
-use agentverse::{ConnectionManager, PromptConfig, PromptRegistry};
+use agentverse::{ConnectionManager, PromptRegistry};
 use agentverse_demo_tools::{
     MilestoneScheduler, NpvCalculator, ProjectCostEstimator, RiskAdjustedSchedule,
 };
@@ -56,13 +56,7 @@ async fn main() {
 
     // ── 3. Executor ────────────────────────────────────────────────────────
     let cm = Arc::new(ConnectionManager::openai(&base_url, &model_name, &api_key));
-    let prompts = Arc::new(
-        PromptRegistry::from_config(&PromptConfig {
-            prompts_dir: Some(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts").to_string()),
-            ..Default::default()
-        })
-        .expect("prompts"),
-    );
+    let prompts = Arc::new(PromptRegistry::new());
     let executor = SubAgentExecutor::new(cm, mcp_tools, prompts);
 
     // ── 4. Stage 1: three analysts in parallel ─────────────────────────────
