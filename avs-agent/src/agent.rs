@@ -448,7 +448,7 @@ impl Agent {
         // Layer 3: retrieve scored memories
         let long_term_text = if let Some(ref ms) = self.longterm_memory {
             let memories = ms
-                .retrieve(user_id, input, 5)
+                .retrieve(user_id, &effective_input, 5)
                 .await
                 .unwrap_or_else(|e| {
                     tracing::warn!(error = %e, "layer-3 memory retrieve failed, proceeding without context");
