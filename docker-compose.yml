@@ -1,0 +1,43 @@
+# docker-compose.yml — local development stack
+services:
+  agent:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "3000"
+      RUST_LOG: "info"
+      LOG_FORMAT: "json"
+      MODEL_BASE_URL: "${MODEL_BASE_URL:-http://localhost:9090/v1}"
+      MODEL_NAME: "${MODEL_NAME:-gpt-4}"
+      MODEL_API_KEY: "${MODEL_API_KEY:-}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      API_KEY: "${API_KEY:-}"
+      DATABASE_URL: "${DATABASE_URL:-}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - agent_data:/app/data
+    restart: unless-stopped
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: agentverse
+      POSTGRES_USER: agentverse
+      POSTGRES_PASSWORD: agentverse
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentverse"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  agent_data:
+  pg_data:
