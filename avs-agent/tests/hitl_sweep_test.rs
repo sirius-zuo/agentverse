@@ -1,5 +1,7 @@
 use agentverse_agent::HitlSweepConfig;
-use agentverse_hitl::{ApprovalQueue, ApprovalRequest, ApprovalStatus, InMemoryQueue, InterruptKind};
+use agentverse_hitl::{
+    ApprovalQueue, ApprovalRequest, ApprovalStatus, InMemoryQueue, InterruptKind,
+};
 use chrono::{Duration, Utc};
 use std::sync::Arc;
 
