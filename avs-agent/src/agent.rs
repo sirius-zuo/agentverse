@@ -8,7 +8,7 @@ use agentverse_hitl::{ApprovalDecision, HitlContext, InterruptKind};
 use agentverse_session::{
     InterruptedState, Session, SessionId, SessionManager, SessionMemory, SessionMemoryError,
 };
-use agentverse_skill::{SkillConfig, SkillContext, SkillError, SkillRegistry, SkillRouter};
+use agentverse_skill::{RouteSkills, SkillConfig, SkillContext, SkillError, SkillRegistry, SkillRouter};
 use agentverse_tools::ToolRegistry;
 use serde::{Deserialize, Serialize};
 use serde_json;

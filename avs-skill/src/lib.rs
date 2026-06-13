@@ -10,5 +10,5 @@ pub use config::SkillConfig;
 pub use error::SkillError;
 pub use mode::SkillMode;
 pub use registry::SkillRegistry;
-pub use router::{keyword_overlap, KeywordOverlapRouter, RouteSkills, SkillRouter};
+pub use router::{KeywordOverlapRouter, RouteSkills, SkillRouter};
 pub use types::{Skill, SkillContext, SkillId};
