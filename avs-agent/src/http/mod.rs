@@ -35,7 +35,10 @@ fn build_router(agent: Arc<Agent>) -> Router {
 
     let v1_session_router = Router::new()
         .route("/", post(create_session))
-        .route("/:session_id/messages", post(send_message).get(list_messages))
+        .route(
+            "/:session_id/messages",
+            post(send_message).get(list_messages),
+        )
         .route("/:session_id", get(get_session))
         .route("/:session_id", delete(end_session))
         .with_state(Arc::clone(&agent));
