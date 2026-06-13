@@ -87,6 +87,7 @@ pub struct ConnectionManager {
     circuit_breaker: Arc<Mutex<CircuitBreaker>>,
     max_retries: usize,
     retry_delay_ms: u64,
+    fallback: Option<Box<ConnectionManager>>,
 }
 
 impl ConnectionManager {
@@ -105,6 +106,7 @@ impl ConnectionManager {
             circuit_breaker: Arc::new(Mutex::new(CircuitBreaker::new(5, 30))),
             max_retries: 3,
             retry_delay_ms: 500,
+            fallback: None,
         }
     }
 
@@ -161,6 +163,13 @@ impl ConnectionManager {
         self
     }
 
+    /// Configure a fallback provider tried when the primary's circuit breaker is
+    /// open or all retries are exhausted.
+    pub fn with_fallback(mut self, fallback: ConnectionManager) -> Self {
+        self.fallback = Some(Box::new(fallback));
+        self
+    }
+
     /// Return a new `ConnectionManager` targeting a different model. Used by
     /// `SubAgentExecutor` for per-SubAgent model overrides.
     pub fn with_model(&self, model_name: &str) -> Self {
@@ -181,6 +190,7 @@ impl ConnectionManager {
             circuit_breaker: Arc::new(Mutex::new(CircuitBreaker::new(5, 30))),
             max_retries: self.max_retries,
             retry_delay_ms: self.retry_delay_ms,
+            fallback: None,
         }
     }
 
@@ -208,6 +218,10 @@ impl ConnectionManager {
         {
             let mut cb = self.circuit_breaker.lock().await;
             if !cb.can_execute() {
+                if let Some(ref fallback) = self.fallback {
+                    tracing::warn!("Primary circuit open; using fallback provider");
+                    return Box::pin(fallback.generate(request)).await;
+                }
                 return Err(ModelError::CircuitOpen(
                     "Circuit breaker is open".to_string(),
                 ));
@@ -279,6 +293,10 @@ impl ConnectionManager {
                         let err = ModelError::ApiError(format!("HTTP {}: {}", status, body_text));
                         error!(attempt, error = %err, "LLM call failed");
                         self.circuit_breaker.lock().await.record_failure();
+                        if let Some(ref fallback) = self.fallback {
+                            tracing::warn!(primary_error = %err, "Primary provider failed; attempting fallback");
+                            return Box::pin(fallback.generate(request)).await;
+                        }
                         return Err(err);
                     } else {
                         match self.provider.parse_response(&body_text) {
@@ -309,6 +327,12 @@ impl ConnectionManager {
         }
 
         // Exhausted retries (failures already recorded per-attempt)
-        Err(last_error.unwrap_or_else(|| ModelError::ApiError("No response".to_string())))
+        let primary_err =
+            last_error.unwrap_or_else(|| ModelError::ApiError("No response".to_string()));
+        if let Some(ref fallback) = self.fallback {
+            tracing::warn!(primary_error = %primary_err, "Primary provider exhausted retries; attempting fallback");
+            return Box::pin(fallback.generate(request)).await;
+        }
+        Err(primary_err)
     }
 }
