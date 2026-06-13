@@ -1,11 +1,18 @@
 use crate::mode::SkillMode;
 use crate::types::Skill;
 
-pub struct SkillRouter {
+/// Trait for skill routing strategies.
+pub trait RouteSkills: Send + Sync {
+    fn route(&self, message: &str, candidates: &[&Skill]) -> Option<String>;
+}
+
+/// Keyword-overlap implementation of [`RouteSkills`].
+/// Renamed from `SkillRouter`; old name kept as type alias for backward compat.
+pub struct KeywordOverlapRouter {
     pub threshold: f32,
 }
 
-impl SkillRouter {
+impl KeywordOverlapRouter {
     pub fn for_mode(mode: &SkillMode) -> Self {
         let threshold = match mode {
             SkillMode::Open => 0.15,
@@ -17,8 +24,10 @@ impl SkillRouter {
     pub fn with_threshold(threshold: f32) -> Self {
         Self { threshold }
     }
+}
 
-    pub fn route(&self, message: &str, candidates: &[&Skill]) -> Option<String> {
+impl RouteSkills for KeywordOverlapRouter {
+    fn route(&self, message: &str, candidates: &[&Skill]) -> Option<String> {
         let msg_lower = message.to_lowercase();
 
         // Explicit name match always wins regardless of threshold.
@@ -49,7 +58,10 @@ impl SkillRouter {
     }
 }
 
-pub(crate) fn keyword_overlap(message: &str, target: &str) -> f32 {
+/// Backward-compat alias. Prefer `KeywordOverlapRouter` in new code.
+pub type SkillRouter = KeywordOverlapRouter;
+
+pub fn keyword_overlap(message: &str, target: &str) -> f32 {
     // Split on non-alphanumeric boundaries (consistent with BM25Index tokenizer) so that
     // hyphenated IDs like "code-review" produce tokens ["code", "review"] in both message
     // and target rather than the single token "code-review".
