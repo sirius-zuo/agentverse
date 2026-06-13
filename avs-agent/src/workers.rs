@@ -146,6 +146,45 @@ impl CleanupWorker {
     }
 }
 
+pub struct HitlSweepConfig {
+    /// How often to run sweep_expired().
+    pub poll_interval: Duration,
+}
+
+impl Default for HitlSweepConfig {
+    fn default() -> Self {
+        Self {
+            poll_interval: Duration::from_secs(60),
+        }
+    }
+}
+
+pub struct HitlSweepWorker {
+    queue: Arc<dyn agentverse_hitl::ApprovalQueue>,
+    config: HitlSweepConfig,
+}
+
+impl HitlSweepWorker {
+    pub fn new(queue: Arc<dyn agentverse_hitl::ApprovalQueue>, config: HitlSweepConfig) -> Self {
+        Self { queue, config }
+    }
+
+    /// Run the worker loop. Call via `tokio::spawn(worker.run())`.
+    pub async fn run(self) {
+        let mut interval = tokio::time::interval(self.config.poll_interval);
+        loop {
+            interval.tick().await;
+            match self.queue.sweep_expired().await {
+                Ok(n) if n > 0 => {
+                    tracing::info!(expired = n, "HitlSweepWorker expired approvals")
+                }
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "HitlSweepWorker sweep_expired error"),
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
