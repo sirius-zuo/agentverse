@@ -8,7 +8,9 @@ use agentverse_hitl::{ApprovalDecision, HitlContext, InterruptKind};
 use agentverse_session::{
     InterruptedState, Session, SessionId, SessionManager, SessionMemory, SessionMemoryError,
 };
-use agentverse_skill::{RouteSkills, SkillConfig, SkillContext, SkillError, SkillRegistry, SkillRouter};
+use agentverse_skill::{
+    RouteSkills, SkillConfig, SkillContext, SkillError, SkillRegistry, SkillRouter,
+};
 use agentverse_tools::ToolRegistry;
 use serde::{Deserialize, Serialize};
 use serde_json;
@@ -19,7 +21,6 @@ struct CacheMemory {
     messages: Vec<Message>,
     last_used: Instant,
 }
-
 
 /// Result of a skill phase transition parsed from an agent's output.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -1313,7 +1314,6 @@ mod tests {
             "summaries must not appear when skill is active"
         );
     }
-
 }
 
 #[cfg(test)]

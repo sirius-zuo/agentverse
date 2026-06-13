@@ -108,7 +108,10 @@ mod tests {
 
     #[test]
     fn format_skill_summaries_is_sorted_and_contains_descriptions() {
-        let skills = vec![make_skill("z-skill", "Does Z."), make_skill("a-skill", "Does A.")];
+        let skills = vec![
+            make_skill("z-skill", "Does Z."),
+            make_skill("a-skill", "Does A."),
+        ];
         let refs: Vec<&Skill> = skills.iter().collect();
         let text = format_skill_summaries(&refs);
         assert!(text.contains("## Available Skills"));

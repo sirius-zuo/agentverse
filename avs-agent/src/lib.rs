@@ -9,6 +9,6 @@ pub use agent::{
 };
 pub use agentverse_skill::{SkillConfig, SkillMode};
 pub use workers::{
-    CleanupConfig, CleanupWorker, ConsolidationConfig, ConsolidationWorker,
-    HitlSweepConfig, HitlSweepWorker,
+    CleanupConfig, CleanupWorker, ConsolidationConfig, ConsolidationWorker, HitlSweepConfig,
+    HitlSweepWorker,
 };
