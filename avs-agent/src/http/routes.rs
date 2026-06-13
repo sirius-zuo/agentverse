@@ -2,7 +2,7 @@ use crate::Agent;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::Json;
+use axum::{Extension, Json};
 use serde::Deserialize;
 use std::sync::Arc;
 use tracing::{error, info};
@@ -15,8 +15,15 @@ pub struct InvokeRequest {
 
 pub async fn invoke(
     State(agent): State<Arc<Agent>>,
+    Extension(limiter): Extension<Arc<agentverse_guardrails::RateLimiter>>,
     Json(request): Json<InvokeRequest>,
 ) -> impl IntoResponse {
+    if let Err(e) = limiter.check(&request.user_id) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        );
+    }
     if request.message.trim().is_empty() {
         return (
             StatusCode::BAD_REQUEST,
@@ -154,11 +161,13 @@ mod tests {
     }
 
     fn make_app(agent: Arc<Agent>) -> Router {
+        let limiter = Arc::new(agentverse_guardrails::RateLimiter::new(1000, 60));
         Router::new()
             .route("/health", get(health))
             .route("/ready", get(ready))
             .route("/invoke", post(invoke))
             .route("/aether/invoke", post(aether_invoke))
+            .layer(axum::Extension(limiter))
             .with_state(agent)
     }
 
@@ -260,5 +269,22 @@ mod tests {
         let res = post_json(app, "/aether/invoke", env).await;
         // 200 (model ok) or 500 (API unreachable with test key) — not 400
         assert_ne!(res.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_rate_limited_invoke_returns_429() {
+        let agent = make_agent().await;
+        let limiter = Arc::new(agentverse_guardrails::RateLimiter::new(0, 60));
+        let app = Router::new()
+            .route("/invoke", post(invoke))
+            .layer(axum::Extension(limiter))
+            .with_state(agent);
+        let res = post_json(
+            app,
+            "/invoke",
+            serde_json::json!({"user_id": "test", "message": "Hello"}),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
     }
 }

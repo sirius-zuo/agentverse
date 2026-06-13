@@ -3,7 +3,7 @@ use agentverse_session::SessionMemoryError;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::Json;
+use axum::{Extension, Json};
 use serde::Deserialize;
 use std::sync::Arc;
 use tracing::{error, info};
@@ -61,9 +61,16 @@ pub struct SendMessageRequest {
 
 pub async fn send_message(
     State(agent): State<Arc<Agent>>,
+    Extension(limiter): Extension<Arc<agentverse_guardrails::RateLimiter>>,
     Path(session_id): Path<Uuid>,
     Json(req): Json<SendMessageRequest>,
 ) -> impl IntoResponse {
+    if let Err(e) = limiter.check(&req.user_id) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        );
+    }
     if req.message.trim().is_empty() {
         return (
             StatusCode::BAD_REQUEST,
@@ -206,11 +213,13 @@ mod tests {
     }
 
     fn make_app(agent: Arc<Agent>) -> Router {
+        let limiter = Arc::new(agentverse_guardrails::RateLimiter::new(1000, 60));
         Router::new()
             .route("/sessions", post(create_session))
             .route("/sessions/:session_id/messages", post(send_message))
             .route("/sessions/:session_id", get(get_session))
             .route("/sessions/:session_id", delete(end_session))
+            .layer(axum::Extension(limiter))
             .with_state(agent)
     }
 

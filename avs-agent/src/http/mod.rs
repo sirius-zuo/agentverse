@@ -8,10 +8,11 @@ mod routes;
 mod session_routes;
 
 use crate::Agent;
+use agentverse_guardrails::RateLimiter;
 use axum::{
     middleware,
     routing::{delete, get, post},
-    Router,
+    Extension, Router,
 };
 use config::HttpConfig;
 use routes::{aether_invoke, health, invoke, ready};
@@ -21,6 +22,15 @@ use tower_http::cors::CorsLayer;
 use tracing::info;
 
 fn build_router(agent: Arc<Agent>) -> Router {
+    if std::env::var("API_KEY").is_err() {
+        tracing::warn!(
+            "API_KEY env var is not set — HTTP sidecar is unauthenticated. \
+             Set API_KEY to require bearer token auth on all routes."
+        );
+    }
+
+    let rate_limiter = Arc::new(RateLimiter::new(100, 60)); // 100 req/min per user
+
     let session_router = Router::new()
         .route("/", post(create_session))
         .route("/:session_id/messages", post(send_message))
@@ -34,6 +44,7 @@ fn build_router(agent: Arc<Agent>) -> Router {
         .route("/invoke", post(invoke))
         .route("/aether/invoke", post(aether_invoke))
         .nest("/sessions", session_router)
+        .layer(Extension(rate_limiter))
         .layer(CorsLayer::permissive())
         .layer(middleware::from_fn(auth::auth_middleware))
         .with_state(agent)
