@@ -158,7 +158,7 @@ pub struct Agent {
 /// Parse `NEXT_SKILL: <id>` and `SUMMARY: <text>` from the last non-empty lines of output.
 /// Both directives must be present (in order) for a transition to be returned.
 /// Returns `None` if either directive is missing.
-pub(crate) fn parse_phase_transition(output: &str) -> Option<PhaseTransition> {
+pub fn parse_phase_transition(output: &str) -> Option<PhaseTransition> {
     let trimmed = output.trim_end();
     let mut lines: Vec<&str> = trimmed.lines().collect();
 

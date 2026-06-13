@@ -21,7 +21,9 @@
 
 use agentverse::{Config, LlmRunner, PromptRegistry, ProviderConfig};
 use agentverse_agent::agent::HitlConfig;
-use agentverse_agent::{Agent, AgentOutput, PhaseAdvanceResult, SkillConfig, SkillMode};
+use agentverse_agent::{
+    parse_phase_transition, Agent, AgentOutput, PhaseAdvanceResult, SkillConfig, SkillMode,
+};
 use agentverse_demo_tools::LedgerPost;
 use agentverse_hitl::{
     ApprovalDecision, HitlPolicy, InMemoryQueue, InterruptKind, RequestCheckpointTool,
@@ -87,19 +89,27 @@ async fn main() {
     );
     let skills = SkillConfig::load(skills_dir, SkillMode::Open).expect("load skills");
 
-    // Build the HITL policy from system-skill declarations (mirrors what the SKILL.md files declare).
-    let mut policy = HitlPolicy::new();
-    policy
-        .skill_phase_gates
-        .insert("prepare-journal-entry".to_string());
-    policy.skill_checkpoints.insert(
-        "prepare-journal-entry".to_string(),
-        vec!["draft_ready".to_string()],
-    );
-    policy.skill_tool_gates.insert(
-        "submit-to-ledger".to_string(),
-        ["ledger_post"].iter().map(|s| s.to_string()).collect(),
-    );
+    // Derive the HITL policy directly from what the SKILL.md files declare.
+    let policy = {
+        let reg = skills.registry.read().await;
+        let mut policy = HitlPolicy::new();
+        for skill in reg.eligible(&SkillMode::Open) {
+            if skill.phase_gate {
+                policy.skill_phase_gates.insert(skill.id.clone());
+            }
+            if !skill.hitl_tools.is_empty() {
+                policy
+                    .skill_tool_gates
+                    .insert(skill.id.clone(), skill.hitl_tools.iter().cloned().collect());
+            }
+            if !skill.checkpoints.is_empty() {
+                policy
+                    .skill_checkpoints
+                    .insert(skill.id.clone(), skill.checkpoints.clone());
+            }
+        }
+        policy
+    };
 
     let queue = Arc::new(InMemoryQueue::new());
     let hitl = HitlConfig {
@@ -187,13 +197,21 @@ async fn run_loop(agent: &Arc<Agent>, session_id: Uuid, initial_input: String) {
                     }
 
                     Some(PhaseAdvanceResult::Pending { approval_id }) => {
-                        // Phase gate: show the deliverable for human review, then store it
-                        // for the next invoke after the resume returns Done.
-                        let deliverable = extract_deliverable(&text);
+                        // Phase gate: show the deliverable for human review.
+                        // Only save the deliverable when approved — a rejection lets the
+                        // advance_phase None branch below handle termination cleanly.
+                        let deliverable = parse_phase_transition(&text)
+                            .map(|t| t.deliverable)
+                            .unwrap_or_else(|| text.clone());
                         println!("\n══ HITL — Phase Gate ═════════════════════════");
                         println!("{deliverable}");
                         let decision = read_decision("Approve transition to next phase?");
-                        pending_deliverable = Some(deliverable);
+                        if matches!(
+                            decision,
+                            ApprovalDecision::Approved | ApprovalDecision::Modified { .. }
+                        ) {
+                            pending_deliverable = Some(deliverable);
+                        }
                         resume_from = Some((approval_id, decision));
                     }
 
@@ -225,17 +243,10 @@ fn prompt_approval(kind: &InterruptKind) -> ApprovalDecision {
             );
             read_decision("Approve checkpoint?")
         }
-        InterruptKind::PhaseGate {
-            from_skill,
-            to_skill,
-            deliverable,
-        } => {
-            println!(
-                "\n══ HITL — Phase Gate: {} → {} ═════════════════",
-                from_skill, to_skill
-            );
-            println!("{deliverable}");
-            read_decision("Approve phase transition?")
+        InterruptKind::PhaseGate { .. } => {
+            // Phase gates are submitted inside advance_phase and surface as
+            // PhaseAdvanceResult::Pending — never as AgentOutput::Interrupted.
+            unreachable!("PhaseGate interrupt cannot arrive via AgentOutput::Interrupted")
         }
         InterruptKind::ToolApproval { tool_name, args } => {
             println!(
@@ -260,61 +271,5 @@ fn read_decision(prompt: &str) -> ApprovalDecision {
         ApprovalDecision::Rejected {
             reason: "rejected by operator".to_string(),
         }
-    }
-}
-
-/// Strips NEXT_SKILL and SUMMARY directives from LLM output, returning the deliverable body.
-/// Mirrors the internal logic of `parse_phase_transition` in avs-agent.
-pub fn extract_deliverable(output: &str) -> String {
-    let mut lines: Vec<&str> = output.trim_end().lines().collect();
-    while lines.last().map(|l| l.trim().is_empty()).unwrap_or(false) {
-        lines.pop();
-    }
-    if lines
-        .last()
-        .map(|l| l.trim().starts_with("SUMMARY:"))
-        .unwrap_or(false)
-    {
-        lines.pop();
-    }
-    while lines.last().map(|l| l.trim().is_empty()).unwrap_or(false) {
-        lines.pop();
-    }
-    if lines
-        .last()
-        .map(|l| l.trim().starts_with("NEXT_SKILL:"))
-        .unwrap_or(false)
-    {
-        lines.pop();
-    }
-    while lines.last().map(|l| l.trim().is_empty()).unwrap_or(false) {
-        lines.pop();
-    }
-    lines.join("\n")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn strips_both_directives() {
-        let output = "Transactions:\n- Rent: -$2000\n- Payment: +$5000\n\nNEXT_SKILL: prepare-journal-entry\nSUMMARY: Found 2 transactions";
-        assert_eq!(
-            extract_deliverable(output),
-            "Transactions:\n- Rent: -$2000\n- Payment: +$5000"
-        );
-    }
-
-    #[test]
-    fn no_directives_returns_unchanged() {
-        let output = "Ledger posted. Confirmation: CONF-JE-2026-06.";
-        assert_eq!(extract_deliverable(output), output);
-    }
-
-    #[test]
-    fn handles_trailing_blank_lines_around_directives() {
-        let output = "Body text\n\nNEXT_SKILL: foo\nSUMMARY: bar\n\n";
-        assert_eq!(extract_deliverable(output), "Body text");
     }
 }
