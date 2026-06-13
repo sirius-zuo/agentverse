@@ -271,6 +271,39 @@ mod tests {
         assert_ne!(res.status(), StatusCode::BAD_REQUEST);
     }
 
+    fn make_versioned_app(agent: Arc<Agent>) -> Router {
+        let limiter = Arc::new(agentverse_guardrails::RateLimiter::new(1000, 60));
+        Router::new()
+            .route("/v1/health", get(health))
+            .route("/v1/ready", get(ready))
+            .route("/v1/invoke", post(invoke))
+            .route("/openapi.json", get(super::super::openapi::openapi_json))
+            .layer(axum::Extension(limiter))
+            .with_state(agent)
+    }
+
+    #[tokio::test]
+    async fn v1_health_returns_200() {
+        let agent = make_agent().await;
+        let app = make_versioned_app(agent);
+        let req = Request::get("/v1/health").body(Body::empty()).unwrap();
+        let res = app.oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn openapi_json_returns_200() {
+        let agent = make_agent().await;
+        let app = make_versioned_app(agent);
+        let req = Request::get("/openapi.json").body(Body::empty()).unwrap();
+        let res = app.oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_slice(&axum::body::to_bytes(res.into_body(), 4096).await.unwrap())
+                .unwrap();
+        assert_eq!(body["openapi"], "3.1.0");
+    }
+
     #[tokio::test]
     async fn test_rate_limited_invoke_returns_429() {
         let agent = make_agent().await;
