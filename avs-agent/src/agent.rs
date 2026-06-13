@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -9,11 +8,11 @@ use agentverse_hitl::{ApprovalDecision, HitlContext, InterruptKind};
 use agentverse_session::{
     InterruptedState, Session, SessionId, SessionManager, SessionMemory, SessionMemoryError,
 };
-use agentverse_skill::{SkillContext, SkillError, SkillMode, SkillRegistry, SkillRouter};
+use agentverse_skill::{SkillConfig, SkillContext, SkillError, SkillRegistry, SkillRouter};
 use agentverse_tools::ToolRegistry;
 use serde::{Deserialize, Serialize};
 use serde_json;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
 use uuid::Uuid;
 
 struct CacheMemory {
@@ -21,60 +20,6 @@ struct CacheMemory {
     last_used: Instant,
 }
 
-pub struct SkillConfig {
-    pub registry: Arc<RwLock<SkillRegistry>>,
-    pub mode: SkillMode,
-    pub dir: PathBuf,
-    /// Override routing threshold. None = use default per mode (0.15 Open, 0.08 Constrained).
-    pub routing_threshold: Option<f32>,
-    /// Precomputed summaries block for the discovery phase; rebuilt on `reload_skills`.
-    summaries: std::sync::Mutex<String>,
-    /// Sorted eligible skill IDs; precomputed at load and rebuilt on `reload_skills`.
-    pub ids: std::sync::Mutex<Vec<String>>,
-}
-
-impl SkillConfig {
-    pub fn load(dir: impl AsRef<std::path::Path>, mode: SkillMode) -> Result<Self, SkillError> {
-        let registry = SkillRegistry::load(dir.as_ref())?;
-        let (summaries, ids) = {
-            let candidates = registry.eligible(&mode);
-            let summaries = format_skill_summaries(&candidates);
-            let mut ids: Vec<String> = candidates.iter().map(|s| s.id.clone()).collect();
-            ids.sort();
-            (summaries, ids)
-        };
-        Ok(Self {
-            registry: Arc::new(RwLock::new(registry)),
-            mode,
-            dir: dir.as_ref().to_path_buf(),
-            routing_threshold: None,
-            summaries: std::sync::Mutex::new(summaries),
-            ids: std::sync::Mutex::new(ids),
-        })
-    }
-
-    pub fn with_threshold(mut self, threshold: f32) -> Self {
-        self.routing_threshold = Some(threshold);
-        self
-    }
-}
-
-fn format_skill_summaries(skills: &[&agentverse_skill::Skill]) -> String {
-    if skills.is_empty() {
-        return String::new();
-    }
-    let mut sorted = skills.to_vec();
-    sorted.sort_by(|a, b| a.id.cmp(&b.id));
-    let lines = sorted
-        .iter()
-        .map(|s| format!("- {}: {}", s.id, s.description))
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!(
-        "## Available Skills\n\n{}\n\nYou may use a skill when the user's request matches one of the above.",
-        lines
-    )
-}
 
 /// Result of a skill phase transition parsed from an agent's output.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -480,7 +425,7 @@ impl Agent {
                     (Some(ctx), None)
                 } else {
                     tracing::debug!(session_id = %session_id, "no skill matched, running base agent");
-                    let text = skills.summaries.lock().unwrap().clone();
+                    let text = skills.summaries();
                     (None, if text.is_empty() { None } else { Some(text) })
                 }
             } else {
@@ -718,16 +663,8 @@ impl Agent {
             .unwrap_or_else(|e| Err(SkillError::Io(std::io::Error::other(e))))
             .map_err(AgentError::Skill)?;
         // Rebuild summaries and ids while we still have owned access to new_registry.
-        let (new_summaries, new_ids) = {
-            let candidates = new_registry.eligible(&skills.mode);
-            let summaries = format_skill_summaries(&candidates);
-            let mut ids: Vec<String> = candidates.iter().map(|s| s.id.clone()).collect();
-            ids.sort();
-            (summaries, ids)
-        };
+        skills.rebuild_caches(&new_registry);
         *skills.registry.write().await = new_registry;
-        *skills.summaries.lock().unwrap() = new_summaries;
-        *skills.ids.lock().unwrap() = new_ids;
         tracing::info!(dir = ?skills.dir, "skill registry reloaded");
         Ok(())
     }
@@ -1344,52 +1281,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn format_skill_summaries_is_sorted_and_contains_descriptions() {
-        use agentverse_skill::Skill;
-        let skills: Vec<Skill> = vec![
-            Skill {
-                id: "z-skill".into(),
-                version: "1.0.0".into(),
-                description: "Does Z.".into(),
-                tags: vec![],
-                tools: vec![],
-                activation_domains: vec![],
-                instructions: String::new(),
-                documents: vec![],
-                max_iterations: None,
-                hitl_tools: vec![],
-                phase_gate: false,
-                checkpoints: vec![],
-            },
-            Skill {
-                id: "a-skill".into(),
-                version: "1.0.0".into(),
-                description: "Does A.".into(),
-                tags: vec![],
-                tools: vec![],
-                activation_domains: vec![],
-                instructions: String::new(),
-                documents: vec![],
-                max_iterations: None,
-                hitl_tools: vec![],
-                phase_gate: false,
-                checkpoints: vec![],
-            },
-        ];
-        let refs: Vec<&Skill> = skills.iter().collect();
-        let text = format_skill_summaries(&refs);
-        assert!(text.contains("## Available Skills"));
-        assert!(text.contains("a-skill: Does A."));
-        assert!(text.contains("z-skill: Does Z."));
-        // a-skill should appear before z-skill (sorted)
-        assert!(text.find("a-skill").unwrap() < text.find("z-skill").unwrap());
-    }
-
-    #[test]
-    fn format_skill_summaries_empty_list_returns_empty_string() {
-        assert_eq!(format_skill_summaries(&[]), String::new());
-    }
 }
 
 #[cfg(test)]
