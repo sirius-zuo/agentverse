@@ -25,8 +25,8 @@ pub mod tracing;
 pub use builder::LlmRunnerBuilder;
 pub use config::{Config, ProviderConfig};
 pub use error::{AgentError, ConfigError, GuardrailError, ModelError, ToolError};
-pub use hitl::{ApprovalId, HitlHook, HitlInterrupt};
 pub use example::Example;
+pub use hitl::{ApprovalId, HitlHook, HitlInterrupt};
 pub use llm_runner::LlmRunner;
 pub use memory::{Memory, MemoryError, Message, MessageRole};
 pub use model::{

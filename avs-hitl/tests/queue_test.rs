@@ -1,8 +1,8 @@
+use agentverse::hitl::HitlHook;
 use agentverse_hitl::{
     ApprovalDecision, ApprovalQueue, ApprovalRequest, ApprovalStatus, HitlContext, HitlPolicy,
     InMemoryQueue, InterruptKind,
 };
-use agentverse::hitl::HitlHook;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -32,16 +32,29 @@ async fn resolve_approved_then_poll_resolved() {
     let id = q.submit(make_request(Uuid::new_v4())).await.unwrap();
     q.resolve(id, ApprovalDecision::Approved).await.unwrap();
     let status = q.poll(id).await.unwrap();
-    assert!(matches!(status, ApprovalStatus::Resolved(ApprovalDecision::Approved)));
+    assert!(matches!(
+        status,
+        ApprovalStatus::Resolved(ApprovalDecision::Approved)
+    ));
 }
 
 #[tokio::test]
 async fn resolve_rejected() {
     let q = Arc::new(InMemoryQueue::new());
     let id = q.submit(make_request(Uuid::new_v4())).await.unwrap();
-    q.resolve(id, ApprovalDecision::Rejected { reason: "too risky".to_string() }).await.unwrap();
+    q.resolve(
+        id,
+        ApprovalDecision::Rejected {
+            reason: "too risky".to_string(),
+        },
+    )
+    .await
+    .unwrap();
     let status = q.poll(id).await.unwrap();
-    assert!(matches!(status, ApprovalStatus::Resolved(ApprovalDecision::Rejected { .. })));
+    assert!(matches!(
+        status,
+        ApprovalStatus::Resolved(ApprovalDecision::Rejected { .. })
+    ));
 }
 
 #[tokio::test]
@@ -67,8 +80,8 @@ async fn sweep_expired_marks_expired_entries() {
 #[tokio::test]
 async fn hitl_context_blocks_global_blocklist_tool() {
     let policy = HitlPolicy::new(); // exec_command in blocklist
-    let queue  = Arc::new(InMemoryQueue::new()) as Arc<dyn agentverse_hitl::ApprovalQueue>;
-    let ctx    = HitlContext::new(Uuid::new_v4(), None, policy, queue);
+    let queue = Arc::new(InMemoryQueue::new()) as Arc<dyn agentverse_hitl::ApprovalQueue>;
+    let ctx = HitlContext::new(Uuid::new_v4(), None, policy, queue);
 
     let result = ctx.check_tool("exec_command", &serde_json::json!({})).await;
     assert!(result.is_some(), "exec_command must be intercepted");
@@ -77,8 +90,8 @@ async fn hitl_context_blocks_global_blocklist_tool() {
 #[tokio::test]
 async fn hitl_context_allows_safe_tool() {
     let policy = HitlPolicy::new();
-    let queue  = Arc::new(InMemoryQueue::new()) as Arc<dyn agentverse_hitl::ApprovalQueue>;
-    let ctx    = HitlContext::new(Uuid::new_v4(), None, policy, queue);
+    let queue = Arc::new(InMemoryQueue::new()) as Arc<dyn agentverse_hitl::ApprovalQueue>;
+    let ctx = HitlContext::new(Uuid::new_v4(), None, policy, queue);
 
     let result = ctx.check_tool("file_read", &serde_json::json!({})).await;
     assert!(result.is_none(), "file_read must be allowed");
@@ -87,10 +100,15 @@ async fn hitl_context_allows_safe_tool() {
 #[tokio::test]
 async fn hitl_context_intercepts_request_checkpoint() {
     let policy = HitlPolicy::new();
-    let queue  = Arc::new(InMemoryQueue::new()) as Arc<dyn agentverse_hitl::ApprovalQueue>;
-    let ctx    = HitlContext::new(Uuid::new_v4(), None, policy, queue);
+    let queue = Arc::new(InMemoryQueue::new()) as Arc<dyn agentverse_hitl::ApprovalQueue>;
+    let ctx = HitlContext::new(Uuid::new_v4(), None, policy, queue);
 
-    let result = ctx.check_tool("request_checkpoint", &serde_json::json!({"name": "draft_ready", "payload": {}})).await;
+    let result = ctx
+        .check_tool(
+            "request_checkpoint",
+            &serde_json::json!({"name": "draft_ready", "payload": {}}),
+        )
+        .await;
     assert!(result.is_some(), "request_checkpoint must be intercepted");
 }
 
@@ -102,16 +120,30 @@ async fn hitl_context_blocks_when_queue_submit_fails() {
     struct FailQueue;
     #[async_trait::async_trait]
     impl agentverse_hitl::ApprovalQueue for FailQueue {
-        async fn submit(&self, _: agentverse_hitl::ApprovalRequest) -> Result<agentverse_hitl::ApprovalId, agentverse_hitl::HitlError> {
-            Err(agentverse_hitl::HitlError::Database("injected failure".into()))
+        async fn submit(
+            &self,
+            _: agentverse_hitl::ApprovalRequest,
+        ) -> Result<agentverse_hitl::ApprovalId, agentverse_hitl::HitlError> {
+            Err(agentverse_hitl::HitlError::Database(
+                "injected failure".into(),
+            ))
         }
-        async fn resolve(&self, id: agentverse_hitl::ApprovalId, _: agentverse_hitl::ApprovalDecision) -> Result<(), agentverse_hitl::HitlError> {
+        async fn resolve(
+            &self,
+            id: agentverse_hitl::ApprovalId,
+            _: agentverse_hitl::ApprovalDecision,
+        ) -> Result<(), agentverse_hitl::HitlError> {
             Err(agentverse_hitl::HitlError::NotFound(id))
         }
-        async fn poll(&self, id: agentverse_hitl::ApprovalId) -> Result<agentverse_hitl::ApprovalStatus, agentverse_hitl::HitlError> {
+        async fn poll(
+            &self,
+            id: agentverse_hitl::ApprovalId,
+        ) -> Result<agentverse_hitl::ApprovalStatus, agentverse_hitl::HitlError> {
             Err(agentverse_hitl::HitlError::NotFound(id))
         }
-        async fn sweep_expired(&self) -> Result<u64, agentverse_hitl::HitlError> { Ok(0) }
+        async fn sweep_expired(&self) -> Result<u64, agentverse_hitl::HitlError> {
+            Ok(0)
+        }
     }
 
     let policy = HitlPolicy::new(); // exec_command in global blocklist
@@ -120,5 +152,8 @@ async fn hitl_context_blocks_when_queue_submit_fails() {
 
     // exec_command is in the global blocklist; even with a broken queue, it must be blocked
     let result = ctx.check_tool("exec_command", &serde_json::json!({})).await;
-    assert!(result.is_some(), "queue failure must NOT silently allow dangerous tool");
+    assert!(
+        result.is_some(),
+        "queue failure must NOT silently allow dangerous tool"
+    );
 }

@@ -17,7 +17,8 @@ fn safe_tool_not_blocked_without_skill_gate() {
 #[test]
 fn skill_tool_gate_blocks_for_that_skill_only() {
     let mut policy = HitlPolicy::new();
-    policy.skill_tool_gates
+    policy
+        .skill_tool_gates
         .entry("billing".to_string())
         .or_default()
         .insert("stripe_charge".to_string());
@@ -30,7 +31,9 @@ fn skill_tool_gate_blocks_for_that_skill_only() {
 #[test]
 fn phase_gate_matches_skill_id() {
     let mut policy = HitlPolicy::new();
-    policy.skill_phase_gates.insert("prepare-journal-entry".to_string());
+    policy
+        .skill_phase_gates
+        .insert("prepare-journal-entry".to_string());
 
     assert!(policy.requires_phase_gate("prepare-journal-entry"));
     assert!(!policy.requires_phase_gate("extract-transactions"));

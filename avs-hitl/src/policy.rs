@@ -21,7 +21,10 @@ impl HitlPolicy {
     pub fn new() -> Self {
         Self {
             global_tool_blocklist: [
-                "file_delete", "exec_command", "system_shutdown", "database_delete",
+                "file_delete",
+                "exec_command",
+                "system_shutdown",
+                "database_delete",
             ]
             .iter()
             .map(|s| s.to_string())

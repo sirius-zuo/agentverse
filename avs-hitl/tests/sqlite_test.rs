@@ -1,7 +1,7 @@
+use agentverse_hitl::ApprovalQueue;
 use agentverse_hitl::{
     ApprovalDecision, ApprovalRequest, ApprovalStatus, InterruptKind, SqliteQueue,
 };
-use agentverse_hitl::ApprovalQueue;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -26,12 +26,21 @@ async fn sqlite_submit_and_poll_pending() {
 #[tokio::test]
 async fn sqlite_resolve_approved() {
     let q = make_queue().await;
-    let id = q.submit(ApprovalRequest::new(
-        Uuid::new_v4(),
-        InterruptKind::ToolApproval { tool_name: "exec_command".into(), args: serde_json::json!({}) },
-    )).await.unwrap();
+    let id = q
+        .submit(ApprovalRequest::new(
+            Uuid::new_v4(),
+            InterruptKind::ToolApproval {
+                tool_name: "exec_command".into(),
+                args: serde_json::json!({}),
+            },
+        ))
+        .await
+        .unwrap();
     q.resolve(id, ApprovalDecision::Approved).await.unwrap();
-    assert!(matches!(q.poll(id).await.unwrap(), ApprovalStatus::Resolved(ApprovalDecision::Approved)));
+    assert!(matches!(
+        q.poll(id).await.unwrap(),
+        ApprovalStatus::Resolved(ApprovalDecision::Approved)
+    ));
 }
 
 #[tokio::test]
@@ -40,7 +49,10 @@ async fn sqlite_sweep_expired_marks_expired() {
     let q = make_queue().await;
     let mut req = ApprovalRequest::new(
         Uuid::new_v4(),
-        InterruptKind::ToolApproval { tool_name: "exec_command".into(), args: serde_json::json!({}) },
+        InterruptKind::ToolApproval {
+            tool_name: "exec_command".into(),
+            args: serde_json::json!({}),
+        },
     );
     req.expires_at = Some(Utc::now() - chrono::Duration::seconds(1));
     let id = q.submit(req).await.unwrap();
@@ -52,13 +64,16 @@ async fn sqlite_sweep_expired_marks_expired() {
 #[tokio::test]
 async fn sqlite_null_decision_does_not_auto_approve() {
     let q = make_queue().await;
-    let id = q.submit(ApprovalRequest::new(
-        Uuid::new_v4(),
-        InterruptKind::ToolApproval {
-            tool_name: "exec_command".into(),
-            args: serde_json::json!({}),
-        },
-    )).await.unwrap();
+    let id = q
+        .submit(ApprovalRequest::new(
+            Uuid::new_v4(),
+            InterruptKind::ToolApproval {
+                tool_name: "exec_command".into(),
+                args: serde_json::json!({}),
+            },
+        ))
+        .await
+        .unwrap();
 
     // Directly corrupt the decision column: set status=resolved but leave decision NULL
     sqlx::query("UPDATE hitl_approvals SET status='resolved', decision=NULL WHERE id=?")

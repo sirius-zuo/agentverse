@@ -196,7 +196,12 @@ impl agentverse::RunStrategy for ReActStrategy {
         hook: Arc<dyn agentverse::hitl::HitlHook>,
     ) -> Result<String, AgentError> {
         let mut active = ActiveToolSet::default();
-        active.activate(&active_tool_names.iter().map(|s| s.as_str()).collect::<Vec<_>>());
+        active.activate(
+            &active_tool_names
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>(),
+        );
         let mut buf = self.prepare_buffer_with_active(messages, &active);
         let mut iteration = 0usize;
         let mut pending_answer: Option<String> = None;
@@ -204,7 +209,8 @@ impl agentverse::RunStrategy for ReActStrategy {
         loop {
             if iteration >= self.skeleton.max_iterations() {
                 return Err(AgentError::Model(ModelError::Timeout(format!(
-                    "Max iterations ({}) reached", self.skeleton.max_iterations()
+                    "Max iterations ({}) reached",
+                    self.skeleton.max_iterations()
                 ))));
             }
             iteration += 1;
@@ -255,7 +261,10 @@ impl agentverse::RunStrategy for ReActStrategy {
                                 content: format!("Tool: {}\nResult: {}", tool_name, v),
                             });
                         }
-                        Err(HitlInterruptResult { approval_id, kind_json }) => {
+                        Err(HitlInterruptResult {
+                            approval_id,
+                            kind_json,
+                        }) => {
                             let pending_json = serde_json::to_string(&[serde_json::json!({
                                 "name": tool_name,
                                 "args": args,
@@ -265,7 +274,9 @@ impl agentverse::RunStrategy for ReActStrategy {
                                 "HITL:{}:{}:{}:{}",
                                 approval_id,
                                 hitl_encode(&kind_json),
-                                hitl_encode(&serde_json::to_string(&history_snapshot).unwrap_or_default()),
+                                hitl_encode(
+                                    &serde_json::to_string(&history_snapshot).unwrap_or_default()
+                                ),
                                 hitl_encode(&pending_json),
                             )));
                         }
@@ -279,7 +290,12 @@ impl agentverse::RunStrategy for ReActStrategy {
                         role: agentverse::MessageRole::Assistant,
                         content: response.content.clone(),
                     });
-                    match self.skeleton.tools.execute_many_hitl(calls.clone(), &hook).await {
+                    match self
+                        .skeleton
+                        .tools
+                        .execute_many_hitl(calls.clone(), &hook)
+                        .await
+                    {
                         Ok(results) => {
                             let observation = results
                                 .iter()
@@ -297,7 +313,10 @@ impl agentverse::RunStrategy for ReActStrategy {
                                 content: observation,
                             });
                         }
-                        Err(HitlInterruptResult { approval_id, kind_json }) => {
+                        Err(HitlInterruptResult {
+                            approval_id,
+                            kind_json,
+                        }) => {
                             let pending_json = serde_json::to_string(
                                 &calls
                                     .iter()
@@ -309,7 +328,9 @@ impl agentverse::RunStrategy for ReActStrategy {
                                 "HITL:{}:{}:{}:{}",
                                 approval_id,
                                 hitl_encode(&kind_json),
-                                hitl_encode(&serde_json::to_string(&history_snapshot).unwrap_or_default()),
+                                hitl_encode(
+                                    &serde_json::to_string(&history_snapshot).unwrap_or_default()
+                                ),
                                 hitl_encode(&pending_json),
                             )));
                         }
@@ -347,6 +368,9 @@ mod encoding_tests {
     #[test]
     fn encoded_contains_no_colons() {
         let s = r#"http://example.com:8080/path?a=b:c"#;
-        assert!(!hitl_encode(s).contains(':'), "base64 must not contain colons");
+        assert!(
+            !hitl_encode(s).contains(':'),
+            "base64 must not contain colons"
+        );
     }
 }

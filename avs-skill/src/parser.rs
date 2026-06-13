@@ -252,7 +252,10 @@ You are a billing agent.
             assert_eq!(skill.id, "billing-review");
             assert_eq!(skill.hitl_tools, vec!["ledger_post"]);
             assert!(skill.phase_gate);
-            assert_eq!(skill.checkpoints, vec!["review_complete", "approved_to_post"]);
+            assert_eq!(
+                skill.checkpoints,
+                vec!["review_complete", "approved_to_post"]
+            );
             assert!(skill.instructions.contains("Phase 1"));
         }
     }

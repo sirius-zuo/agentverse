@@ -1,5 +1,5 @@
 // avs-guardrails/src/action_guard.rs
-use agentverse_hitl::{ApprovalId, ApprovalQueue, HitlPolicy, ApprovalRequest, InterruptKind};
+use agentverse_hitl::{ApprovalId, ApprovalQueue, ApprovalRequest, HitlPolicy, InterruptKind};
 use serde_json::Value;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -8,12 +8,15 @@ use uuid::Uuid;
 /// Returns Some(approval_id) when the call is intercepted, None when allowed.
 pub struct ActionGuard {
     policy: Option<HitlPolicy>,
-    queue:  Option<Arc<dyn ApprovalQueue>>,
+    queue: Option<Arc<dyn ApprovalQueue>>,
 }
 
 impl ActionGuard {
     pub fn new() -> Self {
-        Self { policy: None, queue: None }
+        Self {
+            policy: None,
+            queue: None,
+        }
     }
 
     pub fn with_policy(mut self, policy: HitlPolicy) -> Self {
@@ -30,12 +33,12 @@ impl ActionGuard {
     /// Returns None when the tool is allowed to proceed immediately.
     pub async fn check(
         &self,
-        tool_name:  &str,
-        args:       &Value,
+        tool_name: &str,
+        args: &Value,
         session_id: Uuid,
     ) -> Option<ApprovalId> {
         let policy = self.policy.as_ref()?;
-        let queue  = self.queue.as_ref()?;
+        let queue = self.queue.as_ref()?;
 
         if !policy.requires_tool_approval(None, tool_name) {
             return None;
@@ -43,7 +46,7 @@ impl ActionGuard {
 
         let kind = InterruptKind::ToolApproval {
             tool_name: tool_name.to_string(),
-            args:      args.clone(),
+            args: args.clone(),
         };
         let req = ApprovalRequest::new(session_id, kind);
         match queue.submit(req).await {
@@ -61,7 +64,9 @@ impl ActionGuard {
 }
 
 impl Default for ActionGuard {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
@@ -87,7 +92,10 @@ mod tests {
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let result = rt.block_on(guard.check("exec_command", &Value::Null, Uuid::new_v4()));
-        assert!(result.is_some(), "exec_command must produce an approval request");
+        assert!(
+            result.is_some(),
+            "exec_command must produce an approval request"
+        );
     }
 
     #[test]

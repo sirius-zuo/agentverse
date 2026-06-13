@@ -201,6 +201,7 @@ mod tests {
             false,
             None,
             None,
+            None,
         )
     }
 

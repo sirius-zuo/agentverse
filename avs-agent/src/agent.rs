@@ -6,7 +6,9 @@ use std::time::{Duration, Instant};
 use agentverse::memory::{LongtermMemory, LongtermRecord, Message, MessageRole};
 use agentverse::{LlmRunner, PromptRegistry, RunStrategy};
 use agentverse_hitl::{ApprovalDecision, HitlContext, InterruptKind};
-use agentverse_session::{InterruptedState, Session, SessionId, SessionManager, SessionMemory, SessionMemoryError};
+use agentverse_session::{
+    InterruptedState, Session, SessionId, SessionManager, SessionMemory, SessionMemoryError,
+};
 use agentverse_skill::{SkillContext, SkillError, SkillMode, SkillRegistry, SkillRouter};
 use agentverse_tools::ToolRegistry;
 use serde::{Deserialize, Serialize};
@@ -91,7 +93,10 @@ pub enum AgentOutput {
     /// The agent was interrupted by HITL.
     /// The `kind` field matches what was submitted to the ApprovalQueue, so callers
     /// can display which interrupt type fired without re-querying the queue.
-    Interrupted { approval_id: Uuid, kind: InterruptKind },
+    Interrupted {
+        approval_id: Uuid,
+        kind: InterruptKind,
+    },
 }
 
 impl std::fmt::Display for AgentOutput {
@@ -99,7 +104,10 @@ impl std::fmt::Display for AgentOutput {
         match self {
             AgentOutput::Done(text) => write!(f, "{text}"),
             AgentOutput::Interrupted { approval_id, kind } => {
-                write!(f, "HITL interruption: approval_id={approval_id}, kind={kind:?}")
+                write!(
+                    f,
+                    "HITL interruption: approval_id={approval_id}, kind={kind:?}"
+                )
             }
         }
     }
@@ -150,7 +158,7 @@ pub struct Agent {
 /// Parse `NEXT_SKILL: <id>` and `SUMMARY: <text>` from the last non-empty lines of output.
 /// Both directives must be present (in order) for a transition to be returned.
 /// Returns `None` if either directive is missing.
-pub(crate) fn parse_phase_transition(output: &str) -> Option<PhaseTransition> {
+pub fn parse_phase_transition(output: &str) -> Option<PhaseTransition> {
     let trimmed = output.trim_end();
     let mut lines: Vec<&str> = trimmed.lines().collect();
 
@@ -648,23 +656,19 @@ impl Agent {
             if let Some(ref skill_id) = current_skill_id {
                 if hitl_cfg.policy.requires_phase_gate(skill_id) {
                     let kind = agentverse_hitl::InterruptKind::PhaseGate {
-                        from_skill:  skill_id.clone(),
-                        to_skill:    transition.next_skill.clone(),
+                        from_skill: skill_id.clone(),
+                        to_skill: transition.next_skill.clone(),
                         deliverable: transition.deliverable.clone(),
                     };
                     let req = agentverse_hitl::ApprovalRequest::new(session_id, kind);
-                    let approval_id = hitl_cfg
-                        .queue
-                        .submit(req)
-                        .await
-                        .map_err(|e| {
-                            AgentError::Session(agentverse_session::SessionMemoryError::Database(
-                                e.to_string(),
-                            ))
-                        })?;
+                    let approval_id = hitl_cfg.queue.submit(req).await.map_err(|e| {
+                        AgentError::Session(agentverse_session::SessionMemoryError::Database(
+                            e.to_string(),
+                        ))
+                    })?;
 
                     let state = InterruptedState::PendingPhaseGate {
-                        approval_id:     approval_id.to_string(),
+                        approval_id: approval_id.to_string(),
                         transition_json: serde_json::to_string(&transition)?,
                     };
                     self.sessions
@@ -753,15 +757,19 @@ impl Agent {
             )));
         }
         let approval_id: Uuid = parts[1].parse().map_err(|_| {
-            AgentError::Llm(agentverse::AgentError::Memory("bad approval_id in HITL msg".into()))
+            AgentError::Llm(agentverse::AgentError::Memory(
+                "bad approval_id in HITL msg".into(),
+            ))
         })?;
-        let kind_json          = Self::hitl_b64_decode(parts[2]);
-        let history_json       = Self::hitl_b64_decode(parts[3]);
+        let kind_json = Self::hitl_b64_decode(parts[2]);
+        let history_json = Self::hitl_b64_decode(parts[3]);
         let pending_calls_json = Self::hitl_b64_decode(parts[4]);
 
         // Determine variant from kind_json
         let kind: InterruptKind = serde_json::from_str(&kind_json).map_err(|e| {
-            AgentError::Llm(agentverse::AgentError::Memory(format!("bad HITL kind_json: {e}")))
+            AgentError::Llm(agentverse::AgentError::Memory(format!(
+                "bad HITL kind_json: {e}"
+            )))
         })?;
 
         let skill_ctx_json = skill_ctx
@@ -770,18 +778,18 @@ impl Agent {
 
         let state = match kind {
             InterruptKind::SkillCheckpoint { .. } => InterruptedState::PendingCheckpoint {
-                approval_id:        approval_id.to_string(),
+                approval_id: approval_id.to_string(),
                 kind_json,
                 history_json,
-                active_tool_names:  active_tool_names.to_vec(),
+                active_tool_names: active_tool_names.to_vec(),
                 skill_context_json: skill_ctx_json,
             },
             _ => InterruptedState::PendingToolCall {
-                approval_id:        approval_id.to_string(),
+                approval_id: approval_id.to_string(),
                 kind_json,
                 history_json,
                 pending_calls_json,
-                active_tool_names:  active_tool_names.to_vec(),
+                active_tool_names: active_tool_names.to_vec(),
                 skill_context_json: skill_ctx_json,
             },
         };
@@ -810,9 +818,9 @@ impl Agent {
             .sessions
             .get_interrupted_state(session_id)
             .await?
-            .ok_or_else(|| {
-                AgentError::Session(SessionMemoryError::NotFound(session_id))
-            })?;
+            .ok_or(AgentError::Session(SessionMemoryError::NotFound(
+                session_id,
+            )))?;
         let state: InterruptedState = serde_json::from_str(&state_json)?;
 
         // Validate the caller is resolving the correct approval.
@@ -832,37 +840,34 @@ impl Agent {
             .await?;
 
         match state {
-            InterruptedState::PendingPhaseGate { transition_json, .. } => {
-                match decision {
-                    ApprovalDecision::Approved | ApprovalDecision::Modified { .. } => {
-                        let transition: PhaseTransition =
-                            serde_json::from_str(&transition_json)?;
-                        let skills = self.skills.as_ref().ok_or_else(|| {
-                            AgentError::Skill(SkillError::NotConfigured(
-                                "no skills configured".into(),
-                            ))
-                        })?;
-                        let new_ctx = {
-                            let reg = skills.registry.read().await;
-                            reg.compile_context(&transition.next_skill)
-                                .map_err(AgentError::Skill)?
-                        };
-                        let new_ctx_json = serde_json::to_string(&new_ctx)?;
-                        let phase_ctx_str =
-                            format!("Context from previous phase: {}", transition.summary);
-                        self.sessions
-                            .apply_phase_transition(session_id, &new_ctx_json, &phase_ctx_str)
-                            .await?;
-                        Ok(AgentOutput::Done(format!(
-                            "Phase transition to {} approved.",
-                            transition.next_skill
-                        )))
-                    }
-                    ApprovalDecision::Rejected { reason } => Ok(AgentOutput::Done(format!(
-                        "Phase transition rejected: {reason}"
-                    ))),
+            InterruptedState::PendingPhaseGate {
+                transition_json, ..
+            } => match decision {
+                ApprovalDecision::Approved | ApprovalDecision::Modified { .. } => {
+                    let transition: PhaseTransition = serde_json::from_str(&transition_json)?;
+                    let skills = self.skills.as_ref().ok_or_else(|| {
+                        AgentError::Skill(SkillError::NotConfigured("no skills configured".into()))
+                    })?;
+                    let new_ctx = {
+                        let reg = skills.registry.read().await;
+                        reg.compile_context(&transition.next_skill)
+                            .map_err(AgentError::Skill)?
+                    };
+                    let new_ctx_json = serde_json::to_string(&new_ctx)?;
+                    let phase_ctx_str =
+                        format!("Context from previous phase: {}", transition.summary);
+                    self.sessions
+                        .apply_phase_transition(session_id, &new_ctx_json, &phase_ctx_str)
+                        .await?;
+                    Ok(AgentOutput::Done(format!(
+                        "Phase transition to {} approved.",
+                        transition.next_skill
+                    )))
                 }
-            }
+                ApprovalDecision::Rejected { reason } => Ok(AgentOutput::Done(format!(
+                    "Phase transition rejected: {reason}"
+                ))),
+            },
 
             other => {
                 let (history_json, pending_calls_json, active_tool_names, skill_ctx_json) =
@@ -873,20 +878,29 @@ impl Agent {
                             active_tool_names,
                             skill_context_json,
                             ..
-                        } => (history_json, pending_calls_json, active_tool_names, skill_context_json),
+                        } => (
+                            history_json,
+                            pending_calls_json,
+                            active_tool_names,
+                            skill_context_json,
+                        ),
                         InterruptedState::PendingCheckpoint {
                             history_json,
                             active_tool_names,
                             skill_context_json,
                             ..
-                        } => (history_json, String::from("[]"), active_tool_names, skill_context_json),
+                        } => (
+                            history_json,
+                            String::from("[]"),
+                            active_tool_names,
+                            skill_context_json,
+                        ),
                         InterruptedState::PendingPhaseGate { .. } => unreachable!(),
                     };
 
                 let history: Vec<agentverse::memory::Message> =
                     serde_json::from_str(&history_json)?;
-                let pending: Vec<agentverse::ToolCall> =
-                    serde_json::from_str(&pending_calls_json)?;
+                let pending: Vec<agentverse::ToolCall> = serde_json::from_str(&pending_calls_json)?;
 
                 let observation = match &decision {
                     ApprovalDecision::Approved => {
@@ -897,7 +911,9 @@ impl Agent {
                             // dangerous calls in the batch are re-checked.
                             if let Some(ref hitl_cfg) = self.hitl {
                                 let skill_ctx: Option<agentverse_skill::SkillContext> =
-                                    skill_ctx_json.as_deref().and_then(|j| serde_json::from_str(j).ok());
+                                    skill_ctx_json
+                                        .as_deref()
+                                        .and_then(|j| serde_json::from_str(j).ok());
                                 let hook = std::sync::Arc::new(HitlContext::new(
                                     session_id,
                                     skill_ctx.as_ref().map(|c| c.skill_id.clone()),
@@ -905,7 +921,11 @@ impl Agent {
                                     std::sync::Arc::clone(&hitl_cfg.queue),
                                 ));
                                 let hook_arc: std::sync::Arc<dyn agentverse::hitl::HitlHook> = hook;
-                                match self.tools.execute_many_hitl(pending.clone(), &hook_arc).await {
+                                match self
+                                    .tools
+                                    .execute_many_hitl(pending.clone(), &hook_arc)
+                                    .await
+                                {
                                     Ok(results) => results
                                         .iter()
                                         .map(|r| {
@@ -917,7 +937,10 @@ impl Agent {
                                         })
                                         .collect::<Vec<_>>()
                                         .join("\n\n"),
-                                    Err(agentverse_tools::HitlInterruptResult { approval_id, kind_json }) => {
+                                    Err(agentverse_tools::HitlInterruptResult {
+                                        approval_id,
+                                        kind_json,
+                                    }) => {
                                         // Another call in the batch needs approval.
                                         let pending_json =
                                             serde_json::to_string(&pending).unwrap_or_default();
@@ -933,9 +956,17 @@ impl Agent {
                                         );
                                         let active_tool_names_vec: Vec<String> = active_tool_names;
                                         let skill_ctx_val: Option<agentverse_skill::SkillContext> =
-                                            skill_ctx_json.as_deref().and_then(|j| serde_json::from_str(j).ok());
+                                            skill_ctx_json
+                                                .as_deref()
+                                                .and_then(|j| serde_json::from_str(j).ok());
                                         return self
-                                            .handle_tool_interrupt(user_id, session_id, &msg, &active_tool_names_vec, &skill_ctx_val)
+                                            .handle_tool_interrupt(
+                                                user_id,
+                                                session_id,
+                                                &msg,
+                                                &active_tool_names_vec,
+                                                &skill_ctx_val,
+                                            )
                                             .await;
                                     }
                                 }
@@ -1001,8 +1032,9 @@ impl Agent {
                     content: observation,
                 });
 
-                let skill_ctx: Option<agentverse_skill::SkillContext> =
-                    skill_ctx_json.as_deref().and_then(|j| serde_json::from_str(j).ok());
+                let skill_ctx: Option<agentverse_skill::SkillContext> = skill_ctx_json
+                    .as_deref()
+                    .and_then(|j| serde_json::from_str(j).ok());
 
                 let run_result = if let Some(ref hitl_cfg) = self.hitl {
                     let hook = std::sync::Arc::new(HitlContext::new(

@@ -165,7 +165,7 @@ impl SqliteSessionMemory {
 
         // Interrupted state column (HITL suspend/resume)
         let has_interrupted: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'interrupted_state'"
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'interrupted_state'",
         )
         .fetch_one(&self.pool)
         .await
@@ -870,16 +870,18 @@ mod interrupted_state_tests {
         let session = mem.create("alice").await.unwrap();
 
         let state = InterruptedState::PendingToolCall {
-            approval_id:        uuid::Uuid::new_v4().to_string(),
-            kind_json:          "{}".to_string(),
-            history_json:       "[]".to_string(),
+            approval_id: uuid::Uuid::new_v4().to_string(),
+            kind_json: "{}".to_string(),
+            history_json: "[]".to_string(),
             pending_calls_json: "[]".to_string(),
-            active_tool_names:  vec!["file_read".to_string()],
+            active_tool_names: vec!["file_read".to_string()],
             skill_context_json: None,
         };
         let json = serde_json::to_string(&state).unwrap();
 
-        mem.set_interrupted_state(session.id, Some(&json)).await.unwrap();
+        mem.set_interrupted_state(session.id, Some(&json))
+            .await
+            .unwrap();
         let loaded = mem.get_interrupted_state(session.id).await.unwrap();
         assert!(loaded.is_some());
         let loaded_state: InterruptedState = serde_json::from_str(&loaded.unwrap()).unwrap();
@@ -891,7 +893,9 @@ mod interrupted_state_tests {
         let mem = SqliteSessionMemory::new("sqlite::memory:").await.unwrap();
         let session = mem.create("alice").await.unwrap();
         let state_json = serde_json::json!({"approval_id": "x"}).to_string();
-        mem.set_interrupted_state(session.id, Some(&state_json)).await.unwrap();
+        mem.set_interrupted_state(session.id, Some(&state_json))
+            .await
+            .unwrap();
         mem.set_interrupted_state(session.id, None).await.unwrap();
         let loaded = mem.get_interrupted_state(session.id).await.unwrap();
         assert!(loaded.is_none());
