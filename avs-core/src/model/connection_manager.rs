@@ -234,6 +234,7 @@ impl ConnectionManager {
         // 6-9. Retry loop
         let mut last_error: Option<ModelError> = None;
         for attempt in 0..=self.max_retries {
+            let attempt_start = Instant::now();
             match self
                 .client
                 .post(&url)
@@ -288,6 +289,7 @@ impl ConnectionManager {
                                     output_tokens = response.usage.output_tokens,
                                     cache_read_tokens = response.usage.cache_read_tokens,
                                     cache_write_tokens = response.usage.cache_write_tokens,
+                                    elapsed_ms = attempt_start.elapsed().as_millis() as u64,
                                     "LLM call complete"
                                 );
                                 tracing::debug!(">>>>>>>>>> LLM RESPONSE BEGIN <<<<<<<<<<");
