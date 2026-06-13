@@ -169,6 +169,7 @@ impl Agent {
         skills: Option<SkillConfig>,
         hitl: Option<HitlConfig>,
     ) -> Arc<Self> {
+        let sm_for_workers = Arc::clone(&session_memory);
         let agent = Arc::new(Self {
             runner,
             tools,
@@ -181,6 +182,38 @@ impl Agent {
             skills,
             hitl,
         });
+
+        // Auto-spawn CleanupWorker — purges stale messages from consolidated sessions
+        tokio::spawn(
+            crate::workers::CleanupWorker::new(
+                Arc::clone(&sm_for_workers),
+                crate::workers::CleanupConfig::default(),
+            )
+            .run(),
+        );
+
+        // Spawn HitlSweepWorker when HITL is configured
+        if let Some(ref hitl_cfg) = agent.hitl {
+            tokio::spawn(
+                crate::workers::HitlSweepWorker::new(
+                    Arc::clone(&hitl_cfg.queue),
+                    crate::workers::HitlSweepConfig::default(),
+                )
+                .run(),
+            );
+        }
+
+        // Spawn ConsolidationWorker when longterm memory is configured
+        if let Some(ref ltm) = agent.longterm_memory {
+            tokio::spawn(
+                crate::workers::ConsolidationWorker::new(
+                    Arc::clone(&sm_for_workers),
+                    Arc::clone(ltm),
+                    crate::workers::ConsolidationConfig::default(),
+                )
+                .run(),
+            );
+        }
 
         #[cfg(feature = "http")]
         if enable_http_server {

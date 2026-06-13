@@ -45,3 +45,4 @@ agentverse-tools = { path = "../avs-tools" }
 agentverse-session = { path = "../avs-session" }
 agentverse-strategy = { path = "../avs-strategy" }
 tempfile = "3"
+async-trait = { workspace = true }
