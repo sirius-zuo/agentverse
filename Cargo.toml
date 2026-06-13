@@ -32,6 +32,7 @@ members = [
     "examples/doc-pipeline",
     "examples/support-router",
     "examples/accountant-workflow",
+    "avs-test-utils",
 ]
 resolver = "2"
 

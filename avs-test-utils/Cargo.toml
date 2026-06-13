@@ -1,0 +1,13 @@
+[package]
+name = "agentverse-test-utils"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+agentverse = { path = "../avs-core" }
+agentverse-agent = { path = "../avs-agent" }
+agentverse-session = { path = "../avs-session" }
+agentverse-strategy = { path = "../avs-strategy" }
+agentverse-tools = { path = "../avs-tools" }
+tokio = { workspace = true }
