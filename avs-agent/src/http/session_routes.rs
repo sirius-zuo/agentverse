@@ -97,6 +97,58 @@ pub async fn send_message(
     }
 }
 
+// ── GET /sessions/:session_id/messages ───────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct ListMessagesQuery {
+    pub user_id: String,
+    pub limit: Option<i64>,
+    pub before: Option<i64>,
+}
+
+pub async fn list_messages(
+    State(agent): State<Arc<Agent>>,
+    Extension(limiter): Extension<Arc<agentverse_guardrails::RateLimiter>>,
+    Path(session_id): Path<Uuid>,
+    Query(query): Query<ListMessagesQuery>,
+) -> impl IntoResponse {
+    if let Err(e) = limiter.check(&query.user_id) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        );
+    }
+    let limit = query.limit.unwrap_or(50).min(200);
+    match agent.load_messages(&query.user_id, session_id).await {
+        Ok(all) => {
+            let filtered: Vec<_> = all
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| query.before.map(|b| (*i as i64) < b).unwrap_or(true))
+                .map(|(i, msg)| {
+                    serde_json::json!({
+                        "sequence_num": i,
+                        "role": format!("{:?}", msg.role).to_lowercase(),
+                        "content": msg.content,
+                    })
+                })
+                .collect();
+            let start = filtered.len().saturating_sub(limit as usize);
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "messages": &filtered[start..] })),
+            )
+        }
+        Err(e) => {
+            let status = match &e {
+                AgentError::Session(se) => store_err_status(se),
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            (status, Json(serde_json::json!({ "error": e.to_string() })))
+        }
+    }
+}
+
 // ── GET /sessions/:session_id ─────────────────────────────────────────────────
 
 #[derive(Deserialize)]
