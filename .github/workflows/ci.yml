@@ -50,8 +50,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo install cargo-audit 2>/dev/null || true
-      - run: cargo audit || true  # non-blocking
+      - run: cargo install cargo-audit --quiet
+      - run: cargo audit --deny unsound --deny yanked
+
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v1
+        with:
+          log-level: warn
+          command: check advisories licenses bans sources
 
   build-examples:
     runs-on: ubuntu-latest
