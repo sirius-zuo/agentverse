@@ -10,6 +10,7 @@ http = [
     "dep:tower",
     "dep:tower-http",
     "dep:reqwest",
+    "dep:agentverse-guardrails",
 ]
 
 [dependencies]
@@ -35,6 +36,7 @@ axum = { workspace = true, optional = true }
 tower = { workspace = true, optional = true }
 tower-http = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
+agentverse-guardrails = { path = "../avs-guardrails", optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
