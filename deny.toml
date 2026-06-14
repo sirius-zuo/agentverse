@@ -9,6 +9,10 @@ ignore = [
     { id = "RUSTSEC-2023-0071", reason = "transitive dep; no fix available upstream yet" },
     # lru: unsound IterMut — transitive via lancedb/tantivy, not directly used
     { id = "RUSTSEC-2026-0002", reason = "transitive dep lru unsound IterMut; not directly used" },
+    # unmaintained transitive deps — no direct fix available
+    { id = "RUSTSEC-2025-0052", reason = "async-std discontinued; transitive dep via lancedb" },
+    { id = "RUSTSEC-2025-0057", reason = "fxhash unmaintained; transitive dep" },
+    { id = "RUSTSEC-2024-0436", reason = "paste unmaintained; transitive dep" },
 ]
 
 [licenses]
@@ -20,8 +24,13 @@ allow = [
     "BSD-3-Clause",
     "ISC",
     "Unicode-DFS-2016",
+    "Unicode-3.0",
     "CC0-1.0",
     "Zlib",
+    "MPL-2.0",
+    "0BSD",
+    "BSL-1.0",
+    "CDLA-Permissive-2.0",
 ]
 
 [bans]
