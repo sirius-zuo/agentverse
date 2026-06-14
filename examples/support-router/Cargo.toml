@@ -1,6 +1,7 @@
 [package]
 name = "example-support-router"
 version.workspace = true
+license.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
