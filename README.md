@@ -45,7 +45,7 @@ your binary
 - **HTTP sidecar**: `Agent::new(..., enable_http_server: true)` spawns an HTTP server as a background task. The agent can run without it; the server cannot run without the agent.
 - **Agent-owned integrations**: `IntegrationRuntime` reads connector config, starts Slack/GitHub/WhatsApp or console connectors, calls an agent handler, and sends responses.
 - **Strategies and tools**: `ToolRegistry`, built-in tools, and MCP adapters are wired into strategies at agent construction.
-- **Structured output**: `LlmRunner::invoke_structured(messages, schema)` sends a JSON Schema to the model server as `response_format: { type: "json_schema", ... }` — supported by OpenAI-compatible endpoints (vLLM, llama.cpp, Groq). Anthropic and Gemini providers ignore the field and return free text.
+- **Structured output**: `LlmRunner::invoke_structured(messages, schema)` enforces a JSON Schema at the server level. OpenAI-compatible endpoints use `response_format: { type: "json_schema", ... }`; Anthropic uses `output_config: { format: { type: "json_schema", schema } }`. Gemini is not yet supported and returns free text.
 
 ## Quick Start
 

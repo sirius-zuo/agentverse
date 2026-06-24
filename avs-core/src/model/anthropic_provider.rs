@@ -63,6 +63,18 @@ struct AnthropicTool {
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct AnthropicOutputFormat {
+    #[serde(rename = "type")]
+    type_field: &'static str, // "json_schema"
+    schema: Value,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AnthropicOutputConfig {
+    format: AnthropicOutputFormat,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct AnthropicRequest {
     model: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -71,6 +83,8 @@ struct AnthropicRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<AnthropicTool>>,
     max_tokens: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output_config: Option<AnthropicOutputConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -151,12 +165,20 @@ fn build_wire_request(model_name: &str, request: GenerateRequest) -> AnthropicRe
         }
     }
 
+    let output_config = request.response_format.map(|schema| AnthropicOutputConfig {
+        format: AnthropicOutputFormat {
+            type_field: "json_schema",
+            schema,
+        },
+    });
+
     AnthropicRequest {
         model: model_name.to_string(),
         system,
         messages,
         tools,
         max_tokens: 4096,
+        output_config,
     }
 }
 
@@ -465,5 +487,42 @@ mod tests {
         let resp = provider.parse_response(body).unwrap();
         assert_eq!(resp.content, "Hello!");
         assert_eq!(resp.usage.input_tokens, 10);
+    }
+
+    #[test]
+    fn response_format_serialized_as_output_config() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": { "nodes": { "type": "array" } }
+        });
+        let wire = build_wire_request(
+            "claude-sonnet-4-6",
+            GenerateRequest {
+                system: None,
+                messages: vec![user("plan this")],
+                tools: None,
+                response_format: Some(schema.clone()),
+            },
+        );
+        let config = wire.output_config.expect("output_config must be set");
+        assert_eq!(config.format.type_field, "json_schema");
+        assert_eq!(config.format.schema, schema);
+    }
+
+    #[test]
+    fn response_format_none_omits_output_config() {
+        let provider = AnthropicProvider::new();
+        let body = provider
+            .build_request(
+                "claude-sonnet-4-6",
+                GenerateRequest {
+                    system: None,
+                    messages: vec![user("hi")],
+                    tools: None,
+                    response_format: None,
+                },
+            )
+            .unwrap();
+        assert!(body.get("output_config").is_none());
     }
 }
