@@ -61,10 +61,9 @@ jobs:
     needs: [check]
     steps:
       - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v1
-        with:
-          log-level: warn
-          command: check advisories licenses bans sources
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-deny --quiet
+      - run: cargo deny check advisories licenses bans sources
 
   build-examples:
     runs-on: ubuntu-latest
