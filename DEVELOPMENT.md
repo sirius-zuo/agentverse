@@ -424,11 +424,11 @@ Tool names must match the `name()` return value of the tool struct exactly (e.g.
 
 ### ProviderConfig Enum
 
-| Variant | Fields | Use Case |
-|---------|--------|----------|
-| `OpenAI` | `model_name`, `api_key`, `base_url` | OpenAI API or any OpenAI-compatible endpoint (llama.cpp, Ollama, vLLM, etc.). `api_key` is optional when `base_url` is set. |
-| `Anthropic` | `model_name`, `api_key` | Claude models via Anthropic API |
-| `Gemini` | `model_name`, `api_key` | Google Gemini models |
+| Variant | Fields | Use Case | Structured output |
+|---------|--------|----------|-------------------|
+| `OpenAI` | `model_name`, `api_key`, `base_url` | OpenAI API or any OpenAI-compatible endpoint (llama.cpp, Ollama, vLLM, etc.). `api_key` is optional when `base_url` is set. | Yes — `response_format: json_schema` enforced by server |
+| `Anthropic` | `model_name`, `api_key` | Claude models via Anthropic API | No — `response_format` silently ignored; free text returned |
+| `Gemini` | `model_name`, `api_key` | Google Gemini models | No — `response_format` silently ignored; free text returned |
 
 ### Configuration Examples
 
@@ -465,6 +465,23 @@ ProviderConfig::Gemini {
     api_key: std::env::var("GEMINI_API_KEY").unwrap(),
 }
 ```
+
+### Structured Output
+
+`LlmRunner` exposes two call sites:
+
+```rust
+// Free-text response (all providers)
+let response = runner.invoke(messages).await?;
+
+// Constrained JSON response matching the schema (OpenAI-compatible providers only)
+let schema: serde_json::Value = /* schemars-derived schema */;
+let response = runner.invoke_structured(messages, schema).await?;
+```
+
+When `invoke_structured` is used with an OpenAI-compatible endpoint, `LlmRunner` sends `response_format: { "type": "json_schema", "json_schema": { "name": "response", "schema": <schema> } }` on the wire. The server (vLLM, llama.cpp with grammar support, Groq, etc.) enforces the schema via constrained decoding — the model output is guaranteed to be valid JSON matching the schema.
+
+Anthropic and Gemini providers ignore `response_format` and return free text; hard server failures (4xx/5xx) still propagate as `ModelError::ApiError`. Use `invoke_structured` for planner agents where schema compliance is required and the model server supports constrained decoding.
 
 ---
 
@@ -1201,7 +1218,7 @@ Strategy completed        iteration=3
 
 | Crate | Key Types |
 |-------|-----------|
-| `agentverse` | `LlmRunner`, `Config`, `ProviderConfig`, `PromptRegistry`, `RunStrategy`, `Tool`, `ErasedTool`, `ToolCall`, `ToolResult`, `ModelError` |
+| `agentverse` | `LlmRunner` (`invoke`, `invoke_structured`), `Config`, `ProviderConfig`, `PromptRegistry`, `RunStrategy`, `Tool`, `ErasedTool`, `ToolCall`, `ToolResult`, `ModelError` |
 | `agentverse-agent` | `Agent`, `AgentError`, `SkillConfig`, `SkillMode` |
 | `agentverse-skill` | `SkillRegistry`, `SkillRouter`, `SkillMode`, `SkillConfig`, `Skill`, `SkillContext`, `SkillError` |
 | `agentverse-strategy` | `build()`, `StrategyKind` |
