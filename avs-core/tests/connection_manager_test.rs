@@ -33,6 +33,7 @@ async fn generate_succeeds_on_200() {
             system: None,
             messages: vec![user_msg("hello")],
             tools: None,
+            ..Default::default()
         })
         .await;
     assert!(result.is_ok(), "got error: {:?}", result.err());
@@ -54,6 +55,7 @@ async fn generate_retries_on_429_then_fails() {
             system: None,
             messages: vec![user_msg("hello")],
             tools: None,
+            ..Default::default()
         })
         .await;
     assert!(result.is_err());
@@ -80,6 +82,7 @@ async fn circuit_breaker_opens_after_failures() {
         system: None,
         messages: vec![user_msg("hi")],
         tools: None,
+        ..Default::default()
     };
     let _ = cm.generate(req()).await;
     let _ = cm.generate(req()).await;
@@ -108,6 +111,7 @@ async fn generate_sends_anthropic_headers() {
             system: None,
             messages: vec![user_msg("hi")],
             tools: None,
+            ..Default::default()
         })
         .await;
     m.assert();

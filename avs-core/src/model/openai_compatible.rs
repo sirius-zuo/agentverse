@@ -22,6 +22,8 @@ struct ChatRequest {
     tools: Option<Vec<ChatTool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     chat_template_kwargs: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_format: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -152,11 +154,19 @@ impl ModelProvider for OpenAICompatible {
             None
         };
 
+        let response_format = request.response_format.map(|schema| {
+            serde_json::json!({
+                "type": "json_schema",
+                "json_schema": { "name": "response", "schema": schema }
+            })
+        });
+
         let req = ChatRequest {
             model: model.to_string(),
             messages,
             tools: chat_tools,
             chat_template_kwargs,
+            response_format,
         };
 
         serde_json::to_value(req).map_err(|e| ModelError::InvalidResponse(e.to_string()))

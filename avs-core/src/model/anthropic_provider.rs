@@ -274,6 +274,7 @@ mod tests {
                 system: Some("You are helpful.".to_string()),
                 messages: vec![user("hi")],
                 tools: None,
+                ..Default::default()
             },
         );
         assert_eq!(wire.system.len(), 1);
@@ -292,6 +293,7 @@ mod tests {
                 system: None,
                 messages: vec![user("hi")],
                 tools: None,
+                ..Default::default()
             },
         );
         assert!(wire.system.is_empty());
@@ -305,6 +307,7 @@ mod tests {
                 system: None,
                 messages: vec![user("hi")],
                 tools: Some(vec![tool_def("alpha"), tool_def("beta"), tool_def("gamma")]),
+                ..Default::default()
             },
         );
         let tools = wire.tools.unwrap();
@@ -326,6 +329,7 @@ mod tests {
                 system: None,
                 messages: vec![user("only message")],
                 tools: None,
+                ..Default::default()
             },
         );
         assert_eq!(wire.messages.len(), 1);
@@ -345,6 +349,7 @@ mod tests {
                 system: None,
                 messages: vec![user("q1"), assistant("a1"), user("q2")],
                 tools: None,
+                ..Default::default()
             },
         );
         let msgs = &wire.messages;
@@ -377,6 +382,7 @@ mod tests {
                 system: None,
                 messages: vec![user("first"), user("second")],
                 tools: None,
+                ..Default::default()
             },
         );
         assert_eq!(
@@ -404,6 +410,7 @@ mod tests {
                     user("hi"),
                 ],
                 tools: None,
+                ..Default::default()
             },
         );
         assert_eq!(
@@ -424,6 +431,7 @@ mod tests {
                 content: "hi".into(),
             }],
             tools: None,
+            ..Default::default()
         };
         let body = provider
             .build_request("claude-3-5-sonnet-20241022", req)

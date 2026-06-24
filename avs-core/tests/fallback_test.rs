@@ -37,6 +37,7 @@ async fn fallback_provider_is_tried_when_primary_circuit_open() {
             content: "test".into(),
         }],
         tools: None,
+        ..Default::default()
     };
 
     // First call: primary fails (500), retry-exhausted fallback path kicks in
