@@ -53,6 +53,7 @@ fn test_anthropic_build_request_system_prompt() {
             content: "hello".to_string(),
         }],
         tools: None,
+        ..Default::default()
     };
     let body = provider
         .build_request("claude-3-5-sonnet-20241022", req)
@@ -147,6 +148,7 @@ fn test_gemini_build_request_system_instruction() {
             content: "hello".to_string(),
         }],
         tools: None,
+        ..Default::default()
     };
     let body = provider.build_request("gemini-pro", req).unwrap();
     assert_eq!(
@@ -171,6 +173,7 @@ fn test_gemini_build_request_system_role_messages_filtered() {
             },
         ],
         tools: None,
+        ..Default::default()
     };
     let body = provider.build_request("gemini-pro", req).unwrap();
     let contents = body["contents"].as_array().unwrap();
@@ -192,6 +195,7 @@ fn test_gemini_build_request_with_tools() {
             description: "Calculate".to_string(),
             parameters: json!({"type": "object", "properties": {}}),
         }]),
+        ..Default::default()
     };
     let body = provider.build_request("gemini-pro", req).unwrap();
     let tools = body["tools"].as_array().unwrap();
@@ -253,6 +257,7 @@ fn connection_manager_with_model_uses_new_model_name() {
             content: "hi".into(),
         }],
         tools: None,
+        ..Default::default()
     };
     let body = overridden.provider_build_request_for_test(req).unwrap();
     assert_eq!(body["model"].as_str().unwrap(), "claude-haiku-4-5-20251001");
@@ -270,6 +275,7 @@ fn connection_manager_with_model_openai_uses_new_model_name() {
             content: "hi".into(),
         }],
         tools: None,
+        ..Default::default()
     };
     let body = overridden.provider_build_request_for_test(req).unwrap();
     assert_eq!(body["model"].as_str().unwrap(), "gpt-4o-mini");
@@ -291,6 +297,7 @@ fn connection_manager_with_model_gemini_uses_new_model_name() {
             content: "hi".into(),
         }],
         tools: None,
+        ..Default::default()
     };
     let body = overridden.provider_build_request_for_test(req).unwrap();
     // Gemini puts the model name in the URL path, not the request body —

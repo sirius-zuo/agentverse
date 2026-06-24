@@ -38,6 +38,22 @@ impl LlmRunner {
     }
 
     pub async fn invoke(&self, messages: Vec<Message>) -> Result<GenerateResponse, AgentError> {
+        self.invoke_inner(messages, None).await
+    }
+
+    pub async fn invoke_structured(
+        &self,
+        messages: Vec<Message>,
+        schema: serde_json::Value,
+    ) -> Result<GenerateResponse, AgentError> {
+        self.invoke_inner(messages, Some(schema)).await
+    }
+
+    async fn invoke_inner(
+        &self,
+        messages: Vec<Message>,
+        response_format: Option<serde_json::Value>,
+    ) -> Result<GenerateResponse, AgentError> {
         let mut system_parts: Vec<String> = Vec::new();
         let mut conv: Vec<Message> = Vec::new();
 
@@ -60,6 +76,7 @@ impl LlmRunner {
                 system,
                 messages: conv,
                 tools: None,
+                response_format,
             })
             .await
             .map_err(AgentError::Model)

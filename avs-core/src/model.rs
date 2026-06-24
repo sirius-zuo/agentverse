@@ -34,7 +34,7 @@ impl std::ops::AddAssign for UsageStats {
 ///
 /// Replaces the flat `prompt: &str`. Each provider maps these fields to its
 /// own wire format. Caching is applied internally by each provider.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct GenerateRequest {
     /// Rendered system prompt (from the "system" template). Stable across iterations.
     pub system: Option<String>,
@@ -42,6 +42,8 @@ pub struct GenerateRequest {
     pub messages: Vec<crate::memory::Message>,
     /// Tool definitions for native tool calling (optional).
     pub tools: Option<Vec<ToolDefinition>>,
+    /// Structured output schema. When `Some`, serialized as `response_format.json_schema`.
+    pub response_format: Option<serde_json::Value>,
 }
 
 /// Response from a model provider, including usage statistics.

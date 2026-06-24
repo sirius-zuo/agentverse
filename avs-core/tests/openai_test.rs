@@ -15,6 +15,7 @@ fn test_openai_compatible_build_request() {
                     content: "hello".to_string(),
                 }],
                 tools: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -57,4 +58,50 @@ fn test_openai_compatible_parse_response() {
     assert_eq!(result.content, "Hello! How can I help you?");
     assert_eq!(result.usage.input_tokens, 5);
     assert_eq!(result.usage.output_tokens, 8);
+}
+
+#[test]
+fn response_format_serialized_as_json_schema_wrapper() {
+    let model = OpenAICompatible::new();
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": { "nodes": { "type": "array" } }
+    });
+    let body = model
+        .build_request(
+            "qwen",
+            GenerateRequest {
+                system: None,
+                messages: vec![Message {
+                    role: MessageRole::User,
+                    content: "plan this".to_string(),
+                }],
+                tools: None,
+                response_format: Some(schema.clone()),
+            },
+        )
+        .unwrap();
+    assert_eq!(body["response_format"]["type"], "json_schema");
+    assert_eq!(body["response_format"]["json_schema"]["name"], "response");
+    assert_eq!(body["response_format"]["json_schema"]["schema"], schema);
+}
+
+#[test]
+fn response_format_omitted_when_none() {
+    let model = OpenAICompatible::new();
+    let body = model
+        .build_request(
+            "qwen",
+            GenerateRequest {
+                system: None,
+                messages: vec![Message {
+                    role: MessageRole::User,
+                    content: "hello".to_string(),
+                }],
+                tools: None,
+                response_format: None,
+            },
+        )
+        .unwrap();
+    assert!(body.get("response_format").is_none());
 }
