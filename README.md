@@ -46,6 +46,7 @@ your binary
 - **Agent-owned integrations**: `IntegrationRuntime` reads connector config, starts Slack/GitHub/WhatsApp or console connectors, calls an agent handler, and sends responses.
 - **Strategies and tools**: `ToolRegistry`, built-in tools, and MCP adapters are wired into strategies at agent construction.
 - **Structured output**: `LlmRunner::invoke_structured(messages, schema)` enforces a JSON Schema at the server level. OpenAI-compatible endpoints use `response_format: { type: "json_schema", ... }`; Anthropic uses `output_config: { format: { type: "json_schema", schema } }`. Gemini is not yet supported and returns free text.
+- **Human-in-the-loop (HITL)**: `agentverse-hitl` gates tool calls, named checkpoints, and skill phase transitions behind human approval. `Agent::invoke` returns `AgentOutput::Interrupted` when a gate fires; the caller resolves it out-of-band and calls `Agent::resume` with the decision. Policy is declared per skill (`hitl_tools`, `phase_gate`, `checkpoints` in `SKILL.md` frontmatter) and enforced via a pluggable `ApprovalQueue` (`InMemoryQueue` or `SqliteQueue`).
 
 ## Quick Start
 
@@ -414,6 +415,7 @@ let registry = Arc::new(PromptRegistry::new());
 | `avs-core` | `agentverse` | Core config, errors, prompts, model providers, `LlmRunner`, memory and tool traits |
 | `avs-agent` | `agentverse-agent` | Single LLM access point: `Agent` composes `LlmRunner`, strategy, `SessionManager`, and optional `SkillConfig`; optional HTTP sidecar |
 | `avs-skill` | `agentverse-skill` | Skill system: `SKILL.md` parser, `SkillRegistry`, `SkillRouter`, `SkillMode`, `SkillConfig` |
+| `avs-hitl` | `agentverse-hitl` | Human-in-the-loop: `HitlPolicy`, `ApprovalQueue` trait (`InMemoryQueue`, `SqliteQueue`), `HitlContext`, `RequestCheckpointTool` |
 | `avs-strategy` | `agentverse-strategy` | Strategy factory (`build`, `StrategyKind`) and umbrella re-exports |
 | `avs-session` | `agentverse-session` | Session model, `SessionManager`, `SessionMemory` trait, `SqliteSessionMemory` |
 | `avs-integration` | `agentverse-integration` | Agent-owned connector runtime for console, Slack, GitHub, WhatsApp |
@@ -453,6 +455,7 @@ Staged skill workflow examples (require `ANTHROPIC_API_KEY` + `MODEL_NAME`):
 |---|---|---|---|
 | `example-doc-pipeline` | A — self-directing chain | ReAct → Plan → ReAct | Skills declare their own successors via `NEXT_SKILL: <name>`; chain topology lives in skills, not in `main.rs` |
 | `example-support-router` | C — coordinator dispatch | React (coordinator) + Hierarchical (billing) + React (specialists) | Coordinator emits a JSON routing plan; `main.rs` dispatches each step to the specialist agent with the matching skill |
+| `example-accountant-workflow` | A — self-directing chain, HITL-gated | ReAct (all three phases) | Adds HITL to Pattern A: a skill checkpoint (`request_checkpoint`), a phase-gate approval on `advance_phase`, and a tool-call approval (`hitl_tools`) — all resolved through the same `InMemoryQueue` and `Agent::resume` loop |
 
 Other examples:
 
@@ -510,7 +513,7 @@ let skills = SkillConfig::load(skills_dir, SkillMode::Open)
     .expect("skills dir not found");
 
 let agent = Agent::new(runner, tools, prompts, session_memory, strategy,
-                       false, None, Some(skills));
+                       false, None, Some(skills), None);
 ```
 
 **Routing modes:**
@@ -543,6 +546,55 @@ agent.reload_skills().await?;
 
 Existing sessions are unaffected; new routing calls pick up the refreshed registry.
 
+## Human-in-the-Loop (HITL)
+
+`agentverse-hitl` pauses execution for human approval at three gate types, declared per skill in `SKILL.md` frontmatter — no code changes to add a gate:
+
+| Gate | `SKILL.md` field | Fires when |
+|---|---|---|
+| Tool approval | `hitl_tools: [tool_name, ...]` | The LLM calls one of the listed tools |
+| Skill checkpoint | `checkpoints: [name, ...]` | The LLM calls `request_checkpoint(name, payload)` |
+| Phase gate | `phase_gate: true` | `Agent::advance_phase` detects a `NEXT_SKILL` transition out of this skill |
+
+A global `HitlPolicy::global_tool_blocklist` (`file_delete`, `exec_command`, `system_shutdown`, `database_delete`) always requires approval regardless of skill.
+
+**Wiring:**
+
+```rust
+use agentverse_agent::agent::HitlConfig;
+use agentverse_hitl::{HitlPolicy, InMemoryQueue};
+
+let policy = HitlPolicy::new(); // start from the default global blocklist,
+                                 // then insert skill_tool_gates / skill_phase_gates /
+                                 // skill_checkpoints (derive these from loaded SKILL.md files)
+let queue = Arc::new(InMemoryQueue::new());
+let hitl = HitlConfig {
+    policy,
+    queue: Arc::clone(&queue) as Arc<dyn agentverse_hitl::ApprovalQueue>,
+};
+
+let agent = Agent::new(runner, tools, prompts, session_memory, strategy,
+                       false, None, Some(skills), Some(hitl));
+```
+
+**Approve/resume loop:**
+
+```rust
+match agent.invoke("user", session_id, input).await? {
+    AgentOutput::Done(text) => { /* ... */ }
+    AgentOutput::Interrupted { approval_id, kind } => {
+        // Show `kind` (ToolApproval / SkillCheckpoint / PhaseGate) to a human,
+        // then resolve out-of-band and resume:
+        let decision = ApprovalDecision::Approved; // or Rejected { reason } / Modified { new_args }
+        agent.resume("user", session_id, approval_id, decision).await?;
+    }
+}
+```
+
+Phase gates surface differently: `Agent::advance_phase` returns `PhaseAdvanceResult::Pending { approval_id }` instead of an `AgentOutput::Interrupted`, since the gate fires between skills rather than mid-invocation. See `examples/accountant-workflow` for the full run loop, including phase-gate handling.
+
+**Approval backends:** any type implementing `agentverse_hitl::ApprovalQueue` works. Built in: `InMemoryQueue` (process-local, for demos) and `SqliteQueue` (durable, for production). A `HitlSweepWorker` is auto-spawned whenever `hitl` is `Some(_)` — it polls `queue.sweep_expired()` every 60s to reject stale pending approvals.
+
 ## Development
 
 ```bash
@@ -560,6 +612,7 @@ AgentVerse/
 |-- avs-core/
 |-- avs-agent/
 |-- avs-skill/
+|-- avs-hitl/
 |-- avs-session/
 |-- avs-strategy/
 |-- avs-integration/
@@ -577,7 +630,8 @@ AgentVerse/
 `-- examples/
     |-- demo-tools/          (library: 6 MCP-exposed domain tools)
     |-- project-feasibility/ (programmatic multi-agent pipeline)
-    `-- business-report/     (LLM-driven multi-agent via skill)
+    |-- business-report/     (LLM-driven multi-agent via skill)
+    `-- accountant-workflow/ (three-phase HITL pipeline: checkpoint + phase gate + tool approval)
 ```
 
 ## License

@@ -8,6 +8,7 @@ Complete guide for developing, testing, and deploying agents with AgentVerse.
 - [Development Setup](#development-setup)
 - [Creating a Custom Agent](#creating-a-custom-agent)
 - [Using the Skill System](#using-the-skill-system)
+- [Using Human-in-the-Loop (HITL)](#using-human-in-the-loop-hitl)
 - [Multi-LLM Provider Configuration](#multi-llm-provider-configuration)
 - [Writing Tools](#writing-tools)
 - [Using MCP (Model Context Protocol)](#using-mcp-model-context-protocol)
@@ -29,6 +30,7 @@ AgentVerse/
 ├── avs-core/              # LlmRunner, Config, ProviderConfig, PromptRegistry, Memory + Tool traits
 ├── avs-agent/             # Agent: single LLM access point; optional HTTP sidecar (feature = "http")
 ├── avs-skill/             # Skill system: SKILL.md parser, SkillRegistry, SkillRouter, SkillMode, SkillConfig
+├── avs-hitl/              # Human-in-the-loop: HitlPolicy, ApprovalQueue (InMemoryQueue, SqliteQueue), HitlContext, RequestCheckpointTool
 ├── avs-strategy/          # build() factory + StrategyKind enum; re-exports all strategies
 ├── avs-session/           # Session model, SessionManager, SessionMemory trait, SqliteSessionMemory
 ├── avs-subagent/          # Subagent runtime: SubAgentExecutor, SubAgentSpec, Budget, SubAgentHandle, SubAgentTool
@@ -56,7 +58,8 @@ AgentVerse/
     ├── project-feasibility/   # Programmatic multi-agent pipeline (SubAgentExecutor::spawn + synthesis)
     ├── business-report/       # LLM-driven multi-agent via business-report skill + SubAgentTool
     ├── doc-pipeline/          # Pattern A: self-directing skill chain (extractor→analyzer→summarizer; ReAct+Plan+ReAct)
-    └── support-router/        # Pattern C: coordinator dispatch (coordinator plans, specialists execute; React+Hierarchical+React)
+    ├── support-router/        # Pattern C: coordinator dispatch (coordinator plans, specialists execute; React+Hierarchical+React)
+    └── accountant-workflow/   # Pattern A + HITL: checkpoint, phase-gate, and tool-call approval gates
 ```
 
 ### Key Concepts
@@ -67,6 +70,10 @@ AgentVerse/
 | **SkillConfig** | `agentverse-agent` | Wraps `SkillRegistry`, `SkillMode`, routing threshold, and precomputed caches; constructed via `SkillConfig::load` |
 | **SkillMode** | `agentverse-agent` | `Open` (all skills eligible) or `Constrained(ids)` (allowlist); also re-exported from `agentverse-skill` |
 | **SkillRouter** | `agentverse-skill` | Keyword-overlap scorer; binds a skill to a session on first invoke above threshold |
+| **HitlConfig** | `agentverse-agent` | `{ policy: HitlPolicy, queue: Arc<dyn ApprovalQueue> }`; passed to `Agent::new` to enable HITL gates |
+| **HitlPolicy** | `agentverse-hitl` | Declares which tools/skills/phases require approval: `global_tool_blocklist`, `skill_tool_gates`, `skill_phase_gates`, `skill_checkpoints` |
+| **ApprovalQueue** | `agentverse-hitl` | Trait for approval storage/resolution: `submit`, `resolve`, `poll`, `sweep_expired`; built-in `InMemoryQueue` and `SqliteQueue` |
+| **AgentOutput** | `agentverse-agent` | `Done(String)` or `Interrupted { approval_id, kind }`; returned by `invoke`/`resume` when a HITL gate fires |
 | **StrategyKind** | `agentverse-strategy` | Enum selecting the orchestration loop; `build()` constructs an `Arc<dyn RunStrategy>` |
 | **LlmRunner** | `agentverse` | Renders prompts and calls model providers |
 | **Config** | `agentverse` | Provider settings (model name, API key, base URL) |
@@ -202,7 +209,7 @@ async fn main() {
     );
 
     // enable_http_server=false: console only; None = no long-term memory; None = no skills
-    let agent = Agent::new(runner, tools, prompts, session_memory, strategy, false, None, None);
+    let agent = Agent::new(runner, tools, prompts, session_memory, strategy, false, None, None, None);
 
     // Stateless invoke (no session history)
     match agent.invoke_stateless("What is 6 * 7?").await {
@@ -233,7 +240,7 @@ agentverse-agent = { path = "path/to/avs-agent", features = ["http"] }
 ```rust
 // enable_http_server=true: spawns HTTP server as a background task
 // reads HOST (default 0.0.0.0) and PORT (default 3000) from env
-let _agent = Agent::new(runner, tools, prompts, session_memory, strategy, true, None, None);
+let _agent = Agent::new(runner, tools, prompts, session_memory, strategy, true, None, None, None);
 
 // Keep the process alive
 tokio::signal::ctrl_c().await.unwrap();
@@ -334,6 +341,7 @@ let agent = Agent::new(
     false,        // enable_http_server
     None,         // longterm_memory
     Some(skills), // skill config
+    None,         // hitl config
 );
 ```
 
@@ -417,6 +425,129 @@ Active:         ["file_search", "shell"]
 ```
 
 Tool names must match the `name()` return value of the tool struct exactly (e.g. `"web_search"` not `"WebSearch"`).
+
+---
+
+## Using Human-in-the-Loop (HITL)
+
+`agentverse-hitl` pauses execution so a human can approve, reject, or modify an action before it takes effect. Gates are declared in `SKILL.md` frontmatter — adding or removing a gate is a content change, not a code change.
+
+### Gate Types
+
+| Gate | Declared via | `InterruptKind` variant | Fires when |
+|---|---|---|---|
+| Tool approval | `hitl_tools: [tool_name, ...]` in `SKILL.md`, or `HitlPolicy::global_tool_blocklist` | `ToolApproval { tool_name, args }` | The bound skill (or global blocklist) requires approval for the tool the LLM just called |
+| Skill checkpoint | `checkpoints: [name, ...]` in `SKILL.md` | `SkillCheckpoint { checkpoint_name, payload }` | The LLM calls the built-in `request_checkpoint(name, payload)` tool |
+| Phase gate | `phase_gate: true` in `SKILL.md` | `PhaseGate { from_skill, to_skill, deliverable }` | `Agent::advance_phase` parses a `NEXT_SKILL` transition out of a phase-gated skill |
+
+`HitlPolicy::new()` seeds a global tool blocklist (`file_delete`, `exec_command`, `system_shutdown`, `database_delete`) that requires approval regardless of which skill is bound — user skills cannot loosen it.
+
+### Core Types
+
+| Type | Crate | Description |
+|---|---|---|
+| `HitlPolicy` | `agentverse-hitl` | `global_tool_blocklist: HashSet<String>`, `skill_tool_gates: HashMap<SkillId, HashSet<String>>`, `skill_phase_gates: HashSet<SkillId>`, `skill_checkpoints: HashMap<SkillId, Vec<String>>` |
+| `ApprovalQueue` | `agentverse-hitl` | Trait: `submit(req) -> ApprovalId`, `resolve(id, decision)`, `poll(id) -> ApprovalStatus`, `sweep_expired() -> u64` |
+| `InMemoryQueue` | `agentverse-hitl` | Process-local `ApprovalQueue` impl; approvals lost on restart — fine for demos and tests |
+| `SqliteQueue` | `agentverse-hitl` | Durable `ApprovalQueue` impl backed by SQLite (`SqliteQueue::new(database_url)`); survives restarts |
+| `HitlConfig` | `agentverse-agent` | `{ policy: HitlPolicy, queue: Arc<dyn ApprovalQueue> }`; passed to `Agent::new` |
+| `ApprovalDecision` | `agentverse-hitl` | `Approved`, `Rejected { reason }`, `Modified { new_args }` |
+| `ApprovalRequest` / `ApprovalStatus` | `agentverse-hitl` | Queue entry and its lifecycle state (`Pending`, `Resolved(decision)`, `Expired`) |
+| `RequestCheckpointTool` | `agentverse-hitl` | Tool named `request_checkpoint`; register it whenever any loaded skill declares `checkpoints` |
+| `AgentOutput` | `agentverse-agent` | `Done(String)` or `Interrupted { approval_id, kind }` — returned by `invoke` and `resume` |
+| `PhaseAdvanceResult` | `agentverse-agent` | `Advanced(PhaseTransition)` or `Pending { approval_id }` — returned by `advance_phase` |
+| `HitlSweepWorker` | `agentverse-agent` | Auto-spawned by `Agent::new` when `hitl` is `Some(_)`; polls `queue.sweep_expired()` every 60s (`HitlSweepConfig::default()`) to reject stale pending approvals |
+
+### Deriving a Policy from Loaded Skills
+
+The policy is usually built directly from what the loaded `SKILL.md` files declare, rather than hand-written:
+
+```rust
+let policy = {
+    let reg = skills.registry.read().await;
+    let mut policy = HitlPolicy::new();
+    for skill in reg.eligible(&SkillMode::Open) {
+        if skill.phase_gate {
+            policy.skill_phase_gates.insert(skill.id.clone());
+        }
+        if !skill.hitl_tools.is_empty() {
+            policy.skill_tool_gates.insert(skill.id.clone(), skill.hitl_tools.iter().cloned().collect());
+        }
+        if !skill.checkpoints.is_empty() {
+            policy.skill_checkpoints.insert(skill.id.clone(), skill.checkpoints.clone());
+        }
+    }
+    policy
+};
+```
+
+### Wiring into `Agent::new`
+
+```rust
+use agentverse_agent::agent::HitlConfig;
+use agentverse_hitl::{InMemoryQueue, RequestCheckpointTool};
+
+tools.register(RequestCheckpointTool); // required if any skill declares `checkpoints`
+
+let queue = Arc::new(InMemoryQueue::new());
+let hitl = HitlConfig {
+    policy,
+    queue: Arc::clone(&queue) as Arc<dyn agentverse_hitl::ApprovalQueue>,
+};
+
+let agent = Agent::new(
+    runner, tools, prompts, session_memory, strategy,
+    false,        // enable_http_server
+    None,         // longterm_memory
+    Some(skills), // skill config
+    Some(hitl),   // hitl config
+);
+```
+
+### The Interrupt / Resume Loop
+
+`invoke` and `resume` both return `Result<AgentOutput, AgentError>`. A tool-approval or skill-checkpoint gate surfaces as `AgentOutput::Interrupted`:
+
+```rust
+use agentverse_agent::AgentOutput;
+use agentverse_hitl::ApprovalDecision;
+
+match agent.invoke("user", session_id, input).await? {
+    AgentOutput::Done(text) => { /* final answer for this turn */ }
+    AgentOutput::Interrupted { approval_id, kind } => {
+        // Show `kind` to a human (ToolApproval / SkillCheckpoint), collect a decision,
+        // then resume the same session with it:
+        let decision = ApprovalDecision::Approved; // or Rejected { reason } / Modified { new_args }
+        match agent.resume("user", session_id, approval_id, decision).await? {
+            AgentOutput::Done(text) => { /* ... */ }
+            AgentOutput::Interrupted { .. } => { /* another gate fired — loop again */ }
+        }
+    }
+}
+```
+
+Phase gates don't go through `AgentOutput::Interrupted` — they surface from `advance_phase`, which runs after a skill produces its final `Done` output:
+
+```rust
+match agent.advance_phase("user", session_id, &text).await? {
+    Some(PhaseAdvanceResult::Advanced(transition)) => {
+        // No phase gate on this skill — transition.deliverable is the next skill's input
+    }
+    Some(PhaseAdvanceResult::Pending { approval_id }) => {
+        // Phase-gated: show the deliverable for review, then resume with the decision.
+        // Approving does not itself advance the phase — resume() only resolves the
+        // interrupt. Re-invoke with the deliverable as input once approved.
+    }
+    None => { /* terminal output — no NEXT_SKILL directive */ }
+}
+```
+
+See `examples/accountant-workflow/src/main.rs` for a complete run loop that handles all three gate types across a three-phase pipeline.
+
+### Choosing an `ApprovalQueue`
+
+- **`InMemoryQueue`** — no persistence, no extra dependency. Use for examples, tests, and local development.
+- **`SqliteQueue::new(database_url)`** — durable; survives process restarts. Use in production, or implement `ApprovalQueue` against your own approval system (e.g. a Slack workflow or ticketing queue).
 
 ---
 
@@ -792,7 +923,7 @@ let executor = Arc::new(SubAgentExecutor::new(cm, tools, prompts));
 let agent_tools = ToolRegistry::new();
 SubAgentExecutor::register_tool(&executor, &agent_tools);   // registers "spawn_subagent"
 
-let agent = Agent::new(runner, agent_tools, prompts, session, strategy, false, None, Some(skills));
+let agent = Agent::new(runner, agent_tools, prompts, session, strategy, false, None, Some(skills), None);
 ```
 
 In `SKILL.md`, use prose — not template variables — to reference the user's input. The parser stores the body verbatim with no substitution:
@@ -1082,7 +1213,7 @@ use std::sync::Arc;
 // Any type implementing LongtermMemory works here
 let longterm: Arc<dyn LongtermMemory> = Arc::new(MyLongtermStore::new().await?);
 
-let agent = Agent::new(runner, tools, prompts, session_memory, strategy, false, Some(longterm), None);
+let agent = Agent::new(runner, tools, prompts, session_memory, strategy, false, Some(longterm), None, None);
 ```
 
 On each `invoke` call the agent:
@@ -1225,8 +1356,9 @@ Strategy completed        iteration=3
 | Crate | Key Types |
 |-------|-----------|
 | `agentverse` | `LlmRunner` (`invoke`, `invoke_structured`), `Config`, `ProviderConfig`, `PromptRegistry`, `RunStrategy`, `Tool`, `ErasedTool`, `ToolCall`, `ToolResult`, `ModelError` |
-| `agentverse-agent` | `Agent`, `AgentError`, `SkillConfig`, `SkillMode` |
+| `agentverse-agent` | `Agent`, `AgentError`, `AgentOutput`, `HitlConfig`, `PhaseAdvanceResult`, `parse_phase_transition`, `SkillConfig`, `SkillMode` |
 | `agentverse-skill` | `SkillRegistry`, `SkillRouter`, `SkillMode`, `SkillConfig`, `Skill`, `SkillContext`, `SkillError` |
+| `agentverse-hitl` | `HitlPolicy`, `ApprovalQueue`, `InMemoryQueue`, `SqliteQueue`, `HitlContext`, `ApprovalRequest`, `ApprovalDecision`, `ApprovalStatus`, `InterruptKind`, `RequestCheckpointTool`, `HitlError` |
 | `agentverse-strategy` | `build()`, `StrategyKind` |
 | `agentverse-session` | `SqliteSessionMemory`, `SessionMemory`, `SessionManager`, `SessionId` |
 | `agentverse-logging` | `init()` |
