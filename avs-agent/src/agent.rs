@@ -534,7 +534,9 @@ impl Agent {
 
         let response = match run_result {
             Ok(text) => text,
-            Err(agentverse::AgentError::Memory(ref msg)) if msg.starts_with("HITL:") => {
+            Err(agentverse::AgentError::Memory(ref msg))
+                if agentverse::hitl::HitlWire::is_wire(msg) =>
+            {
                 return self
                     .handle_tool_interrupt(user_id, session_id, msg, &active_tool_names, &skill_ctx)
                     .await;
@@ -703,15 +705,6 @@ impl Agent {
         Ok(())
     }
 
-    fn hitl_b64_decode(s: &str) -> String {
-        use base64::{engine::general_purpose::STANDARD, Engine};
-        STANDARD
-            .decode(s)
-            .ok()
-            .and_then(|b| String::from_utf8(b).ok())
-            .unwrap_or_default()
-    }
-
     async fn handle_tool_interrupt(
         &self,
         _user_id: &str,
@@ -720,21 +713,16 @@ impl Agent {
         active_tool_names: &[String],
         skill_ctx: &Option<agentverse_skill::SkillContext>,
     ) -> Result<AgentOutput, AgentError> {
-        // Format: "HITL:{uuid}:{kind_b64}:{history_b64}:{calls_b64}"
-        let parts: Vec<&str> = hitl_msg.splitn(5, ':').collect();
-        if parts.len() < 5 {
-            return Err(AgentError::Llm(agentverse::AgentError::Memory(
-                "malformed HITL message".into(),
-            )));
-        }
-        let approval_id: Uuid = parts[1].parse().map_err(|_| {
-            AgentError::Llm(agentverse::AgentError::Memory(
-                "bad approval_id in HITL msg".into(),
-            ))
+        // Wire format: "HITL:{uuid}:{kind_b64}:{history_b64}:{calls_b64}" — see agentverse::hitl::HitlWire
+        let wire = agentverse::hitl::HitlWire::parse(hitl_msg).map_err(|e| {
+            AgentError::Llm(agentverse::AgentError::Memory(format!(
+                "malformed HITL wire message: {e}"
+            )))
         })?;
-        let kind_json = Self::hitl_b64_decode(parts[2]);
-        let history_json = Self::hitl_b64_decode(parts[3]);
-        let pending_calls_json = Self::hitl_b64_decode(parts[4]);
+        let approval_id: Uuid = wire.approval_id;
+        let kind_json = wire.kind_json;
+        let history_json = wire.history_json;
+        let pending_calls_json = wire.pending_calls_json;
 
         // Determine variant from kind_json
         let kind: InterruptKind = serde_json::from_str(&kind_json).map_err(|e| {
@@ -913,18 +901,15 @@ impl Agent {
                                         kind_json,
                                     }) => {
                                         // Another call in the batch needs approval.
-                                        let pending_json =
-                                            serde_json::to_string(&pending).unwrap_or_default();
-                                        let history_json_enc =
-                                            serde_json::to_string(&history).unwrap_or_default();
-                                        use base64::{engine::general_purpose::STANDARD, Engine};
-                                        let msg = format!(
-                                            "HITL:{}:{}:{}:{}",
+                                        let msg = agentverse::hitl::HitlWire {
                                             approval_id,
-                                            STANDARD.encode(kind_json.as_bytes()),
-                                            STANDARD.encode(history_json_enc.as_bytes()),
-                                            STANDARD.encode(pending_json.as_bytes()),
-                                        );
+                                            kind_json,
+                                            history_json: serde_json::to_string(&history)
+                                                .unwrap_or_default(),
+                                            pending_calls_json: serde_json::to_string(&pending)
+                                                .unwrap_or_default(),
+                                        }
+                                        .encode();
                                         let active_tool_names_vec: Vec<String> = active_tool_names;
                                         let skill_ctx_val: Option<agentverse_skill::SkillContext> =
                                             skill_ctx_json
@@ -1025,7 +1010,9 @@ impl Agent {
 
                 match run_result {
                     Ok(text) => Ok(AgentOutput::Done(text)),
-                    Err(agentverse::AgentError::Memory(ref msg)) if msg.starts_with("HITL:") => {
+                    Err(agentverse::AgentError::Memory(ref msg))
+                        if agentverse::hitl::HitlWire::is_wire(msg) =>
+                    {
                         self.handle_tool_interrupt(
                             user_id,
                             session_id,
