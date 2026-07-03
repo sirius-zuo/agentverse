@@ -40,7 +40,13 @@ struct ActivationExt {
 /// `SkillRegistry::compile_context` loads supporting files separately.
 pub fn parse_skill_file(path: &Path, content: &str) -> Result<Skill, SkillError> {
     let path_str = path.display().to_string();
-    let (frontmatter_src, body) = split_frontmatter(content);
+    // Normalize Windows line endings so the frontmatter delimiters match.
+    let content: std::borrow::Cow<'_, str> = if content.contains("\r\n") {
+        std::borrow::Cow::Owned(content.replace("\r\n", "\n"))
+    } else {
+        std::borrow::Cow::Borrowed(content)
+    };
+    let (frontmatter_src, body) = split_frontmatter(&content);
 
     if frontmatter_src.is_empty() {
         return Err(SkillError::Parse {
@@ -258,5 +264,13 @@ You are a billing agent.
             );
             assert!(skill.instructions.contains("Phase 1"));
         }
+    }
+
+    #[test]
+    fn parses_crlf_line_endings() {
+        let content = "---\r\nname: win-skill\r\ndescription: from windows\r\n---\r\nBody text\r\n";
+        let skill = parse_skill_file(Path::new("win/SKILL.md"), content).unwrap();
+        assert_eq!(skill.id, "win-skill");
+        assert_eq!(skill.instructions, "Body text");
     }
 }
