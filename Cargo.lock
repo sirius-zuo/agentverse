@@ -235,7 +235,6 @@ dependencies = [
  "agentverse-memory",
  "agentverse-tools",
  "async-trait",
- "base64 0.22.1",
  "reqwest",
  "schemars 0.8.22",
  "serde",
