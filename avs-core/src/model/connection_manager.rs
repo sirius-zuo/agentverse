@@ -134,6 +134,18 @@ impl ConnectionManager {
     }
 
     pub fn from_config(config: ProviderConfig) -> Result<Self, ModelError> {
+        let api_key = match &config {
+            ProviderConfig::Anthropic { api_key, .. }
+            | ProviderConfig::OpenAI { api_key, .. }
+            | ProviderConfig::Gemini { api_key, .. } => api_key,
+        };
+        if HeaderValue::from_str(api_key).is_err() {
+            return Err(ModelError::InvalidApiKey(
+                "API key contains characters that are invalid in an HTTP header \
+                 (control characters or non-visible ASCII)"
+                    .into(),
+            ));
+        }
         match config {
             ProviderConfig::Anthropic {
                 model_name,
@@ -426,5 +438,28 @@ mod with_model_tests {
     fn rate_limit_backoff_is_4x() {
         let cm = ConnectionManager::openai("http://x", "m", "k").with_retries(3, 500);
         assert_eq!(cm.rate_limit_backoff_ms(0), 2000);
+    }
+
+    #[test]
+    fn from_config_rejects_key_with_header_invalid_chars() {
+        let err = ConnectionManager::from_config(crate::config::ProviderConfig::Anthropic {
+            model_name: "m".into(),
+            api_key: "bad\nkey".into(),
+        })
+        .unwrap_err();
+        assert!(matches!(err, ModelError::InvalidApiKey(_)));
+    }
+
+    #[test]
+    fn from_config_accepts_empty_key() {
+        // Local OpenAI-compatible endpoints legitimately use no key.
+        assert!(
+            ConnectionManager::from_config(crate::config::ProviderConfig::OpenAI {
+                model_name: "m".into(),
+                api_key: String::new(),
+                base_url: Some("http://localhost:9090/v1".into()),
+            })
+            .is_ok()
+        );
     }
 }

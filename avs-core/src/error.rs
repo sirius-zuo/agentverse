@@ -31,6 +31,8 @@ pub enum ModelError {
     CircuitOpen(String),
     #[error("Unknown provider: {0}")]
     UnknownProvider(String),
+    #[error("Invalid API key: {0}")]
+    InvalidApiKey(String),
 }
 
 #[derive(Error, Debug)]
