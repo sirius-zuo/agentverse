@@ -27,12 +27,15 @@ impl PostgresSessionMemory {
         }
     }
 
-    fn str_to_role(role: &str) -> MessageRole {
+    fn str_to_role(role: &str) -> Result<MessageRole, SessionMemoryError> {
         match role {
-            "assistant" => MessageRole::Assistant,
-            "system" => MessageRole::System,
-            "tool" => MessageRole::Tool,
-            _ => MessageRole::User,
+            "user" => Ok(MessageRole::User),
+            "assistant" => Ok(MessageRole::Assistant),
+            "system" => Ok(MessageRole::System),
+            "tool" => Ok(MessageRole::Tool),
+            other => Err(SessionMemoryError::Database(format!(
+                "corrupt message row: unknown role '{other}'"
+            ))),
         }
     }
 
@@ -349,13 +352,14 @@ impl SessionMemory for PostgresSessionMemory {
         .await
         .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
 
-        Ok(rows
-            .into_iter()
-            .map(|(role, content)| Message {
-                role: Self::str_to_role(&role),
-                content,
+        rows.into_iter()
+            .map(|(role, content)| {
+                Ok(Message {
+                    role: Self::str_to_role(&role)?,
+                    content,
+                })
             })
-            .collect())
+            .collect::<Result<Vec<_>, SessionMemoryError>>()
     }
 
     async fn get_watermark(&self, session_id: SessionId) -> Result<i64, SessionMemoryError> {
@@ -405,18 +409,17 @@ impl SessionMemory for PostgresSessionMemory {
         .fetch_all(&self.pool)
         .await
         .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(|(seq, role, content)| {
-                (
+                Ok((
                     seq,
                     Message {
-                        role: Self::str_to_role(&role),
+                        role: Self::str_to_role(&role)?,
                         content,
                     },
-                )
+                ))
             })
-            .collect())
+            .collect::<Result<Vec<_>, SessionMemoryError>>()
     }
 
     async fn cleanup_expired_messages(
