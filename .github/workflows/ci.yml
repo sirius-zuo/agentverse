@@ -16,6 +16,22 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: agentverse_test
+          POSTGRES_USER: agentverse
+          POSTGRES_PASSWORD: agentverse
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U agentverse"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      TEST_DATABASE_URL: postgres://agentverse:agentverse@localhost:5432/agentverse_test
     steps:
       - uses: actions/checkout@v4
       - run: sudo apt-get install -y protobuf-compiler

@@ -162,6 +162,23 @@ impl PostgresSessionMemory {
                 .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
         }
 
+        // Interrupted state column (HITL suspend/resume)
+        let has_interrupted_state: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)
+             FROM information_schema.columns
+             WHERE table_name = 'sessions' AND column_name = 'interrupted_state'",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+
+        if has_interrupted_state == 0 {
+            sqlx::query("ALTER TABLE sessions ADD COLUMN interrupted_state TEXT")
+                .execute(&self.pool)
+                .await
+                .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+        }
+
         Ok(())
     }
 }
@@ -593,5 +610,40 @@ impl SessionMemory for PostgresSessionMemory {
         .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
 
         Ok(session)
+    }
+
+    async fn set_interrupted_state(
+        &self,
+        session_id: SessionId,
+        state_json: Option<&str>,
+    ) -> Result<(), SessionMemoryError> {
+        let result = sqlx::query("UPDATE sessions SET interrupted_state = $1 WHERE id = $2")
+            .bind(state_json)
+            .bind(session_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+
+        if result.rows_affected() == 0 {
+            return Err(SessionMemoryError::NotFound(session_id));
+        }
+        Ok(())
+    }
+
+    async fn get_interrupted_state(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Option<String>, SessionMemoryError> {
+        let row: Option<Option<String>> =
+            sqlx::query_scalar("SELECT interrupted_state FROM sessions WHERE id = $1")
+                .bind(session_id.to_string())
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+
+        match row {
+            None => Err(SessionMemoryError::NotFound(session_id)),
+            Some(v) => Ok(v),
+        }
     }
 }

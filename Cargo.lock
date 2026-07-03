@@ -198,6 +198,7 @@ dependencies = [
  "agentverse",
  "agentverse-memory",
  "agentverse-session",
+ "agentverse-test-utils",
  "async-trait",
  "chrono",
  "serde",
