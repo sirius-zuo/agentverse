@@ -1172,7 +1172,7 @@ MODEL_BASE_URL=http://127.0.0.1:9090/v1 MODEL_NAME=my-model \
 
 ```bash
 cargo build --release -p example-http-agent
-ANTHROPIC_API_KEY=sk-ant-... HOST=0.0.0.0 PORT=3000 \
+ANTHROPIC_API_KEY=sk-ant-... HOST=0.0.0.0 PORT=3000 ALLOW_INSECURE=true \
   ./target/release/example-http-agent
 ```
 
@@ -1350,7 +1350,7 @@ Strategy completed        iteration=3
 | `HOST` | `0.0.0.0` | HTTP server bind address |
 | `PORT` | `3000` | HTTP server port |
 | `API_KEY` | *(unset)* | Bearer token required by all HTTP routes when set to a non-empty value. Required for non-loopback binds unless ALLOW_INSECURE=true. |
-| `ALLOW_INSECURE` | *(unset)* | Explicit opt-out: serve HTTP on a non-loopback address without API_KEY. Startup fails otherwise. |
+| `ALLOW_INSECURE` | *(unset)* | Explicit opt-out: serve HTTP on a non-loopback address without a non-empty API_KEY. Startup fails otherwise. |
 | `RUST_LOG` | `info` | Log level filter |
 | `LOG_FORMAT` | *(text)* | Set to `json` for structured JSON output |
 

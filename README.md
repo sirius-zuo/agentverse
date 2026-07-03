@@ -80,10 +80,11 @@ Other OpenAI-compatible endpoints work by changing `MODEL_BASE_URL`: Ollama, lla
 ANTHROPIC_API_KEY=sk-ant-... \
 MODEL_NAME=claude-sonnet-4-6 \
 HOST=0.0.0.0 PORT=3000 \
+ALLOW_INSECURE=true \
 cargo run -p example-http-agent
 ```
 
-The agent listens on `0.0.0.0:3000` by default.
+The agent listens on `0.0.0.0:3000` by default. Non-loopback binds require a non-empty `API_KEY` or `ALLOW_INSECURE=true`.
 
 ```bash
 curl http://localhost:3000/health

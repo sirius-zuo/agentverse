@@ -3,7 +3,7 @@ use agentverse::model::GenerateRequest;
 use httpmock::prelude::*;
 
 #[tokio::test]
-async fn rate_limited_request_honors_retry_after_then_succeeds() {
+async fn rate_limited_request_honors_retry_after_instead_of_base_backoff() {
     let server = MockServer::start_async().await;
 
     let rate_limited = server

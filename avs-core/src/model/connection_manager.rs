@@ -242,6 +242,12 @@ impl ConnectionManager {
         self.backoff_ms(attempt).saturating_mul(4)
     }
 
+    /// Clamp a server-provided `Retry-After` delay so a hostile or
+    /// misconfigured server can't stall the retry loop indefinitely.
+    fn clamp_retry_after_ms(ms: u64) -> u64 {
+        ms.min(60_000)
+    }
+
     pub async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, ModelError> {
         // 1. Log prompt
         tracing::debug!(">>>>>>>>>> LLM PROMPT BEGIN <<<<<<<<<<");
@@ -313,7 +319,8 @@ impl ConnectionManager {
                         .get(reqwest::header::RETRY_AFTER)
                         .and_then(|v| v.to_str().ok())
                         .and_then(|s| s.trim().parse::<u64>().ok())
-                        .map(|secs| secs.saturating_mul(1000));
+                        .map(|secs| secs.saturating_mul(1000))
+                        .map(Self::clamp_retry_after_ms);
                     let body_text = resp
                         .text()
                         .await
@@ -438,6 +445,14 @@ mod with_model_tests {
     fn rate_limit_backoff_is_4x() {
         let cm = ConnectionManager::openai("http://x", "m", "k").with_retries(3, 500);
         assert_eq!(cm.rate_limit_backoff_ms(0), 2000);
+    }
+
+    #[test]
+    fn clamp_retry_after_ms_caps_at_60s() {
+        assert_eq!(ConnectionManager::clamp_retry_after_ms(59_999), 59_999);
+        assert_eq!(ConnectionManager::clamp_retry_after_ms(60_000), 60_000);
+        assert_eq!(ConnectionManager::clamp_retry_after_ms(1_000_000), 60_000);
+        assert_eq!(ConnectionManager::clamp_retry_after_ms(u64::MAX), 60_000);
     }
 
     #[test]
