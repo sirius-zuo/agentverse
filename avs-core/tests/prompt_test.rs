@@ -25,7 +25,9 @@ fn test_prompt_registry_unknown_template() {
 #[test]
 fn test_prompt_registry_add_custom_template() {
     let mut registry = PromptRegistry::new();
-    registry.add_template("custom", "Hello {{ name }}!");
+    registry
+        .add_template("custom", "Hello {{ name }}!")
+        .unwrap();
     let mut ctx = HashMap::new();
     ctx.insert("name".to_string(), serde_json::json!("World"));
     let result = registry.render("custom", ctx);
@@ -263,4 +265,21 @@ fn test_from_config_programmatic_examples() {
     assert_eq!(ex.len(), 1);
     assert_eq!(ex[0].input, "q");
     assert_eq!(ex[0].output, Some("a".to_string()));
+}
+
+#[test]
+fn add_template_rejects_invalid_syntax() {
+    let mut r = PromptRegistry::new();
+    assert!(r.add_template("bad", "{{ unclosed").is_err());
+}
+
+#[test]
+fn add_template_replaces_existing_without_leaking() {
+    let mut r = PromptRegistry::new();
+    r.add_template("t", "v1 {{ name }}").unwrap();
+    r.add_template("t", "v2 {{ name }}").unwrap();
+    let mut ctx = std::collections::HashMap::new();
+    ctx.insert("name".to_string(), serde_json::json!("x"));
+    let out = r.render("t", ctx).unwrap();
+    assert!(out.starts_with("v2"), "got: {out}");
 }
