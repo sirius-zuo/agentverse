@@ -90,6 +90,17 @@ pub struct ConnectionManager {
     fallback: Option<Box<ConnectionManager>>,
 }
 
+// Minimal manual impl (not derived: `provider` and `circuit_breaker` hold
+// non-`Debug` types) — needed so `Result<ConnectionManager, _>::unwrap_err()`
+// is usable in tests.
+impl std::fmt::Debug for ConnectionManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectionManager")
+            .field("model_name", &self.model_name)
+            .finish_non_exhaustive()
+    }
+}
+
 impl ConnectionManager {
     pub fn new(
         provider: impl ModelProvider + 'static,
@@ -123,6 +134,18 @@ impl ConnectionManager {
     }
 
     pub fn from_config(config: ProviderConfig) -> Result<Self, ModelError> {
+        let api_key = match &config {
+            ProviderConfig::Anthropic { api_key, .. }
+            | ProviderConfig::OpenAI { api_key, .. }
+            | ProviderConfig::Gemini { api_key, .. } => api_key,
+        };
+        if HeaderValue::from_str(api_key).is_err() {
+            return Err(ModelError::InvalidApiKey(
+                "API key contains characters that are invalid in an HTTP header \
+                 (control characters or non-visible ASCII)"
+                    .into(),
+            ));
+        }
         match config {
             ProviderConfig::Anthropic {
                 model_name,
@@ -172,26 +195,31 @@ impl ConnectionManager {
 
     /// Return a new `ConnectionManager` targeting a different model. Used by
     /// `SubAgentExecutor` for per-SubAgent model overrides.
-    pub fn with_model(&self, model_name: &str) -> Self {
+    pub fn with_model(&self, model_name: &str) -> Result<Self, ModelError> {
         let provider: Box<dyn ModelProvider> = match self.provider.name() {
             "anthropic" => Box::new(AnthropicProvider::new()),
             "gemini" => Box::new(GeminiProvider::new()),
             "openai" => Box::new(OpenAICompatible::new()),
-            other => unreachable!("with_model: unknown provider name {:?}", other),
+            other => return Err(ModelError::UnknownProvider(other.to_string())),
         };
-        Self {
+        Ok(Self {
             client: self.client.clone(),
             api_base: self.api_base.clone(),
             api_key: self.api_key.clone(),
             model_name: model_name.to_string(),
             provider,
-            // SubAgent model overrides start with a fresh circuit breaker —
-            // the old breaker's state is irrelevant for a different model endpoint.
-            circuit_breaker: Arc::new(Mutex::new(CircuitBreaker::new(5, 30))),
+            // Model overrides hit the same endpoint with the same key, so an
+            // open circuit must apply to them too — share breaker state.
+            circuit_breaker: Arc::clone(&self.circuit_breaker),
             max_retries: self.max_retries,
             retry_delay_ms: self.retry_delay_ms,
             fallback: None,
-        }
+        })
+    }
+
+    #[doc(hidden)]
+    pub fn circuit_breaker_ptr_for_test(&self) -> usize {
+        Arc::as_ptr(&self.circuit_breaker) as usize
     }
 
     /// Expose provider's `build_request` for tests only. Not for production use.
@@ -201,6 +229,23 @@ impl ConnectionManager {
         request: crate::model::GenerateRequest,
     ) -> Result<serde_json::Value, crate::error::ModelError> {
         self.provider.build_request(&self.model_name, request)
+    }
+
+    fn backoff_ms(&self, attempt: usize) -> u64 {
+        self.retry_delay_ms
+            .saturating_mul(2u64.pow((attempt as u32).min(10)))
+    }
+
+    /// 429s get a longer pause than transient errors when the server
+    /// doesn't send Retry-After.
+    fn rate_limit_backoff_ms(&self, attempt: usize) -> u64 {
+        self.backoff_ms(attempt).saturating_mul(4)
+    }
+
+    /// Clamp a server-provided `Retry-After` delay so a hostile or
+    /// misconfigured server can't stall the retry loop indefinitely.
+    fn clamp_retry_after_ms(ms: u64) -> u64 {
+        ms.min(60_000)
     }
 
     pub async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, ModelError> {
@@ -263,15 +308,19 @@ impl ConnectionManager {
                     self.circuit_breaker.lock().await.record_failure();
                     last_error = Some(err);
                     if attempt < self.max_retries {
-                        tokio::time::sleep(Duration::from_millis(
-                            self.retry_delay_ms * 2u64.pow(attempt as u32),
-                        ))
-                        .await;
+                        tokio::time::sleep(Duration::from_millis(self.backoff_ms(attempt))).await;
                         continue;
                     }
                 }
                 Ok(resp) => {
                     let status = resp.status();
+                    let retry_after_ms = resp
+                        .headers()
+                        .get(reqwest::header::RETRY_AFTER)
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|s| s.trim().parse::<u64>().ok())
+                        .map(|secs| secs.saturating_mul(1000))
+                        .map(Self::clamp_retry_after_ms);
                     let body_text = resp
                         .text()
                         .await
@@ -283,10 +332,9 @@ impl ConnectionManager {
                         self.circuit_breaker.lock().await.record_failure();
                         last_error = Some(err);
                         if attempt < self.max_retries {
-                            tokio::time::sleep(Duration::from_millis(
-                                self.retry_delay_ms * 2u64.pow(attempt as u32),
-                            ))
-                            .await;
+                            let delay_ms = retry_after_ms
+                                .unwrap_or_else(|| self.rate_limit_backoff_ms(attempt));
+                            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                             continue;
                         }
                     } else if !status.is_success() {
@@ -334,5 +382,99 @@ impl ConnectionManager {
             return Box::pin(fallback.generate(request)).await;
         }
         Err(primary_err)
+    }
+}
+
+#[cfg(test)]
+mod with_model_tests {
+    use super::*;
+    use crate::error::ModelError;
+    use crate::model::{GenerateRequest, GenerateResponse};
+
+    struct FakeProvider;
+    impl ModelProvider for FakeProvider {
+        fn name(&self) -> &'static str {
+            "fake"
+        }
+        fn build_request(
+            &self,
+            _model: &str,
+            _req: GenerateRequest,
+        ) -> Result<serde_json::Value, ModelError> {
+            Ok(serde_json::json!({}))
+        }
+        fn parse_response(&self, _body: &str) -> Result<GenerateResponse, ModelError> {
+            Err(ModelError::InvalidResponse("fake".into()))
+        }
+        fn request_headers(&self, _api_key: &str) -> reqwest::header::HeaderMap {
+            reqwest::header::HeaderMap::new()
+        }
+        fn endpoint_path(&self, _model: &str) -> String {
+            "/fake".into()
+        }
+    }
+
+    #[test]
+    fn with_model_unknown_provider_returns_error() {
+        let cm = ConnectionManager::new(FakeProvider, "http://x", "k", "m");
+        let err = cm.with_model("other-model").unwrap_err();
+        assert!(matches!(err, ModelError::UnknownProvider(name) if name == "fake"));
+    }
+
+    #[test]
+    fn with_model_shares_circuit_breaker() {
+        let cm = ConnectionManager::openai("http://x", "m", "k");
+        let overridden = cm.with_model("m2").unwrap();
+        assert_eq!(
+            cm.circuit_breaker_ptr_for_test(),
+            overridden.circuit_breaker_ptr_for_test()
+        );
+    }
+
+    #[test]
+    fn backoff_is_exponential_and_capped() {
+        let cm = ConnectionManager::openai("http://x", "m", "k").with_retries(3, 500);
+        assert_eq!(cm.backoff_ms(0), 500);
+        assert_eq!(cm.backoff_ms(1), 1000);
+        assert_eq!(cm.backoff_ms(2), 2000);
+        // exponent capped at 10 — no overflow even for absurd attempt counts
+        assert_eq!(cm.backoff_ms(64), 500 * 1024);
+    }
+
+    #[test]
+    fn rate_limit_backoff_is_4x() {
+        let cm = ConnectionManager::openai("http://x", "m", "k").with_retries(3, 500);
+        assert_eq!(cm.rate_limit_backoff_ms(0), 2000);
+    }
+
+    #[test]
+    fn clamp_retry_after_ms_caps_at_60s() {
+        assert_eq!(ConnectionManager::clamp_retry_after_ms(59_999), 59_999);
+        assert_eq!(ConnectionManager::clamp_retry_after_ms(60_000), 60_000);
+        assert_eq!(ConnectionManager::clamp_retry_after_ms(1_000_000), 60_000);
+        assert_eq!(ConnectionManager::clamp_retry_after_ms(u64::MAX), 60_000);
+    }
+
+    #[test]
+    fn from_config_rejects_key_with_header_invalid_chars() {
+        let err = ConnectionManager::from_config(crate::config::ProviderConfig::Anthropic {
+            model_name: "m".into(),
+            api_key: "bad\nkey".into(),
+        })
+        .unwrap_err();
+        assert!(matches!(err, ModelError::InvalidApiKey(_)));
+    }
+
+    #[test]
+    fn from_config_accepts_empty_key() {
+        // Local OpenAI-compatible endpoints legitimately use no key.
+        assert!(
+            ConnectionManager::from_config(crate::config::ProviderConfig::OpenAI {
+                model_name: "m".into(),
+                api_key: String::new(),
+                base_url: Some("http://localhost:9090/v1".into()),
+            })
+            .is_ok()
+        );
     }
 }

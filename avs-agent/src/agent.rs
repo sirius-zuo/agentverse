@@ -534,7 +534,9 @@ impl Agent {
 
         let response = match run_result {
             Ok(text) => text,
-            Err(agentverse::AgentError::Memory(ref msg)) if msg.starts_with("HITL:") => {
+            Err(agentverse::AgentError::Memory(ref msg))
+                if agentverse::hitl::HitlWire::is_wire(msg) =>
+            {
                 return self
                     .handle_tool_interrupt(user_id, session_id, msg, &active_tool_names, &skill_ctx)
                     .await;
@@ -692,24 +694,24 @@ impl Agent {
         })?;
         // SkillRegistry::load does blocking filesystem I/O — run it off the Tokio executor.
         let dir = skills.dir.clone();
-        let new_registry = tokio::task::spawn_blocking(move || SkillRegistry::load(&dir))
-            .await
-            .unwrap_or_else(|e| Err(SkillError::Io(std::io::Error::other(e))))
-            .map_err(AgentError::Skill)?;
+        let join_result = tokio::task::spawn_blocking(move || SkillRegistry::load(&dir)).await;
+        let new_registry = match join_result {
+            Ok(load_result) => load_result.map_err(AgentError::Skill)?,
+            Err(join_err) if join_err.is_panic() => {
+                // Propagate the real panic instead of disguising it as IO.
+                std::panic::resume_unwind(join_err.into_panic())
+            }
+            Err(join_err) => {
+                return Err(AgentError::Skill(SkillError::Io(std::io::Error::other(
+                    format!("skill reload task was cancelled: {join_err}"),
+                ))))
+            }
+        };
         // Rebuild summaries and ids while we still have owned access to new_registry.
         skills.rebuild_caches(&new_registry);
         *skills.registry.write().await = new_registry;
         tracing::info!(dir = ?skills.dir, "skill registry reloaded");
         Ok(())
-    }
-
-    fn hitl_b64_decode(s: &str) -> String {
-        use base64::{engine::general_purpose::STANDARD, Engine};
-        STANDARD
-            .decode(s)
-            .ok()
-            .and_then(|b| String::from_utf8(b).ok())
-            .unwrap_or_default()
     }
 
     async fn handle_tool_interrupt(
@@ -720,21 +722,16 @@ impl Agent {
         active_tool_names: &[String],
         skill_ctx: &Option<agentverse_skill::SkillContext>,
     ) -> Result<AgentOutput, AgentError> {
-        // Format: "HITL:{uuid}:{kind_b64}:{history_b64}:{calls_b64}"
-        let parts: Vec<&str> = hitl_msg.splitn(5, ':').collect();
-        if parts.len() < 5 {
-            return Err(AgentError::Llm(agentverse::AgentError::Memory(
-                "malformed HITL message".into(),
-            )));
-        }
-        let approval_id: Uuid = parts[1].parse().map_err(|_| {
-            AgentError::Llm(agentverse::AgentError::Memory(
-                "bad approval_id in HITL msg".into(),
-            ))
+        // Wire format: "HITL:{uuid}:{kind_b64}:{history_b64}:{calls_b64}" — see agentverse::hitl::HitlWire
+        let wire = agentverse::hitl::HitlWire::parse(hitl_msg).map_err(|e| {
+            AgentError::Llm(agentverse::AgentError::Memory(format!(
+                "malformed HITL wire message: {e}"
+            )))
         })?;
-        let kind_json = Self::hitl_b64_decode(parts[2]);
-        let history_json = Self::hitl_b64_decode(parts[3]);
-        let pending_calls_json = Self::hitl_b64_decode(parts[4]);
+        let approval_id: Uuid = wire.approval_id;
+        let kind_json = wire.kind_json;
+        let history_json = wire.history_json;
+        let pending_calls_json = wire.pending_calls_json;
 
         // Determine variant from kind_json
         let kind: InterruptKind = serde_json::from_str(&kind_json).map_err(|e| {
@@ -913,18 +910,15 @@ impl Agent {
                                         kind_json,
                                     }) => {
                                         // Another call in the batch needs approval.
-                                        let pending_json =
-                                            serde_json::to_string(&pending).unwrap_or_default();
-                                        let history_json_enc =
-                                            serde_json::to_string(&history).unwrap_or_default();
-                                        use base64::{engine::general_purpose::STANDARD, Engine};
-                                        let msg = format!(
-                                            "HITL:{}:{}:{}:{}",
+                                        let msg = agentverse::hitl::HitlWire {
                                             approval_id,
-                                            STANDARD.encode(kind_json.as_bytes()),
-                                            STANDARD.encode(history_json_enc.as_bytes()),
-                                            STANDARD.encode(pending_json.as_bytes()),
-                                        );
+                                            kind_json,
+                                            history_json: serde_json::to_string(&history)
+                                                .unwrap_or_default(),
+                                            pending_calls_json: serde_json::to_string(&pending)
+                                                .unwrap_or_default(),
+                                        }
+                                        .encode();
                                         let active_tool_names_vec: Vec<String> = active_tool_names;
                                         let skill_ctx_val: Option<agentverse_skill::SkillContext> =
                                             skill_ctx_json
@@ -1025,7 +1019,9 @@ impl Agent {
 
                 match run_result {
                     Ok(text) => Ok(AgentOutput::Done(text)),
-                    Err(agentverse::AgentError::Memory(ref msg)) if msg.starts_with("HITL:") => {
+                    Err(agentverse::AgentError::Memory(ref msg))
+                        if agentverse::hitl::HitlWire::is_wire(msg) =>
+                    {
                         self.handle_tool_interrupt(
                             user_id,
                             session_id,

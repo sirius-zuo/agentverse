@@ -46,13 +46,21 @@ pub struct LongtermRecord {
 
 impl LongtermRecord {
     pub fn now(content: String, importance: f32) -> Self {
-        debug_assert!(
-            (0.0..=1.0).contains(&importance),
-            "importance must be in [0.0, 1.0]"
-        );
+        let clamped = if importance.is_nan() {
+            0.0
+        } else {
+            importance.clamp(0.0, 1.0)
+        };
+        if clamped != importance {
+            tracing::warn!(
+                importance,
+                clamped,
+                "LongtermRecord importance outside [0.0, 1.0]; clamping"
+            );
+        }
         Self {
             content,
-            importance,
+            importance: clamped,
             created_at: Utc::now(),
         }
     }
@@ -113,5 +121,25 @@ mod store_tests {
         let r = LongtermRecord::now("hello".to_string(), 0.7);
         assert_eq!(r.content, "hello");
         assert!((r.importance - 0.7).abs() < 1e-6);
+    }
+
+    #[test]
+    fn importance_above_one_is_clamped() {
+        assert_eq!(LongtermRecord::now("x".into(), 1.5).importance, 1.0);
+    }
+
+    #[test]
+    fn importance_below_zero_is_clamped() {
+        assert_eq!(LongtermRecord::now("x".into(), -0.3).importance, 0.0);
+    }
+
+    #[test]
+    fn importance_nan_becomes_zero() {
+        assert_eq!(LongtermRecord::now("x".into(), f32::NAN).importance, 0.0);
+    }
+
+    #[test]
+    fn importance_in_range_is_untouched() {
+        assert_eq!(LongtermRecord::now("x".into(), 0.7).importance, 0.7);
     }
 }

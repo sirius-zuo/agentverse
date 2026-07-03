@@ -80,10 +80,11 @@ Other OpenAI-compatible endpoints work by changing `MODEL_BASE_URL`: Ollama, lla
 ANTHROPIC_API_KEY=sk-ant-... \
 MODEL_NAME=claude-sonnet-4-6 \
 HOST=0.0.0.0 PORT=3000 \
+ALLOW_INSECURE=true \
 cargo run -p example-http-agent
 ```
 
-The agent listens on `0.0.0.0:3000` by default.
+The agent listens on `0.0.0.0:3000` by default. Non-loopback binds require a non-empty `API_KEY` or `ALLOW_INSECURE=true`.
 
 ```bash
 curl http://localhost:3000/health
@@ -170,7 +171,8 @@ curl -X POST http://localhost:3000/aether/invoke \
 | `ANTHROPIC_API_KEY` | — | Anthropic API key (for Anthropic provider) |
 | `HOST` | `0.0.0.0` | HTTP server bind address |
 | `PORT` | `3000` | HTTP server port |
-| `API_KEY` | unset | Optional bearer token required by all HTTP routes when set |
+| `API_KEY` | unset | Bearer token required by all HTTP routes when set to a non-empty value (empty/whitespace counts as unset). Required for non-loopback binds unless ALLOW_INSECURE=true. |
+| `ALLOW_INSECURE` | unset | Explicit opt-out: serve HTTP on a non-loopback address without a non-empty `API_KEY`. Startup fails otherwise. |
 | `RUST_LOG` | `info` | Tracing level filter |
 | `LOG_FORMAT` | text | Set to `json` for JSON logs |
 

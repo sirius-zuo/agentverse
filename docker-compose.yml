@@ -15,6 +15,9 @@ services:
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       API_KEY: "${API_KEY:-}"
       DATABASE_URL: "${DATABASE_URL:-}"
+      # Local-dev stack: the agent serves unauthenticated on 0.0.0.0.
+      # In any real deployment set API_KEY instead and remove this line.
+      ALLOW_INSECURE: "true"
     depends_on:
       postgres:
         condition: service_healthy

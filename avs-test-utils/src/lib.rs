@@ -1,4 +1,5 @@
 pub mod agent_builder;
+pub mod session_conformance;
 
 pub use agent_builder::{dead_endpoint_agent, unwrap_done};
 

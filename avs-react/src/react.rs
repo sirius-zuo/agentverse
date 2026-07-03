@@ -10,21 +10,6 @@ use agentverse_tools::{ActiveToolSet, HitlInterruptResult, ToolRegistry};
 use std::sync::Arc;
 use tracing::info;
 
-fn hitl_encode(s: &str) -> String {
-    use base64::{engine::general_purpose::STANDARD, Engine};
-    STANDARD.encode(s.as_bytes())
-}
-
-#[allow(dead_code)]
-fn hitl_decode(s: &str) -> String {
-    use base64::{engine::general_purpose::STANDARD, Engine};
-    STANDARD
-        .decode(s)
-        .ok()
-        .and_then(|b| String::from_utf8(b).ok())
-        .unwrap_or_default()
-}
-
 /// The high-level ReAct strategy interface.
 ///
 /// Users interact with this, not CycleSkeleton directly.
@@ -270,15 +255,16 @@ impl agentverse::RunStrategy for ReActStrategy {
                                 "args": args,
                             })])
                             .unwrap_or_default();
-                            return Err(AgentError::Memory(format!(
-                                "HITL:{}:{}:{}:{}",
-                                approval_id,
-                                hitl_encode(&kind_json),
-                                hitl_encode(
-                                    &serde_json::to_string(&history_snapshot).unwrap_or_default()
-                                ),
-                                hitl_encode(&pending_json),
-                            )));
+                            return Err(AgentError::Memory(
+                                agentverse::hitl::HitlWire {
+                                    approval_id,
+                                    kind_json,
+                                    history_json: serde_json::to_string(&history_snapshot)
+                                        .unwrap_or_default(),
+                                    pending_calls_json: pending_json,
+                                }
+                                .encode(),
+                            ));
                         }
                     }
                 }
@@ -324,15 +310,16 @@ impl agentverse::RunStrategy for ReActStrategy {
                                     .collect::<Vec<_>>(),
                             )
                             .unwrap_or_default();
-                            return Err(AgentError::Memory(format!(
-                                "HITL:{}:{}:{}:{}",
-                                approval_id,
-                                hitl_encode(&kind_json),
-                                hitl_encode(
-                                    &serde_json::to_string(&history_snapshot).unwrap_or_default()
-                                ),
-                                hitl_encode(&pending_json),
-                            )));
+                            return Err(AgentError::Memory(
+                                agentverse::hitl::HitlWire {
+                                    approval_id,
+                                    kind_json,
+                                    history_json: serde_json::to_string(&history_snapshot)
+                                        .unwrap_or_default(),
+                                    pending_calls_json: pending_json,
+                                }
+                                .encode(),
+                            ));
                         }
                     }
                 }
@@ -346,31 +333,5 @@ impl agentverse::RunStrategy for ReActStrategy {
                 }
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod encoding_tests {
-    use super::{hitl_decode, hitl_encode};
-
-    #[test]
-    fn round_trips_ascii() {
-        let s = r#"{"tool":"exec_command","args":{"cmd":"ls"}}"#;
-        assert_eq!(hitl_decode(&hitl_encode(s)), s);
-    }
-
-    #[test]
-    fn round_trips_utf8_multibyte() {
-        let s = "résumé: こんにちは";
-        assert_eq!(hitl_decode(&hitl_encode(s)), s);
-    }
-
-    #[test]
-    fn encoded_contains_no_colons() {
-        let s = r#"http://example.com:8080/path?a=b:c"#;
-        assert!(
-            !hitl_encode(s).contains(':'),
-            "base64 must not contain colons"
-        );
     }
 }

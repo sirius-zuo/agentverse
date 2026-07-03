@@ -20,6 +20,7 @@ tokio.workspace = true
 serde_yaml = "0.9"
 schemars = { version = "0.8", features = ["derive"] }
 toml.workspace = true
+base64.workspace = true
 
 # Optional tracing
 opentelemetry = { version = "0.22", optional = true }

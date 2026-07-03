@@ -27,12 +27,15 @@ impl PostgresSessionMemory {
         }
     }
 
-    fn str_to_role(role: &str) -> MessageRole {
+    fn str_to_role(role: &str) -> Result<MessageRole, SessionMemoryError> {
         match role {
-            "assistant" => MessageRole::Assistant,
-            "system" => MessageRole::System,
-            "tool" => MessageRole::Tool,
-            _ => MessageRole::User,
+            "user" => Ok(MessageRole::User),
+            "assistant" => Ok(MessageRole::Assistant),
+            "system" => Ok(MessageRole::System),
+            "tool" => Ok(MessageRole::Tool),
+            other => Err(SessionMemoryError::Database(format!(
+                "corrupt message row: unknown role '{other}'"
+            ))),
         }
     }
 
@@ -154,6 +157,23 @@ impl PostgresSessionMemory {
 
         if has_phase_ctx == 0 {
             sqlx::query("ALTER TABLE sessions ADD COLUMN phase_opening_context TEXT")
+                .execute(&self.pool)
+                .await
+                .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+        }
+
+        // Interrupted state column (HITL suspend/resume)
+        let has_interrupted_state: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)
+             FROM information_schema.columns
+             WHERE table_name = 'sessions' AND column_name = 'interrupted_state'",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+
+        if has_interrupted_state == 0 {
+            sqlx::query("ALTER TABLE sessions ADD COLUMN interrupted_state TEXT")
                 .execute(&self.pool)
                 .await
                 .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
@@ -349,13 +369,14 @@ impl SessionMemory for PostgresSessionMemory {
         .await
         .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
 
-        Ok(rows
-            .into_iter()
-            .map(|(role, content)| Message {
-                role: Self::str_to_role(&role),
-                content,
+        rows.into_iter()
+            .map(|(role, content)| {
+                Ok(Message {
+                    role: Self::str_to_role(&role)?,
+                    content,
+                })
             })
-            .collect())
+            .collect::<Result<Vec<_>, SessionMemoryError>>()
     }
 
     async fn get_watermark(&self, session_id: SessionId) -> Result<i64, SessionMemoryError> {
@@ -405,18 +426,17 @@ impl SessionMemory for PostgresSessionMemory {
         .fetch_all(&self.pool)
         .await
         .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(|(seq, role, content)| {
-                (
+                Ok((
                     seq,
                     Message {
-                        role: Self::str_to_role(&role),
+                        role: Self::str_to_role(&role)?,
                         content,
                     },
-                )
+                ))
             })
-            .collect())
+            .collect::<Result<Vec<_>, SessionMemoryError>>()
     }
 
     async fn cleanup_expired_messages(
@@ -590,5 +610,40 @@ impl SessionMemory for PostgresSessionMemory {
         .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
 
         Ok(session)
+    }
+
+    async fn set_interrupted_state(
+        &self,
+        session_id: SessionId,
+        state_json: Option<&str>,
+    ) -> Result<(), SessionMemoryError> {
+        let result = sqlx::query("UPDATE sessions SET interrupted_state = $1 WHERE id = $2")
+            .bind(state_json)
+            .bind(session_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+
+        if result.rows_affected() == 0 {
+            return Err(SessionMemoryError::NotFound(session_id));
+        }
+        Ok(())
+    }
+
+    async fn get_interrupted_state(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Option<String>, SessionMemoryError> {
+        let row: Option<Option<String>> =
+            sqlx::query_scalar("SELECT interrupted_state FROM sessions WHERE id = $1")
+                .bind(session_id.to_string())
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+
+        match row {
+            None => Err(SessionMemoryError::NotFound(session_id)),
+            Some(v) => Ok(v),
+        }
     }
 }

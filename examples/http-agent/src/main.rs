@@ -57,8 +57,15 @@ async fn main() {
         Arc::clone(&tools),
         10,
     );
+    let database_url = std::env::var("DATABASE_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| {
+            std::fs::create_dir_all("data").expect("failed to create data/ directory");
+            "sqlite:data/agent.db".to_string()
+        });
     let session_memory = Arc::new(
-        SqliteSessionMemory::new("sqlite:agent.db")
+        SqliteSessionMemory::new(&database_url)
             .await
             .expect("session store"),
     );

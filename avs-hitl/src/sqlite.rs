@@ -36,18 +36,21 @@ impl SqliteQueue {
             .map_err(|e| HitlError::Database(e.to_string()))
     }
 
-    fn row_to_status(status: &str, decision: Option<&str>) -> ApprovalStatus {
+    fn row_to_status(status: &str, decision: Option<&str>) -> Result<ApprovalStatus, HitlError> {
         match status {
+            "pending" => Ok(ApprovalStatus::Pending),
             "resolved" => {
                 let dec: ApprovalDecision = decision
                     .and_then(|d| serde_json::from_str(d).ok())
                     .unwrap_or_else(|| ApprovalDecision::Rejected {
                         reason: "data integrity error: decision missing or unparseable".into(),
                     });
-                ApprovalStatus::Resolved(dec)
+                Ok(ApprovalStatus::Resolved(dec))
             }
-            "expired" => ApprovalStatus::Expired,
-            _ => ApprovalStatus::Pending,
+            "expired" => Ok(ApprovalStatus::Expired),
+            other => Err(HitlError::Database(format!(
+                "corrupt approval row: unknown status '{other}'"
+            ))),
         }
     }
 }
@@ -122,6 +125,7 @@ impl ApprovalQueue for SqliteQueue {
                 .map_err(|e| HitlError::Database(e.to_string()))?;
 
         row.map(|(s, d)| Self::row_to_status(&s, d.as_deref()))
+            .transpose()?
             .ok_or(HitlError::NotFound(id))
     }
 
@@ -136,5 +140,24 @@ impl ApprovalQueue for SqliteQueue {
         .await
         .map_err(|e| HitlError::Database(e.to_string()))?;
         Ok(rows.rows_affected())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn row_to_status_rejects_unknown_status() {
+        let err = SqliteQueue::row_to_status("weird", None).unwrap_err();
+        assert!(err.to_string().contains("weird"));
+    }
+
+    #[test]
+    fn row_to_status_maps_pending() {
+        assert!(matches!(
+            SqliteQueue::row_to_status("pending", None),
+            Ok(ApprovalStatus::Pending)
+        ));
     }
 }

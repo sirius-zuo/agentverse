@@ -249,7 +249,9 @@ fn connection_manager_with_model_uses_new_model_name() {
     use agentverse::memory::{Message, MessageRole};
     let cm =
         ConnectionManager::anthropic("https://api.anthropic.com", "claude-sonnet-4-6", "test-key");
-    let overridden = cm.with_model("claude-haiku-4-5-20251001");
+    let overridden = cm
+        .with_model("claude-haiku-4-5-20251001")
+        .expect("known provider");
     let req = agentverse::GenerateRequest {
         system: None,
         messages: vec![Message {
@@ -267,7 +269,7 @@ fn connection_manager_with_model_uses_new_model_name() {
 fn connection_manager_with_model_openai_uses_new_model_name() {
     use agentverse::memory::{Message, MessageRole};
     let cm = ConnectionManager::openai("https://api.openai.com/v1", "gpt-4o", "test-key");
-    let overridden = cm.with_model("gpt-4o-mini");
+    let overridden = cm.with_model("gpt-4o-mini").expect("known provider");
     let req = agentverse::GenerateRequest {
         system: None,
         messages: vec![Message {
@@ -289,7 +291,7 @@ fn connection_manager_with_model_gemini_uses_new_model_name() {
         "gemini-2.0-flash",
         "test-key",
     );
-    let overridden = cm.with_model("gemini-1.5-pro");
+    let overridden = cm.with_model("gemini-1.5-pro").expect("known provider");
     let req = agentverse::GenerateRequest {
         system: None,
         messages: vec![Message {

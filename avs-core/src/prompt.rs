@@ -132,14 +132,14 @@ impl PromptRegistry {
         }
 
         for (name, template) in &config.templates {
-            registry.add_template(name, template);
+            registry.add_template(name, template)?;
         }
         for (name, examples) in &config.examples {
             registry.add_examples(name.clone(), examples.clone());
         }
 
         if let Some(ref system_prompt) = config.system_prompt {
-            registry.add_template("system", system_prompt);
+            registry.add_template("system", system_prompt)?;
         }
 
         Ok(registry)
@@ -150,11 +150,17 @@ impl PromptRegistry {
         Self::default()
     }
 
-    /// Register a template by name.
-    pub fn add_template(&mut self, name: &str, template: &str) {
-        let name: &'static str = Box::leak(name.to_string().into_boxed_str());
-        let source: &'static str = Box::leak(template.to_string().into_boxed_str());
-        self.env.add_template(name, source).unwrap();
+    /// Register a template by name. Replaces any existing template with the
+    /// same name. Fails on invalid template syntax.
+    pub fn add_template(&mut self, name: &str, template: &str) -> Result<(), AgentError> {
+        self.env
+            .add_template_owned(name.to_string(), template.to_string())
+            .map_err(|e| {
+                AgentError::Config(ConfigError::Invalid(format!(
+                    "Invalid template '{}': {}",
+                    name, e
+                )))
+            })
     }
 
     /// Register an example set by name.
@@ -245,7 +251,7 @@ impl PromptRegistry {
                         "hierarchical" => "strategies.hierarchical.decompose",
                         other => other,
                     };
-                    self.add_template(registry_name, &template);
+                    self.add_template(registry_name, &template)?;
                 }
                 Some("toml") => {
                     let name = path.file_stem().unwrap().to_string_lossy().to_string();
