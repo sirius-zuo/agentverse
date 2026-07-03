@@ -219,6 +219,17 @@ impl ConnectionManager {
         self.provider.build_request(&self.model_name, request)
     }
 
+    fn backoff_ms(&self, attempt: usize) -> u64 {
+        self.retry_delay_ms
+            .saturating_mul(2u64.pow((attempt as u32).min(10)))
+    }
+
+    /// 429s get a longer pause than transient errors when the server
+    /// doesn't send Retry-After.
+    fn rate_limit_backoff_ms(&self, attempt: usize) -> u64 {
+        self.backoff_ms(attempt).saturating_mul(4)
+    }
+
     pub async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, ModelError> {
         // 1. Log prompt
         tracing::debug!(">>>>>>>>>> LLM PROMPT BEGIN <<<<<<<<<<");
@@ -279,15 +290,18 @@ impl ConnectionManager {
                     self.circuit_breaker.lock().await.record_failure();
                     last_error = Some(err);
                     if attempt < self.max_retries {
-                        tokio::time::sleep(Duration::from_millis(
-                            self.retry_delay_ms * 2u64.pow(attempt as u32),
-                        ))
-                        .await;
+                        tokio::time::sleep(Duration::from_millis(self.backoff_ms(attempt))).await;
                         continue;
                     }
                 }
                 Ok(resp) => {
                     let status = resp.status();
+                    let retry_after_ms = resp
+                        .headers()
+                        .get(reqwest::header::RETRY_AFTER)
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|s| s.trim().parse::<u64>().ok())
+                        .map(|secs| secs.saturating_mul(1000));
                     let body_text = resp
                         .text()
                         .await
@@ -299,10 +313,9 @@ impl ConnectionManager {
                         self.circuit_breaker.lock().await.record_failure();
                         last_error = Some(err);
                         if attempt < self.max_retries {
-                            tokio::time::sleep(Duration::from_millis(
-                                self.retry_delay_ms * 2u64.pow(attempt as u32),
-                            ))
-                            .await;
+                            let delay_ms = retry_after_ms
+                                .unwrap_or_else(|| self.rate_limit_backoff_ms(attempt));
+                            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                             continue;
                         }
                     } else if !status.is_success() {
@@ -397,5 +410,21 @@ mod with_model_tests {
             cm.circuit_breaker_ptr_for_test(),
             overridden.circuit_breaker_ptr_for_test()
         );
+    }
+
+    #[test]
+    fn backoff_is_exponential_and_capped() {
+        let cm = ConnectionManager::openai("http://x", "m", "k").with_retries(3, 500);
+        assert_eq!(cm.backoff_ms(0), 500);
+        assert_eq!(cm.backoff_ms(1), 1000);
+        assert_eq!(cm.backoff_ms(2), 2000);
+        // exponent capped at 10 — no overflow even for absurd attempt counts
+        assert_eq!(cm.backoff_ms(64), 500 * 1024);
+    }
+
+    #[test]
+    fn rate_limit_backoff_is_4x() {
+        let cm = ConnectionManager::openai("http://x", "m", "k").with_retries(3, 500);
+        assert_eq!(cm.rate_limit_backoff_ms(0), 2000);
     }
 }
