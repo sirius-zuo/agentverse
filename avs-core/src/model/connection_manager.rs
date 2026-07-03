@@ -90,6 +90,17 @@ pub struct ConnectionManager {
     fallback: Option<Box<ConnectionManager>>,
 }
 
+// Minimal manual impl (not derived: `provider` and `circuit_breaker` hold
+// non-`Debug` types) — needed so `Result<ConnectionManager, _>::unwrap_err()`
+// is usable in tests.
+impl std::fmt::Debug for ConnectionManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectionManager")
+            .field("model_name", &self.model_name)
+            .finish_non_exhaustive()
+    }
+}
+
 impl ConnectionManager {
     pub fn new(
         provider: impl ModelProvider + 'static,
@@ -172,26 +183,31 @@ impl ConnectionManager {
 
     /// Return a new `ConnectionManager` targeting a different model. Used by
     /// `SubAgentExecutor` for per-SubAgent model overrides.
-    pub fn with_model(&self, model_name: &str) -> Self {
+    pub fn with_model(&self, model_name: &str) -> Result<Self, ModelError> {
         let provider: Box<dyn ModelProvider> = match self.provider.name() {
             "anthropic" => Box::new(AnthropicProvider::new()),
             "gemini" => Box::new(GeminiProvider::new()),
             "openai" => Box::new(OpenAICompatible::new()),
-            other => unreachable!("with_model: unknown provider name {:?}", other),
+            other => return Err(ModelError::UnknownProvider(other.to_string())),
         };
-        Self {
+        Ok(Self {
             client: self.client.clone(),
             api_base: self.api_base.clone(),
             api_key: self.api_key.clone(),
             model_name: model_name.to_string(),
             provider,
-            // SubAgent model overrides start with a fresh circuit breaker —
-            // the old breaker's state is irrelevant for a different model endpoint.
-            circuit_breaker: Arc::new(Mutex::new(CircuitBreaker::new(5, 30))),
+            // Model overrides hit the same endpoint with the same key, so an
+            // open circuit must apply to them too — share breaker state.
+            circuit_breaker: Arc::clone(&self.circuit_breaker),
             max_retries: self.max_retries,
             retry_delay_ms: self.retry_delay_ms,
             fallback: None,
-        }
+        })
+    }
+
+    #[doc(hidden)]
+    pub fn circuit_breaker_ptr_for_test(&self) -> usize {
+        Arc::as_ptr(&self.circuit_breaker) as usize
     }
 
     /// Expose provider's `build_request` for tests only. Not for production use.
@@ -334,5 +350,52 @@ impl ConnectionManager {
             return Box::pin(fallback.generate(request)).await;
         }
         Err(primary_err)
+    }
+}
+
+#[cfg(test)]
+mod with_model_tests {
+    use super::*;
+    use crate::error::ModelError;
+    use crate::model::{GenerateRequest, GenerateResponse};
+
+    struct FakeProvider;
+    impl ModelProvider for FakeProvider {
+        fn name(&self) -> &'static str {
+            "fake"
+        }
+        fn build_request(
+            &self,
+            _model: &str,
+            _req: GenerateRequest,
+        ) -> Result<serde_json::Value, ModelError> {
+            Ok(serde_json::json!({}))
+        }
+        fn parse_response(&self, _body: &str) -> Result<GenerateResponse, ModelError> {
+            Err(ModelError::InvalidResponse("fake".into()))
+        }
+        fn request_headers(&self, _api_key: &str) -> reqwest::header::HeaderMap {
+            reqwest::header::HeaderMap::new()
+        }
+        fn endpoint_path(&self, _model: &str) -> String {
+            "/fake".into()
+        }
+    }
+
+    #[test]
+    fn with_model_unknown_provider_returns_error() {
+        let cm = ConnectionManager::new(FakeProvider, "http://x", "k", "m");
+        let err = cm.with_model("other-model").unwrap_err();
+        assert!(matches!(err, ModelError::UnknownProvider(name) if name == "fake"));
+    }
+
+    #[test]
+    fn with_model_shares_circuit_breaker() {
+        let cm = ConnectionManager::openai("http://x", "m", "k");
+        let overridden = cm.with_model("m2").unwrap();
+        assert_eq!(
+            cm.circuit_breaker_ptr_for_test(),
+            overridden.circuit_breaker_ptr_for_test()
+        );
     }
 }

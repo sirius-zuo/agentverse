@@ -29,6 +29,8 @@ pub enum ModelError {
     RateLimited(String),
     #[error("Circuit breaker open: {0}")]
     CircuitOpen(String),
+    #[error("Unknown provider: {0}")]
+    UnknownProvider(String),
 }
 
 #[derive(Error, Debug)]
