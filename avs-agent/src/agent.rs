@@ -694,10 +694,19 @@ impl Agent {
         })?;
         // SkillRegistry::load does blocking filesystem I/O — run it off the Tokio executor.
         let dir = skills.dir.clone();
-        let new_registry = tokio::task::spawn_blocking(move || SkillRegistry::load(&dir))
-            .await
-            .unwrap_or_else(|e| Err(SkillError::Io(std::io::Error::other(e))))
-            .map_err(AgentError::Skill)?;
+        let join_result = tokio::task::spawn_blocking(move || SkillRegistry::load(&dir)).await;
+        let new_registry = match join_result {
+            Ok(load_result) => load_result.map_err(AgentError::Skill)?,
+            Err(join_err) if join_err.is_panic() => {
+                // Propagate the real panic instead of disguising it as IO.
+                std::panic::resume_unwind(join_err.into_panic())
+            }
+            Err(join_err) => {
+                return Err(AgentError::Skill(SkillError::Io(std::io::Error::other(
+                    format!("skill reload task was cancelled: {join_err}"),
+                ))))
+            }
+        };
         // Rebuild summaries and ids while we still have owned access to new_registry.
         skills.rebuild_caches(&new_registry);
         *skills.registry.write().await = new_registry;
