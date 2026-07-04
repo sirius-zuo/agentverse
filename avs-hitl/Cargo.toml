@@ -21,3 +21,5 @@ schemars = { version = "0.8", features = ["derive"] }
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tempfile = "3"
+opentelemetry.workspace = true
+opentelemetry_sdk.workspace = true

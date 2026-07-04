@@ -99,6 +99,8 @@ dependencies = [
  "agentverse",
  "async-trait",
  "chrono",
+ "opentelemetry 0.32.0",
+ "opentelemetry_sdk 0.32.1",
  "schemars 0.8.22",
  "serde",
  "serde_json",
