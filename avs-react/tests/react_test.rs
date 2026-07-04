@@ -47,11 +47,11 @@ impl Tool for MockTool {
 fn make_skeleton() -> CycleSkeleton {
     let runner = Arc::new(
         LlmRunner::from_config(Config {
-            provider: agentverse::ProviderConfig::OpenAI {
-                model_name: "test".to_string(),
-                api_key: "sk-test".to_string(),
-                base_url: Some("http://127.0.0.1:1/v1".to_string()),
-            },
+            provider: agentverse::ProviderConfig::openai(
+                "test".to_string(),
+                "sk-test".to_string(),
+                Some("http://127.0.0.1:1/v1".to_string()),
+            ),
             max_messages: 10,
             tools: vec![],
             prompts_dir: None,
@@ -121,11 +121,11 @@ fn test_cycle_skeleton_max_iterations() {
 fn test_cycle_skeleton_tool_count_nonzero() {
     let runner = Arc::new(
         LlmRunner::from_config(Config {
-            provider: agentverse::ProviderConfig::OpenAI {
-                model_name: "test".to_string(),
-                api_key: "sk-test".to_string(),
-                base_url: Some("http://127.0.0.1:1/v1".to_string()),
-            },
+            provider: agentverse::ProviderConfig::openai(
+                "test".to_string(),
+                "sk-test".to_string(),
+                Some("http://127.0.0.1:1/v1".to_string()),
+            ),
             max_messages: 10,
             tools: vec![],
             prompts_dir: None,
@@ -167,11 +167,11 @@ fn test_cycle_preamble_inserted_when_react_template_loaded() {
 
     let runner = Arc::new(
         LlmRunner::from_config(Config {
-            provider: agentverse::ProviderConfig::OpenAI {
-                model_name: "test".to_string(),
-                api_key: "sk-test".to_string(),
-                base_url: Some("http://127.0.0.1:1/v1".to_string()),
-            },
+            provider: agentverse::ProviderConfig::openai(
+                "test".to_string(),
+                "sk-test".to_string(),
+                Some("http://127.0.0.1:1/v1".to_string()),
+            ),
             max_messages: 10,
             tools: vec![],
             prompts_dir: None,
@@ -205,11 +205,11 @@ fn test_check_output_guardrail_clean() {
 async fn test_cycle_skeleton_execute_tool() {
     let runner = Arc::new(
         LlmRunner::from_config(Config {
-            provider: agentverse::ProviderConfig::OpenAI {
-                model_name: "test".to_string(),
-                api_key: "sk-test".to_string(),
-                base_url: Some("http://127.0.0.1:1/v1".to_string()),
-            },
+            provider: agentverse::ProviderConfig::openai(
+                "test".to_string(),
+                "sk-test".to_string(),
+                Some("http://127.0.0.1:1/v1".to_string()),
+            ),
             max_messages: 10,
             tools: vec![],
             prompts_dir: None,
@@ -241,11 +241,11 @@ async fn test_cycle_skeleton_execute_tool_not_found() {
 async fn react_run_returns_error_on_bad_port() {
     let runner = Arc::new(
         LlmRunner::from_config(Config {
-            provider: agentverse::ProviderConfig::OpenAI {
-                model_name: "test".to_string(),
-                api_key: "sk-test".to_string(),
-                base_url: Some("http://127.0.0.1:1/v1".to_string()),
-            },
+            provider: agentverse::ProviderConfig::openai(
+                "test".to_string(),
+                "sk-test".to_string(),
+                Some("http://127.0.0.1:1/v1".to_string()),
+            ),
             max_messages: 10,
             tools: vec![],
             prompts_dir: None,
@@ -290,11 +290,11 @@ async fn run_hitl_returns_interrupted_with_typed_history_and_pending_calls() {
 
     let runner = Arc::new(
         LlmRunner::from_config(Config {
-            provider: agentverse::ProviderConfig::OpenAI {
-                model_name: "test".to_string(),
-                api_key: "sk-test".to_string(),
-                base_url: Some(server.base_url()),
-            },
+            provider: agentverse::ProviderConfig::openai(
+                "test".to_string(),
+                "sk-test".to_string(),
+                Some(server.base_url()),
+            ),
             max_messages: 10,
             tools: vec![],
             prompts_dir: None,

@@ -17,11 +17,7 @@ impl LlmRunnerBuilder {
 
     pub fn build(self) -> Result<crate::llm_runner::LlmRunner, AgentError> {
         let config = self.config.unwrap_or_else(|| Config {
-            provider: ProviderConfig::OpenAI {
-                model_name: String::new(),
-                api_key: String::new(),
-                base_url: None,
-            },
+            provider: ProviderConfig::openai(String::new(), String::new(), None),
             max_messages: 100,
             tools: Vec::new(),
             prompts_dir: None,

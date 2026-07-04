@@ -32,7 +32,8 @@ pub use llm_runner::LlmRunner;
 pub use memory::{Memory, MemoryError, Message, MessageRole};
 pub use model::{
     AnthropicProvider, ConnectionManager, CycleResult, GeminiProvider, GenerateRequest,
-    GenerateResponse, ModelProvider, OpenAICompatible, ToolDefinition, UsageStats,
+    GenerateResponse, ModelProvider, OpenAICompatible, ProviderFactory, ProviderRegistry,
+    ResolvedProvider, ToolDefinition, UsageStats,
 };
 pub use prompt::PromptConfig;
 pub use prompt::PromptRegistry;
