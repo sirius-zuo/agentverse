@@ -22,6 +22,8 @@ fn metric_names(exporter: &InMemoryMetricExporter) -> Vec<String> {
         .collect()
 }
 
+// ONE test fn: the global meter provider is process-wide, so all assertions
+// run sequentially here (see avs-core/tests/metrics_facade_test.rs).
 #[tokio::test]
 async fn execute_records_tool_call_metrics() {
     let (exporter, provider) = install();
@@ -38,6 +40,22 @@ async fn execute_records_tool_call_metrics() {
     // error outcome — unknown tool
     let _ = registry.execute("nope", serde_json::Value::Null).await;
 
+    // hitl_intercepted outcome via execute_many_hitl
+    struct BlockAll;
+    #[async_trait::async_trait]
+    impl agentverse::hitl::HitlHook for BlockAll {
+        async fn check_tool(&self, _: &str, _: &serde_json::Value) -> Option<(uuid::Uuid, String)> {
+            Some((uuid::Uuid::new_v4(), "{}".to_string()))
+        }
+    }
+    let hook: std::sync::Arc<dyn agentverse::hitl::HitlHook> = std::sync::Arc::new(BlockAll);
+    let calls = vec![agentverse::ToolCall {
+        name: "calculator".to_string(),
+        args: serde_json::json!({}),
+    }];
+    let result = registry.execute_many_hitl(calls, &hook).await;
+    assert!(result.is_err(), "intercepted call must return Err");
+
     provider.force_flush().unwrap();
     let names = metric_names(&exporter);
     assert!(
@@ -47,5 +65,35 @@ async fn execute_records_tool_call_metrics() {
     assert!(
         names.contains(&"agentverse.tool.duration".to_string()),
         "{names:?}"
+    );
+
+    // Confirm a hitl_intercepted datapoint exists on agentverse.tool.calls.
+    use opentelemetry::Value;
+    use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
+    let finished = exporter.get_finished_metrics().unwrap();
+    let mut found_hitl_intercepted = false;
+    for rm in finished.iter() {
+        for sm in rm.scope_metrics() {
+            for m in sm.metrics() {
+                if m.name() != "agentverse.tool.calls" {
+                    continue;
+                }
+                if let AggregatedMetrics::U64(MetricData::Sum(sum)) = m.data() {
+                    for dp in sum.data_points() {
+                        let is_hitl = dp.attributes().any(|kv| {
+                            kv.key.as_str() == "outcome"
+                                && kv.value == Value::String("hitl_intercepted".into())
+                        });
+                        if is_hitl {
+                            found_hitl_intercepted = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        found_hitl_intercepted,
+        "expected an agentverse.tool.calls datapoint with outcome=hitl_intercepted"
     );
 }
