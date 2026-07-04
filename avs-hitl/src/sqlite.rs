@@ -78,6 +78,8 @@ impl ApprovalQueue for SqliteQueue {
         .await
         .map_err(|e| HitlError::Database(e.to_string()))?;
 
+        agentverse::metrics::record_approval_event(agentverse::metrics::ApprovalEvent::Submitted);
+        agentverse::metrics::approvals_pending_delta(1);
         Ok(req.id)
     }
 
@@ -111,6 +113,10 @@ impl ApprovalQueue for SqliteQueue {
                 Err(HitlError::AlreadyResolved(id))
             }
         } else {
+            agentverse::metrics::record_approval_event(
+                agentverse::metrics::ApprovalEvent::Resolved,
+            );
+            agentverse::metrics::approvals_pending_delta(-1);
             Ok(())
         }
     }
@@ -139,7 +145,16 @@ impl ApprovalQueue for SqliteQueue {
         .execute(&self.pool)
         .await
         .map_err(|e| HitlError::Database(e.to_string()))?;
-        Ok(rows.rows_affected())
+        let count = rows.rows_affected();
+        if count > 0 {
+            for _ in 0..count {
+                agentverse::metrics::record_approval_event(
+                    agentverse::metrics::ApprovalEvent::Expired,
+                );
+            }
+            agentverse::metrics::approvals_pending_delta(-(count as i64));
+        }
+        Ok(count)
     }
 }
 

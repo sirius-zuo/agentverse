@@ -89,22 +89,36 @@ impl ToolRegistry {
 
     /// Execute one tool by name, dispatching its JSON args.
     pub async fn execute(&self, name: &str, args: Value) -> ToolResult {
+        let start = std::time::Instant::now();
         let tool = {
             let tools = self.tools.read().unwrap();
             tools.get(name).map(|(t, _)| Arc::clone(t))
         };
-        let tool = tool.ok_or_else(|| {
-            tracing::warn!(tool_name = %name, "Tool not found");
-            ToolError::NotFound(name.to_string())
-        })?;
+        let tool = match tool {
+            Some(t) => t,
+            None => {
+                tracing::warn!(tool_name = %name, "Tool not found");
+                agentverse::metrics::record_tool_call(
+                    "<unknown>",
+                    start.elapsed(),
+                    agentverse::metrics::ToolOutcome::Error,
+                );
+                return Err(ToolError::NotFound(name.to_string()));
+            }
+        };
         tracing::debug!(tool_name = %name, args = %safe_truncate(&args.to_string(), 200), "Tool call");
         let result = tool.execute_raw(args).await;
-        match &result {
+        let outcome = match &result {
             Ok(v) => {
-                tracing::info!(tool_name = %name, result = %safe_truncate(&v.to_string(), 200), "Tool ok")
+                tracing::info!(tool_name = %name, result = %safe_truncate(&v.to_string(), 200), "Tool ok");
+                agentverse::metrics::ToolOutcome::Ok
             }
-            Err(e) => tracing::warn!(tool_name = %name, error = %e, "Tool error"),
-        }
+            Err(e) => {
+                tracing::warn!(tool_name = %name, error = %e, "Tool error");
+                agentverse::metrics::ToolOutcome::Error
+            }
+        };
+        agentverse::metrics::record_tool_call(name, start.elapsed(), outcome);
         result
     }
 
@@ -124,10 +138,19 @@ impl ToolRegistry {
         let mut set = tokio::task::JoinSet::new();
         for (tool_opt, c) in resolved {
             set.spawn(async move {
+                let start = std::time::Instant::now();
+                let not_found = tool_opt.is_none();
                 let result = match tool_opt {
                     Some(t) => t.execute_raw(c.args).await,
                     None => Err(ToolError::NotFound(c.name.clone())),
                 };
+                let outcome = if result.is_ok() {
+                    agentverse::metrics::ToolOutcome::Ok
+                } else {
+                    agentverse::metrics::ToolOutcome::Error
+                };
+                let metric_name = if not_found { "<unknown>" } else { &c.name };
+                agentverse::metrics::record_tool_call(metric_name, start.elapsed(), outcome);
                 ToolCallResult {
                     name: c.name,
                     result,
@@ -153,6 +176,11 @@ impl ToolRegistry {
         // Check all calls first — intercept before executing any
         for call in &calls {
             if let Some((approval_id, kind_json)) = hook.check_tool(&call.name, &call.args).await {
+                agentverse::metrics::record_tool_call(
+                    &call.name,
+                    std::time::Duration::ZERO,
+                    agentverse::metrics::ToolOutcome::HitlIntercepted,
+                );
                 return Err(HitlInterruptResult {
                     approval_id,
                     kind_json,

@@ -25,3 +25,5 @@ uuid.workspace = true
 tracing-subscriber = { workspace = true }
 async-trait = { workspace = true }
 schemars = { version = "0.8", features = ["derive"] }
+opentelemetry.workspace = true
+opentelemetry_sdk.workspace = true

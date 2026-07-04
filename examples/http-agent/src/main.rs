@@ -15,11 +15,35 @@ use agentverse_logging as avs_logging;
 use agentverse_session::SqliteSessionMemory;
 use agentverse_strategy::{build, StrategyKind};
 use agentverse_tools::{Calculator, DateTimeTool, ToolRegistry};
+use opentelemetry_otlp::WithExportConfig;
 use std::sync::Arc;
+
+/// Installs an OTLP/gRPC meter provider when `OTEL_EXPORTER_OTLP_ENDPOINT` is
+/// set to a non-empty value. Must run before any instrument is first used —
+/// OTel's global meter does not delegate, so instruments created before the
+/// provider is installed stay permanently no-op.
+fn init_otel_metrics() -> Option<opentelemetry_sdk::metrics::SdkMeterProvider> {
+    // Same convention as API_KEY/DATABASE_URL: empty-but-set counts as unset.
+    let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+        .ok()
+        .filter(|s| !s.trim().is_empty())?;
+    let exporter = opentelemetry_otlp::MetricExporter::builder()
+        .with_tonic()
+        .with_endpoint(endpoint)
+        .build()
+        .expect("failed to build OTLP metric exporter");
+    let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
+        .with_periodic_exporter(exporter)
+        .build();
+    opentelemetry::global::set_meter_provider(provider.clone());
+    tracing::info!("OTLP metrics export enabled");
+    Some(provider)
+}
 
 #[tokio::main]
 async fn main() {
     avs_logging::init();
+    let otel_provider = init_otel_metrics();
 
     let base_url =
         std::env::var("MODEL_BASE_URL").unwrap_or_else(|_| "http://localhost:9090/v1".to_string());
@@ -87,5 +111,11 @@ async fn main() {
     tokio::signal::ctrl_c()
         .await
         .expect("failed to install Ctrl-C handler");
+
+    if let Some(provider) = otel_provider {
+        if let Err(e) = provider.shutdown() {
+            tracing::warn!(error = %e, "OTLP metrics shutdown failed");
+        }
+    }
     tracing::info!("Shutting down.");
 }

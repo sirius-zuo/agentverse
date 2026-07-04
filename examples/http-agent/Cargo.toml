@@ -17,5 +17,8 @@ agentverse-memory = { path = "../../avs-memory" }
 agentverse-session = { path = "../../avs-session" }
 agentverse-strategy = { path = "../../avs-strategy" }
 agentverse-tools = { path = "../../avs-tools" }
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { version = "0.32", default-features = false, features = ["metrics"] }
+opentelemetry-otlp = { version = "0.32", default-features = false, features = ["metrics", "grpc-tonic"] }
 tokio = { workspace = true, features = ["signal"] }
 tracing.workspace = true

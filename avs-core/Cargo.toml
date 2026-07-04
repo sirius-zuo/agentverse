@@ -21,14 +21,14 @@ serde_yaml = "0.9"
 schemars = { version = "0.8", features = ["derive"] }
 toml.workspace = true
 base64.workspace = true
+opentelemetry.workspace = true
 
 # Optional tracing
-opentelemetry = { version = "0.22", optional = true }
 opentelemetry-otlp = { version = "0.15", optional = true }
 
 [features]
 default = ["tracing"]
-tracing = ["opentelemetry", "opentelemetry-otlp"]
+tracing = ["opentelemetry-otlp"]
 
 [dev-dependencies]
 tokio.workspace = true
@@ -36,3 +36,4 @@ httpmock = "0.7"
 mockall = "0.13"
 tempfile = "3"
 tracing-subscriber = { workspace = true }
+opentelemetry_sdk.workspace = true

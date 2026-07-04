@@ -39,6 +39,8 @@ impl ApprovalQueue for InMemoryQueue {
                 status: ApprovalStatus::Pending,
             },
         );
+        agentverse::metrics::record_approval_event(agentverse::metrics::ApprovalEvent::Submitted);
+        agentverse::metrics::approvals_pending_delta(1);
         Ok(id)
     }
 
@@ -49,6 +51,9 @@ impl ApprovalQueue for InMemoryQueue {
             return Err(HitlError::AlreadyResolved(id));
         }
         entry.status = ApprovalStatus::Resolved(decision);
+        drop(entries);
+        agentverse::metrics::record_approval_event(agentverse::metrics::ApprovalEvent::Resolved);
+        agentverse::metrics::approvals_pending_delta(-1);
         Ok(())
     }
 
@@ -73,6 +78,14 @@ impl ApprovalQueue for InMemoryQueue {
                     }
                 }
             }
+        }
+        if count > 0 {
+            for _ in 0..count {
+                agentverse::metrics::record_approval_event(
+                    agentverse::metrics::ApprovalEvent::Expired,
+                );
+            }
+            agentverse::metrics::approvals_pending_delta(-(count as i64));
         }
         Ok(count)
     }

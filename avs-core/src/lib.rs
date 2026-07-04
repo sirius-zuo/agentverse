@@ -15,6 +15,7 @@ pub mod example;
 pub mod hitl;
 pub mod llm_runner;
 pub mod memory;
+pub mod metrics;
 pub mod model;
 pub mod prompt;
 pub mod strategy;
