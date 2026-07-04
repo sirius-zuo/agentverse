@@ -25,3 +25,5 @@ agentverse-memory = { path = "../avs-memory" }
 agentverse-tools = { path = "../avs-tools" }
 reqwest = { workspace = true }
 schemars = { version = "0.8", features = ["derive"] }
+httpmock = "0.7"
+uuid = { workspace = true }

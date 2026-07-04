@@ -332,3 +332,116 @@ impl Agent {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentverse::{Config, LlmRunner, PromptRegistry};
+    use agentverse_strategy::{build, StrategyKind};
+    use agentverse_tools::ToolRegistry;
+    use std::sync::Arc;
+
+    async fn make_agent() -> Arc<Agent> {
+        let runner = Arc::new(
+            LlmRunner::from_config(Config {
+                provider: agentverse::ProviderConfig::OpenAI {
+                    model_name: "test".to_string(),
+                    api_key: "sk-test".to_string(),
+                    base_url: Some("http://127.0.0.1:1/v1".to_string()),
+                },
+                max_messages: 10,
+                tools: vec![],
+                prompts_dir: None,
+                system_prompt: None,
+            })
+            .unwrap(),
+        );
+        let tools = ToolRegistry::new();
+        let prompts = Arc::new(PromptRegistry::new());
+        let strategy = build(
+            StrategyKind::React,
+            Arc::clone(&runner),
+            Arc::clone(&prompts),
+            Arc::clone(&tools),
+            3,
+        );
+        let session_memory = Arc::new(
+            agentverse_session::SqliteSessionMemory::new("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
+        Agent::builder(runner, tools, prompts, session_memory, strategy).build()
+    }
+
+    // Directly exercises handle_tool_interrupt with a hand-constructed
+    // HitlInterrupt (no strategy round-trip) — this is what the design spec
+    // calls "resume.rs tests assert direct enum consumption": the function
+    // must consume the typed enum's fields as-is, not via a serialized wire
+    // format.
+    #[tokio::test]
+    async fn handle_tool_interrupt_persists_state_and_returns_interrupted_output() {
+        let agent = make_agent().await;
+        let session_id = agent.create_session("alice").await.unwrap();
+
+        let approval_id = Uuid::new_v4();
+        let interrupt = agentverse::hitl::HitlInterrupt {
+            approval_id,
+            kind_json: serde_json::json!({
+                "ToolApproval": {"tool_name": "echo", "args": {"text": "hi"}}
+            })
+            .to_string(),
+            history: vec![agentverse::memory::Message {
+                role: agentverse::memory::MessageRole::User,
+                content: "please call echo".to_string(),
+            }],
+            pending_calls: vec![agentverse::ToolCall {
+                name: "echo".to_string(),
+                args: serde_json::json!({"text": "hi"}),
+            }],
+            active_tool_names: vec!["echo".to_string()],
+        };
+
+        let output = agent
+            .handle_tool_interrupt("alice", session_id, interrupt, &None)
+            .await
+            .unwrap();
+
+        match output {
+            AgentOutput::Interrupted {
+                approval_id: got_id,
+                kind,
+            } => {
+                assert_eq!(got_id, approval_id);
+                assert!(matches!(kind, InterruptKind::ToolApproval { .. }));
+            }
+            AgentOutput::Done(text) => panic!("expected Interrupted, got Done({text})"),
+        }
+
+        let state_json = agent
+            .sessions
+            .get_interrupted_state(session_id)
+            .await
+            .unwrap()
+            .expect("interrupted state must be persisted");
+        let state: InterruptedState = serde_json::from_str(&state_json).unwrap();
+        match state {
+            InterruptedState::PendingToolCall {
+                approval_id: stored_id,
+                pending_calls_json,
+                history_json,
+                ..
+            } => {
+                assert_eq!(stored_id, approval_id.to_string());
+                let pending: Vec<agentverse::ToolCall> =
+                    serde_json::from_str(&pending_calls_json).unwrap();
+                assert_eq!(pending.len(), 1);
+                assert_eq!(pending[0].name, "echo");
+                let history: Vec<agentverse::memory::Message> =
+                    serde_json::from_str(&history_json).unwrap();
+                assert_eq!(history.len(), 1);
+                assert_eq!(history[0].content, "please call echo");
+            }
+            other => panic!("expected PendingToolCall, got {other:?}"),
+        }
+    }
+}
