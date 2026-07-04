@@ -638,7 +638,7 @@ mod skill_context_tests {
     #[tokio::test]
     async fn get_phase_opening_context_errors_on_missing_session() {
         let store = SqliteSessionMemory::new("sqlite::memory:").await.unwrap();
-        let fake_id: SessionId = uuid::Uuid::new_v4().into();
+        let fake_id = uuid::Uuid::new_v4();
         let result = store.get_phase_opening_context(fake_id).await;
         assert!(result.is_err());
     }

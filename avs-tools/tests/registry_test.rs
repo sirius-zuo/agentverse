@@ -1,4 +1,4 @@
-use agentverse::{ErasedTool, Tool, ToolCall, ToolResult};
+use agentverse::{Tool, ToolCall, ToolResult};
 use agentverse_tools::{ToolOptions, ToolRegistry};
 use schemars::JsonSchema;
 use serde::Deserialize;
