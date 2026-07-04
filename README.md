@@ -159,6 +159,17 @@ curl -X POST http://localhost:3000/aether/invoke \
   -d '{"id":"<uuid>","kind":"invoke","payload":{"input":"Hello"},"metadata":{}}'
 ```
 
+## Metrics
+
+AgentVerse library crates are instrumented with the OpenTelemetry metrics API
+(no-op unless your binary installs a meter provider). Instruments follow the
+GenAI semantic conventions: `gen_ai.client.token.usage`,
+`gen_ai.client.operation.duration`, plus `agentverse.tool.*`,
+`agentverse.llm.*`, and `agentverse.hitl.*`. See `avs-core/src/metrics.rs`
+for the full list. Install any OTel SDK meter provider before constructing
+the agent; `example-http-agent` shows an OTLP/gRPC setup gated on
+`OTEL_EXPORTER_OTLP_ENDPOINT`.
+
 ## Configuration
 
 ### Environment Variables
@@ -175,6 +186,7 @@ curl -X POST http://localhost:3000/aether/invoke \
 | `ALLOW_INSECURE` | unset | Explicit opt-out: serve HTTP on a non-loopback address without a non-empty `API_KEY`. Startup fails otherwise. |
 | `RUST_LOG` | `info` | Tracing level filter |
 | `LOG_FORMAT` | text | Set to `json` for JSON logs |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | When set to a non-empty URL (e.g. `http://localhost:4317`), `example-http-agent` exports OpenTelemetry metrics (tokens, LLM latency, tool calls, HITL queue) via OTLP/gRPC. |
 
 ### YAML Config
 
