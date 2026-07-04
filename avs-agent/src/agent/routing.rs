@@ -381,6 +381,10 @@ mod tests {
             "skill declared no tools — ctx.tools should be empty"
         );
 
+        // Verify that invoke would resolve active_tool_names to [] not to all tools.
+        // We can't call invoke without a live LLM, but we can verify the stored context
+        // has empty tools, which is the input to the active_tool_names calculation.
+        // The calculation `None => all, Some(ctx) => filtered(ctx.tools)` should give [].
         let active: Vec<String> = ctx
             .tools
             .iter()
@@ -703,6 +707,9 @@ mod tests {
 
     #[tokio::test]
     async fn phase_opening_context_is_cleared_after_detection() {
+        // Verifies that advance_phase stores the context and that the session
+        // reports it as set. The clearing itself happens inside invoke (which
+        // requires a live LLM), but we can verify the storage side here.
         let dir = tempdir().unwrap();
         write_skill(dir.path(), "system", "stage-one", "Stage one.");
         write_skill(dir.path(), "system", "stage-two", "Stage two.");
