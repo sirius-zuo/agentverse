@@ -1,6 +1,6 @@
 use agentverse::ErasedTool;
 use agentverse_tools::{
-    Calculator, DateTimeTool, ExecutionMode, FileSearch, HttpClient, ToolOptions, ToolRegistry,
+    Calculator, DateTimeTool, FileSearch, HttpClient, ToolOptions, ToolRegistry,
 };
 use serde_json::json;
 

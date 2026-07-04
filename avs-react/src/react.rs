@@ -5,7 +5,9 @@
 
 use super::cycle::{CycleAction, CycleSkeleton};
 use super::parse::parse_response;
-use agentverse::{AgentError, LlmRunner, Message, ModelError, PromptRegistry, ToolCall};
+use agentverse::{
+    AgentError, LlmRunner, Message, ModelError, PromptRegistry, StrategyOutcome, ToolCall,
+};
 use agentverse_tools::{ActiveToolSet, HitlInterruptResult, ToolRegistry};
 use std::sync::Arc;
 use tracing::info;
@@ -68,7 +70,7 @@ impl ReActStrategy {
 
 #[async_trait::async_trait]
 impl agentverse::RunStrategy for ReActStrategy {
-    async fn run(&self, messages: Vec<Message>) -> Result<String, AgentError> {
+    async fn run(&self, messages: Vec<Message>) -> Result<StrategyOutcome, AgentError> {
         let all_names = self.skeleton.tools.tool_names();
         self.run_with_active_tools(messages, &all_names).await
     }
@@ -77,7 +79,7 @@ impl agentverse::RunStrategy for ReActStrategy {
         &self,
         messages: Vec<Message>,
         active_tool_names: &[String],
-    ) -> Result<String, AgentError> {
+    ) -> Result<StrategyOutcome, AgentError> {
         let mut active = ActiveToolSet::default();
         active.activate(
             &active_tool_names
@@ -107,7 +109,7 @@ impl agentverse::RunStrategy for ReActStrategy {
                 CycleAction::Continue { thought } => {
                     if let Some(saved) = pending_answer.take() {
                         info!(iteration, "Strategy completed (nudge fallback)");
-                        return Ok(saved);
+                        return Ok(StrategyOutcome::Done(saved));
                     }
                     info!(iteration, action = "continue", "Thought only, continuing");
                     buf.push(Message {
@@ -164,7 +166,7 @@ impl agentverse::RunStrategy for ReActStrategy {
                 }
                 CycleAction::Done { answer } => {
                     info!(iteration, "Strategy completed");
-                    return Ok(answer);
+                    return Ok(StrategyOutcome::Done(answer));
                 }
                 CycleAction::Error { message } => {
                     tracing::error!(iteration, error = %message, "Strategy error");
@@ -179,7 +181,7 @@ impl agentverse::RunStrategy for ReActStrategy {
         messages: Vec<Message>,
         active_tool_names: &[String],
         hook: Arc<dyn agentverse::hitl::HitlHook>,
-    ) -> Result<String, AgentError> {
+    ) -> Result<StrategyOutcome, AgentError> {
         let mut active = ActiveToolSet::default();
         active.activate(
             &active_tool_names
@@ -208,7 +210,7 @@ impl agentverse::RunStrategy for ReActStrategy {
                 CycleAction::Continue { thought } => {
                     if let Some(saved) = pending_answer.take() {
                         info!(iteration, "Strategy completed (nudge fallback)");
-                        return Ok(saved);
+                        return Ok(StrategyOutcome::Done(saved));
                     }
                     info!(iteration, action = "continue", "Thought only, continuing");
                     buf.push(Message {
@@ -250,20 +252,17 @@ impl agentverse::RunStrategy for ReActStrategy {
                             approval_id,
                             kind_json,
                         }) => {
-                            let pending_json = serde_json::to_string(&[serde_json::json!({
-                                "name": tool_name,
-                                "args": args,
-                            })])
-                            .unwrap_or_default();
-                            return Err(AgentError::Memory(
-                                agentverse::hitl::HitlWire {
+                            return Ok(StrategyOutcome::Interrupted(
+                                agentverse::hitl::HitlInterrupt {
                                     approval_id,
                                     kind_json,
-                                    history_json: serde_json::to_string(&history_snapshot)
-                                        .unwrap_or_default(),
-                                    pending_calls_json: pending_json,
-                                }
-                                .encode(),
+                                    history: history_snapshot,
+                                    pending_calls: vec![ToolCall {
+                                        name: tool_name.clone(),
+                                        args: args.clone(),
+                                    }],
+                                    active_tool_names: active_tool_names.to_vec(),
+                                },
                             ));
                         }
                     }
@@ -303,29 +302,21 @@ impl agentverse::RunStrategy for ReActStrategy {
                             approval_id,
                             kind_json,
                         }) => {
-                            let pending_json = serde_json::to_string(
-                                &calls
-                                    .iter()
-                                    .map(|c| serde_json::json!({"name": c.name, "args": c.args}))
-                                    .collect::<Vec<_>>(),
-                            )
-                            .unwrap_or_default();
-                            return Err(AgentError::Memory(
-                                agentverse::hitl::HitlWire {
+                            return Ok(StrategyOutcome::Interrupted(
+                                agentverse::hitl::HitlInterrupt {
                                     approval_id,
                                     kind_json,
-                                    history_json: serde_json::to_string(&history_snapshot)
-                                        .unwrap_or_default(),
-                                    pending_calls_json: pending_json,
-                                }
-                                .encode(),
+                                    history: history_snapshot,
+                                    pending_calls: calls.clone(),
+                                    active_tool_names: active_tool_names.to_vec(),
+                                },
                             ));
                         }
                     }
                 }
                 CycleAction::Done { answer } => {
                     info!(iteration, "Strategy completed");
-                    return Ok(answer);
+                    return Ok(StrategyOutcome::Done(answer));
                 }
                 CycleAction::Error { message } => {
                     tracing::error!(iteration, error = %message, "Strategy error");

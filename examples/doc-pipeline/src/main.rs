@@ -78,17 +78,9 @@ async fn main() {
     );
     let skills = SkillConfig::load(skills_dir, SkillMode::Open).expect("load skills");
 
-    let agent = Agent::new(
-        runner,
-        tools,
-        prompts,
-        session_memory,
-        strategy,
-        false,
-        None,
-        Some(skills),
-        None,
-    );
+    let agent = Agent::builder(runner, tools, prompts, session_memory, strategy)
+        .with_skills(skills)
+        .build();
 
     // One session spans all three phases.
     let session_id = agent

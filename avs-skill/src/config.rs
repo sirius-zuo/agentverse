@@ -108,7 +108,7 @@ mod tests {
 
     #[test]
     fn format_skill_summaries_is_sorted_and_contains_descriptions() {
-        let skills = vec![
+        let skills = [
             make_skill("z-skill", "Does Z."),
             make_skill("a-skill", "Does A."),
         ];

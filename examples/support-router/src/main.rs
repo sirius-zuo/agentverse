@@ -220,17 +220,15 @@ async fn make_agent(
             .expect("session memory"),
     );
     let skills = SkillConfig::load(skills_dir, mode).expect("load skills");
-    Agent::new(
+    Agent::builder(
         Arc::clone(runner),
         Arc::clone(tools),
         Arc::clone(prompts),
         session_memory,
         strategy,
-        false,
-        None,
-        Some(skills),
-        None,
     )
+    .with_skills(skills)
+    .build()
 }
 
 /// Parse the coordinator's JSON output into plan steps.

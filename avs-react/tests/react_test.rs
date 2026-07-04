@@ -25,9 +25,7 @@ impl MockTool {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-struct MockArgs {
-    text: Option<String>,
-}
+struct MockArgs {}
 
 #[async_trait::async_trait]
 impl Tool for MockTool {
@@ -269,4 +267,86 @@ async fn react_run_returns_error_on_bad_port() {
 
     let result = strategy.run(messages).await;
     assert!(result.is_err(), "Expected error when LLM is unreachable");
+}
+
+// ─── run_hitl interrupt tests ──────────────────────────────────────────────
+
+#[tokio::test]
+async fn run_hitl_returns_interrupted_with_typed_history_and_pending_calls() {
+    use agentverse::hitl::{ApprovalId, HitlHook};
+    use agentverse::StrategyOutcome;
+    use httpmock::prelude::*;
+
+    let server = MockServer::start_async().await;
+    server
+        .mock_async(|when, then| {
+            when.method(POST).path("/chat/completions");
+            then.status(200).json_body(json!({
+                "choices": [{"message": {"role": "assistant", "content": "Thought: need to call the tool.\nAction: echo\nAction Input: {\"text\": \"hi\"}"}}],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}
+            }));
+        })
+        .await;
+
+    let runner = Arc::new(
+        LlmRunner::from_config(Config {
+            provider: agentverse::ProviderConfig::OpenAI {
+                model_name: "test".to_string(),
+                api_key: "sk-test".to_string(),
+                base_url: Some(server.base_url()),
+            },
+            max_messages: 10,
+            tools: vec![],
+            prompts_dir: None,
+            system_prompt: None,
+        })
+        .unwrap(),
+    );
+
+    let tools = ToolRegistry::new();
+    tools.register(MockTool::new("echo", "Echo tool"));
+
+    let strategy = ReActStrategy::new(runner, Arc::new(PromptRegistry::new()), tools, 5);
+
+    struct AlwaysBlockHook;
+    #[async_trait::async_trait]
+    impl HitlHook for AlwaysBlockHook {
+        async fn check_tool(
+            &self,
+            tool_name: &str,
+            _args: &serde_json::Value,
+        ) -> Option<(ApprovalId, String)> {
+            Some((
+                uuid::Uuid::new_v4(),
+                format!("{{\"tool\":\"{}\"}}", tool_name),
+            ))
+        }
+    }
+    let hook: Arc<dyn HitlHook> = Arc::new(AlwaysBlockHook);
+
+    let messages = vec![agentverse::Message {
+        role: agentverse::MessageRole::User,
+        content: "please call echo".to_string(),
+    }];
+
+    let result = strategy
+        .run_hitl(messages, &["echo".to_string()], hook)
+        .await;
+
+    match result {
+        Ok(StrategyOutcome::Interrupted(interrupt)) => {
+            assert_eq!(
+                interrupt.pending_calls.len(),
+                1,
+                "pending_calls must contain the intercepted call"
+            );
+            assert_eq!(interrupt.pending_calls[0].name, "echo");
+            assert_eq!(interrupt.pending_calls[0].args, json!({"text": "hi"}));
+            assert!(!interrupt.history.is_empty(), "history must be non-empty");
+            assert_eq!(interrupt.history[0].content, "please call echo");
+            assert_eq!(interrupt.active_tool_names, vec!["echo".to_string()]);
+        }
+        Ok(StrategyOutcome::Done(text)) => panic!("expected Interrupted, got Done({text})"),
+        Err(e) => panic!("expected Interrupted, got Err: {e}"),
+    }
 }

@@ -65,6 +65,5 @@ tower-http = { version = "0.5", features = ["cors"] }
 toml = "0.8"
 httpmock = "0.7"
 schemars = { version = "0.8", features = ["derive"] }
-base64 = "0.22"
 opentelemetry = { version = "0.32", default-features = false, features = ["metrics"] }
 opentelemetry_sdk = { version = "0.32", default-features = false, features = ["metrics", "testing"] }

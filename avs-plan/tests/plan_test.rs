@@ -45,9 +45,7 @@ impl MockTool {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-struct MockArgs {
-    text: Option<String>,
-}
+struct MockArgs {}
 
 #[async_trait::async_trait]
 impl Tool for MockTool {

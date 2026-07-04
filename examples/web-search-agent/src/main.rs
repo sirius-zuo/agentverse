@@ -99,17 +99,9 @@ async fn main() {
             .expect("store"),
     );
 
-    let agent = Agent::new(
-        runner,
-        tools,
-        prompts,
-        session_memory,
-        strategy,
-        false,
-        None,
-        Some(skills),
-        None,
-    );
+    let agent = Agent::builder(runner, tools, prompts, session_memory, strategy)
+        .with_skills(skills)
+        .build();
 
     let question = format!(
         "Search for '{}' and summarize the top {} results.",

@@ -58,7 +58,7 @@ impl PlanStrategy {
 
 #[async_trait::async_trait]
 impl agentverse::RunStrategy for PlanStrategy {
-    async fn run(&self, messages: Vec<Message>) -> Result<String, AgentError> {
+    async fn run(&self, messages: Vec<Message>) -> Result<agentverse::StrategyOutcome, AgentError> {
         let all_names = self.tools.tool_names();
         self.run_with_active_tools(messages, &all_names).await
     }
@@ -67,7 +67,7 @@ impl agentverse::RunStrategy for PlanStrategy {
         &self,
         messages: Vec<Message>,
         active_tool_names: &[String],
-    ) -> Result<String, AgentError> {
+    ) -> Result<agentverse::StrategyOutcome, AgentError> {
         let input = messages
             .iter()
             .rev()
@@ -160,7 +160,7 @@ impl agentverse::RunStrategy for PlanStrategy {
             })
         })?;
 
-        Ok(answer.content)
+        Ok(agentverse::StrategyOutcome::Done(answer.content))
     }
 }
 

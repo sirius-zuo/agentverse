@@ -108,7 +108,7 @@ mod tests {
 
     #[test]
     fn explicit_name_match_wins_regardless_of_threshold() {
-        let skills = vec![make_skill(
+        let skills = [make_skill(
             "code-review",
             "Reviews code for bugs and style issues",
         )];
@@ -122,7 +122,7 @@ mod tests {
 
     #[test]
     fn keyword_match_above_threshold_activates() {
-        let skills = vec![make_skill("code-review", "Review code for bugs and style")];
+        let skills = [make_skill("code-review", "Review code for bugs and style")];
         let router = SkillRouter::with_threshold(0.1);
         let candidates: Vec<&Skill> = skills.iter().collect();
         assert_eq!(
@@ -133,7 +133,7 @@ mod tests {
 
     #[test]
     fn below_threshold_returns_none() {
-        let skills = vec![make_skill(
+        let skills = [make_skill(
             "code-review",
             "Review code for bugs and style issues",
         )];
@@ -150,7 +150,7 @@ mod tests {
 
     #[test]
     fn picks_highest_scoring_candidate() {
-        let skills = vec![
+        let skills = [
             make_skill("code-review", "Review code for bugs"),
             make_skill("docs-writer", "Write documentation markdown"),
         ];

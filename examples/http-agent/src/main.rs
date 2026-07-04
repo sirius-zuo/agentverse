@@ -95,17 +95,9 @@ async fn main() {
     );
 
     // enable_http_server=true: Agent reads HOST/PORT from env and spawns HTTP server internally
-    let _agent = Agent::new(
-        runner,
-        tools,
-        prompts,
-        session_memory,
-        strategy,
-        true,
-        None,
-        None,
-        None,
-    );
+    let _agent = Agent::builder(runner, tools, prompts, session_memory, strategy)
+        .with_http_server()
+        .build();
 
     tracing::info!("Agent started. Press Ctrl-C to stop.");
     tokio::signal::ctrl_c()

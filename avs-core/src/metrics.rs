@@ -35,6 +35,32 @@ pub enum ApprovalEvent {
     Expired,
 }
 
+pub enum InvokeOutcome {
+    Done,
+    Interrupted,
+    Error,
+}
+
+pub enum CacheResult {
+    Hit,
+    Miss,
+}
+
+pub enum SkillRoutingOutcome {
+    Matched,
+    NoMatch,
+}
+
+pub enum PhaseTransitionOutcome {
+    Advanced,
+    PendingApproval,
+}
+
+pub enum HitlTransition {
+    Interrupted,
+    Resumed,
+}
+
 struct Instruments {
     token_usage: Histogram<u64>,
     llm_duration: Histogram<f64>,
@@ -45,6 +71,12 @@ struct Instruments {
     tool_duration: Histogram<f64>,
     approvals: Counter<u64>,
     pending: UpDownCounter<i64>,
+    invoke_duration: Histogram<f64>,
+    cache_access: Counter<u64>,
+    skill_routing: Counter<u64>,
+    phase_transitions: Counter<u64>,
+    hitl_transitions: Counter<u64>,
+    worker_restarts: Counter<u64>,
 }
 
 fn instruments() -> &'static Instruments {
@@ -90,6 +122,31 @@ fn instruments() -> &'static Instruments {
             pending: meter
                 .i64_up_down_counter("agentverse.hitl.pending")
                 .with_description("Pending HITL approvals observed by this process")
+                .build(),
+            invoke_duration: meter
+                .f64_histogram("agentverse.agent.invoke.duration")
+                .with_unit("s")
+                .with_description("Agent::invoke end-to-end duration")
+                .build(),
+            cache_access: meter
+                .u64_counter("agentverse.agent.cache.access")
+                .with_description("Layer-1 cache hit/miss on invoke")
+                .build(),
+            skill_routing: meter
+                .u64_counter("agentverse.agent.skill_routing")
+                .with_description("Skill router outcomes on first invoke")
+                .build(),
+            phase_transitions: meter
+                .u64_counter("agentverse.agent.phase_transitions")
+                .with_description("Skill phase-transition outcomes")
+                .build(),
+            hitl_transitions: meter
+                .u64_counter("agentverse.agent.hitl_transitions")
+                .with_description("Agent-level HITL interrupt/resume events")
+                .build(),
+            worker_restarts: meter
+                .u64_counter("agentverse.worker.restarts")
+                .with_description("Background worker restarts after panic or unexpected exit")
                 .build(),
         }
     })
@@ -181,4 +238,61 @@ pub fn record_approval_event(event: ApprovalEvent) {
 
 pub fn approvals_pending_delta(delta: i64) {
     instruments().pending.add(delta, &[]);
+}
+
+pub fn record_invoke_duration(duration: Duration, outcome: InvokeOutcome) {
+    let outcome = match outcome {
+        InvokeOutcome::Done => "done",
+        InvokeOutcome::Interrupted => "interrupted",
+        InvokeOutcome::Error => "error",
+    };
+    instruments()
+        .invoke_duration
+        .record(duration.as_secs_f64(), &[KeyValue::new("outcome", outcome)]);
+}
+
+pub fn record_cache_access(result: CacheResult) {
+    let result = match result {
+        CacheResult::Hit => "hit",
+        CacheResult::Miss => "miss",
+    };
+    instruments()
+        .cache_access
+        .add(1, &[KeyValue::new("result", result)]);
+}
+
+pub fn record_skill_routing(outcome: SkillRoutingOutcome) {
+    let outcome = match outcome {
+        SkillRoutingOutcome::Matched => "matched",
+        SkillRoutingOutcome::NoMatch => "no_match",
+    };
+    instruments()
+        .skill_routing
+        .add(1, &[KeyValue::new("outcome", outcome)]);
+}
+
+pub fn record_phase_transition(outcome: PhaseTransitionOutcome) {
+    let outcome = match outcome {
+        PhaseTransitionOutcome::Advanced => "advanced",
+        PhaseTransitionOutcome::PendingApproval => "pending_approval",
+    };
+    instruments()
+        .phase_transitions
+        .add(1, &[KeyValue::new("outcome", outcome)]);
+}
+
+pub fn record_hitl_transition(transition: HitlTransition) {
+    let transition = match transition {
+        HitlTransition::Interrupted => "interrupted",
+        HitlTransition::Resumed => "resumed",
+    };
+    instruments()
+        .hitl_transitions
+        .add(1, &[KeyValue::new("transition", transition)]);
+}
+
+pub fn record_worker_restart(worker: &'static str) {
+    instruments()
+        .worker_restarts
+        .add(1, &[KeyValue::new("worker", worker)]);
 }
