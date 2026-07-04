@@ -35,6 +35,22 @@ pub enum ApprovalEvent {
     Expired,
 }
 
+pub enum InvokeOutcome {
+    Done,
+    Interrupted,
+    Error,
+}
+
+pub enum CacheResult {
+    Hit,
+    Miss,
+}
+
+pub enum SkillRoutingOutcome {
+    Matched,
+    NoMatch,
+}
+
 struct Instruments {
     token_usage: Histogram<u64>,
     llm_duration: Histogram<f64>,
@@ -45,6 +61,9 @@ struct Instruments {
     tool_duration: Histogram<f64>,
     approvals: Counter<u64>,
     pending: UpDownCounter<i64>,
+    invoke_duration: Histogram<f64>,
+    cache_access: Counter<u64>,
+    skill_routing: Counter<u64>,
 }
 
 fn instruments() -> &'static Instruments {
@@ -90,6 +109,19 @@ fn instruments() -> &'static Instruments {
             pending: meter
                 .i64_up_down_counter("agentverse.hitl.pending")
                 .with_description("Pending HITL approvals observed by this process")
+                .build(),
+            invoke_duration: meter
+                .f64_histogram("agentverse.agent.invoke.duration")
+                .with_unit("s")
+                .with_description("Agent::invoke end-to-end duration")
+                .build(),
+            cache_access: meter
+                .u64_counter("agentverse.agent.cache.access")
+                .with_description("Layer-1 cache hit/miss on invoke")
+                .build(),
+            skill_routing: meter
+                .u64_counter("agentverse.agent.skill_routing")
+                .with_description("Skill router outcomes on first invoke")
                 .build(),
         }
     })
@@ -181,4 +213,35 @@ pub fn record_approval_event(event: ApprovalEvent) {
 
 pub fn approvals_pending_delta(delta: i64) {
     instruments().pending.add(delta, &[]);
+}
+
+pub fn record_invoke_duration(duration: Duration, outcome: InvokeOutcome) {
+    let outcome = match outcome {
+        InvokeOutcome::Done => "done",
+        InvokeOutcome::Interrupted => "interrupted",
+        InvokeOutcome::Error => "error",
+    };
+    instruments()
+        .invoke_duration
+        .record(duration.as_secs_f64(), &[KeyValue::new("outcome", outcome)]);
+}
+
+pub fn record_cache_access(result: CacheResult) {
+    let result = match result {
+        CacheResult::Hit => "hit",
+        CacheResult::Miss => "miss",
+    };
+    instruments()
+        .cache_access
+        .add(1, &[KeyValue::new("result", result)]);
+}
+
+pub fn record_skill_routing(outcome: SkillRoutingOutcome) {
+    let outcome = match outcome {
+        SkillRoutingOutcome::Matched => "matched",
+        SkillRoutingOutcome::NoMatch => "no_match",
+    };
+    instruments()
+        .skill_routing
+        .add(1, &[KeyValue::new("outcome", outcome)]);
 }

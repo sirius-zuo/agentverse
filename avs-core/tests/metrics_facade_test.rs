@@ -51,6 +51,12 @@ fn facade_records_all_instruments_with_expected_names_and_attributes() {
     record_approval_event(ApprovalEvent::Submitted);
     approvals_pending_delta(1);
     approvals_pending_delta(-1);
+    agentverse::metrics::record_invoke_duration(
+        std::time::Duration::from_millis(50),
+        agentverse::metrics::InvokeOutcome::Done,
+    );
+    agentverse::metrics::record_cache_access(agentverse::metrics::CacheResult::Hit);
+    agentverse::metrics::record_skill_routing(agentverse::metrics::SkillRoutingOutcome::Matched);
 
     provider.force_flush().unwrap();
     let finished = exporter.get_finished_metrics().unwrap();
@@ -72,6 +78,9 @@ fn facade_records_all_instruments_with_expected_names_and_attributes() {
         "agentverse.tool.duration",
         "agentverse.hitl.approvals",
         "agentverse.hitl.pending",
+        "agentverse.agent.invoke.duration",
+        "agentverse.agent.cache.access",
+        "agentverse.agent.skill_routing",
     ] {
         assert!(
             names.contains(&expected.to_string()),
