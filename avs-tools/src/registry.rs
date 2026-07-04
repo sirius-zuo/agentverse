@@ -99,7 +99,7 @@ impl ToolRegistry {
             None => {
                 tracing::warn!(tool_name = %name, "Tool not found");
                 agentverse::metrics::record_tool_call(
-                    name,
+                    "<unknown>",
                     start.elapsed(),
                     agentverse::metrics::ToolOutcome::Error,
                 );
@@ -139,6 +139,7 @@ impl ToolRegistry {
         for (tool_opt, c) in resolved {
             set.spawn(async move {
                 let start = std::time::Instant::now();
+                let not_found = tool_opt.is_none();
                 let result = match tool_opt {
                     Some(t) => t.execute_raw(c.args).await,
                     None => Err(ToolError::NotFound(c.name.clone())),
@@ -148,7 +149,8 @@ impl ToolRegistry {
                 } else {
                     agentverse::metrics::ToolOutcome::Error
                 };
-                agentverse::metrics::record_tool_call(&c.name, start.elapsed(), outcome);
+                let metric_name = if not_found { "<unknown>" } else { &c.name };
+                agentverse::metrics::record_tool_call(metric_name, start.elapsed(), outcome);
                 ToolCallResult {
                     name: c.name,
                     result,

@@ -327,10 +327,19 @@ impl ConnectionManager {
                         .and_then(|s| s.trim().parse::<u64>().ok())
                         .map(|secs| secs.saturating_mul(1000))
                         .map(Self::clamp_retry_after_ms);
-                    let body_text = resp
-                        .text()
-                        .await
-                        .map_err(|e| ModelError::ApiError(e.to_string()))?;
+                    let body_text = match resp.text().await {
+                        Ok(text) => text,
+                        Err(e) => {
+                            crate::metrics::record_llm_call(
+                                provider_name,
+                                &self.model_name,
+                                None,
+                                call_start.elapsed(),
+                                Some("api_error"),
+                            );
+                            return Err(ModelError::ApiError(e.to_string()));
+                        }
+                    };
 
                     if status == 429 {
                         let err = ModelError::RateLimited(body_text);

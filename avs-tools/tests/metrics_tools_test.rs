@@ -96,4 +96,41 @@ async fn execute_records_tool_call_metrics() {
         found_hitl_intercepted,
         "expected an agentverse.tool.calls datapoint with outcome=hitl_intercepted"
     );
+
+    // Confirm the "nope" not-found call above was recorded as tool.name="<unknown>",
+    // never the raw unregistered name (unbounded cardinality guard).
+    let mut found_unknown = false;
+    let mut found_raw_name = false;
+    for rm in finished.iter() {
+        for sm in rm.scope_metrics() {
+            for m in sm.metrics() {
+                if m.name() != "agentverse.tool.calls" {
+                    continue;
+                }
+                if let AggregatedMetrics::U64(MetricData::Sum(sum)) = m.data() {
+                    for dp in sum.data_points() {
+                        for kv in dp.attributes() {
+                            if kv.key.as_str() != "tool.name" {
+                                continue;
+                            }
+                            if kv.value == Value::String("<unknown>".into()) {
+                                found_unknown = true;
+                            }
+                            if kv.value == Value::String("nope".into()) {
+                                found_raw_name = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        found_unknown,
+        "expected a tool.calls datapoint with tool.name=\"<unknown>\" for the not-found call"
+    );
+    assert!(
+        !found_raw_name,
+        "raw unregistered tool name \"nope\" must never be recorded as tool.name"
+    );
 }
