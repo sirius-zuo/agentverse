@@ -55,10 +55,7 @@ async fn main() {
 
     let runner = Arc::new(
         LlmRunner::from_config(Config {
-            provider: ProviderConfig::Anthropic {
-                model_name: model_name.clone(),
-                api_key,
-            },
+            provider: ProviderConfig::anthropic(model_name.clone(), api_key),
             max_messages: 50,
             tools: vec![],
             prompts_dir: None,

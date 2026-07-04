@@ -57,9 +57,10 @@ impl SubAgentExecutor {
             None => LlmRunner::new(Arc::clone(&self.connection_manager)),
             Some(override_) => {
                 let model_name = resolve_model_name(override_);
+                let registry = agentverse::ProviderRegistry::with_builtins();
                 let cm = self
                     .connection_manager
-                    .with_model(&model_name)
+                    .with_model(&model_name, &registry)
                     .map_err(agentverse::AgentError::Model)?;
                 LlmRunner::new(Arc::new(cm))
             }

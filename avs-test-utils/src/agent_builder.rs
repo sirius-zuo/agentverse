@@ -11,11 +11,11 @@ use std::sync::Arc;
 pub async fn dead_endpoint_agent() -> Arc<Agent> {
     let runner = Arc::new(
         LlmRunner::from_config(Config {
-            provider: ProviderConfig::OpenAI {
-                model_name: "test-model".into(),
-                api_key: "sk-test".into(),
-                base_url: Some("http://127.0.0.1:1/v1".into()),
-            },
+            provider: ProviderConfig::openai(
+                "test-model",
+                "sk-test",
+                Some("http://127.0.0.1:1/v1".into()),
+            ),
             max_messages: 10,
             tools: vec![],
             prompts_dir: None,

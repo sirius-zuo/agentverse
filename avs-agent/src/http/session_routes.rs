@@ -230,11 +230,11 @@ mod tests {
         let session_memory = Arc::new(SqliteSessionMemory::new("sqlite::memory:").await.unwrap());
         let runner = Arc::new(
             LlmRunner::from_config(Config {
-                provider: ProviderConfig::OpenAI {
-                    model_name: "gpt-4o".to_string(),
-                    api_key: "sk-test".to_string(),
-                    base_url: Some("http://127.0.0.1:1/v1".to_string()),
-                },
+                provider: ProviderConfig::openai(
+                    "gpt-4o".to_string(),
+                    "sk-test".to_string(),
+                    Some("http://127.0.0.1:1/v1".to_string()),
+                ),
                 max_messages: 50,
                 tools: vec![],
                 prompts_dir: None,

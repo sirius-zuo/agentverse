@@ -74,11 +74,11 @@ mod tests {
     fn make_resources() -> (Arc<LlmRunner>, Arc<PromptRegistry>, Arc<ToolRegistry>) {
         let runner = Arc::new(
             LlmRunner::from_config(Config {
-                provider: ProviderConfig::OpenAI {
-                    model_name: "test".to_string(),
-                    api_key: "sk-test".to_string(),
-                    base_url: Some("http://127.0.0.1:1/v1".to_string()),
-                },
+                provider: ProviderConfig::openai(
+                    "test".to_string(),
+                    "sk-test".to_string(),
+                    Some("http://127.0.0.1:1/v1".to_string()),
+                ),
                 max_messages: 10,
                 tools: vec![],
                 prompts_dir: None,

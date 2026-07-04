@@ -38,11 +38,7 @@ async fn main() {
 
     let runner = Arc::new(
         LlmRunner::from_config(Config {
-            provider: ProviderConfig::OpenAI {
-                model_name: model_name.clone(),
-                api_key,
-                base_url: Some(base_url),
-            },
+            provider: ProviderConfig::openai(model_name.clone(), api_key, Some(base_url)),
             max_messages: 100,
             tools: vec![],
             prompts_dir: None,

@@ -7,11 +7,11 @@ use std::sync::Arc;
 fn make_router() -> StrategyRouter {
     let runner = Arc::new(
         LlmRunner::from_config(Config {
-            provider: agentverse::ProviderConfig::OpenAI {
-                model_name: "gpt-4o".to_string(),
-                api_key: "test-key".to_string(),
-                base_url: Some("https://api.openai.com/v1".to_string()),
-            },
+            provider: agentverse::ProviderConfig::openai(
+                "gpt-4o".to_string(),
+                "test-key".to_string(),
+                Some("https://api.openai.com/v1".to_string()),
+            ),
             max_messages: 10,
             tools: vec![],
             prompts_dir: None,

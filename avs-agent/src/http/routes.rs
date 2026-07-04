@@ -125,11 +125,11 @@ mod tests {
     async fn make_agent() -> Arc<Agent> {
         let runner = Arc::new(
             LlmRunner::from_config(Config {
-                provider: agentverse::ProviderConfig::OpenAI {
-                    model_name: "test".to_string(),
-                    api_key: "sk-test".to_string(),
-                    base_url: Some("http://127.0.0.1:1/v1".to_string()),
-                },
+                provider: agentverse::ProviderConfig::openai(
+                    "test".to_string(),
+                    "sk-test".to_string(),
+                    Some("http://127.0.0.1:1/v1".to_string()),
+                ),
                 max_messages: 10,
                 tools: vec![],
                 prompts_dir: None,

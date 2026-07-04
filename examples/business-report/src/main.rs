@@ -75,11 +75,11 @@ async fn main() {
     // ── 5. LlmRunner for the main agent ───────────────────────────────────
     let runner = Arc::new(
         LlmRunner::from_config(Config {
-            provider: ProviderConfig::OpenAI {
-                model_name: model_name.clone(),
-                api_key: api_key.clone(),
-                base_url: Some(base_url.clone()),
-            },
+            provider: ProviderConfig::openai(
+                model_name.clone(),
+                api_key.clone(),
+                Some(base_url.clone()),
+            ),
             max_messages: 100,
             tools: vec![],
             prompts_dir: None,
