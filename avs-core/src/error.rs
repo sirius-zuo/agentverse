@@ -33,6 +33,8 @@ pub enum ModelError {
     UnknownProvider(String),
     #[error("Invalid API key: {0}")]
     InvalidApiKey(String),
+    #[error("Missing required setting {0:?} for provider {1:?}")]
+    MissingSetting(String, String),
 }
 
 #[derive(Error, Debug)]

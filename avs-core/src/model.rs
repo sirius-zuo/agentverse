@@ -4,11 +4,13 @@ mod anthropic_provider;
 mod connection_manager;
 mod gemini_provider;
 mod openai_compatible;
+mod registry;
 
 pub use anthropic_provider::AnthropicProvider;
 pub use connection_manager::ConnectionManager;
 pub use gemini_provider::GeminiProvider;
 pub use openai_compatible::OpenAICompatible;
+pub use registry::{ProviderFactory, ProviderRegistry, ResolvedProvider};
 
 /// Per-call LLM usage statistics. Zero-filled for providers that do not report a field.
 #[derive(Debug, Default, Clone, Copy)]
