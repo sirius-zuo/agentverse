@@ -111,17 +111,9 @@ async fn main() {
             .expect("session store"),
     );
 
-    let agent = Agent::new(
-        runner,
-        tools,
-        prompts,
-        session_memory,
-        strategy,
-        false,
-        None,
-        Some(skills),
-        None,
-    );
+    let agent = Agent::builder(runner, tools, prompts, session_memory, strategy)
+        .with_skills(skills)
+        .build();
 
     // Explicit binding: skill is set before the first user message.
     // The SkillRouter never runs — no auto-routing needed.

@@ -95,17 +95,9 @@ mod tests {
         );
         let session_memory = Arc::new(SqliteSessionMemory::new("sqlite::memory:").await.unwrap());
         let ms: Arc<dyn LongtermMemory> = Arc::new(NoopMemoryStore);
-        let agent = super::Agent::new(
-            runner,
-            tools,
-            prompts,
-            session_memory,
-            strategy,
-            false,
-            Some(ms),
-            None,
-            None,
-        );
+        let agent = super::Agent::builder(runner, tools, prompts, session_memory, strategy)
+            .with_longterm_memory(ms)
+            .build();
         let sid = agent.create_session("alice").await.unwrap();
         assert!(agent.get_session("alice", sid).await.unwrap().is_some());
     }

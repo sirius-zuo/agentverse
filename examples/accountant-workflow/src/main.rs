@@ -117,17 +117,16 @@ async fn main() {
         queue: Arc::clone(&queue) as Arc<dyn agentverse_hitl::ApprovalQueue>,
     };
 
-    let agent = Agent::new(
+    let agent = Agent::builder(
         Arc::clone(&runner),
         Arc::clone(&tools),
         Arc::clone(&prompts),
         session_memory,
         strategy,
-        false,
-        None,
-        Some(skills),
-        Some(hitl),
-    );
+    )
+    .with_skills(skills)
+    .with_hitl(hitl)
+    .build();
 
     let session_id = agent
         .create_session_with_skill("user", "extract-transactions")

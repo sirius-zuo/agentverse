@@ -109,17 +109,9 @@ async fn main() {
             .await
             .expect("session memory"),
     );
-    let agent = Agent::new(
-        runner,
-        agent_tools,
-        prompts,
-        session_memory,
-        strategy,
-        false,
-        None,
-        Some(skills),
-        None,
-    );
+    let agent = Agent::builder(runner, agent_tools, prompts, session_memory, strategy)
+        .with_skills(skills)
+        .build();
 
     // ── 8. Invoke ──────────────────────────────────────────────────────────
     let question = format!("Generate a business report for: {}", subject);

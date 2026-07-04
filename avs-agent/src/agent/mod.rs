@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use agentverse::memory::{LongtermMemory, Message};
 use agentverse::{LlmRunner, PromptRegistry, RunStrategy};
 use agentverse_hitl::InterruptKind;
-use agentverse_session::{SessionId, SessionManager, SessionMemory, SessionMemoryError};
+use agentverse_session::{SessionId, SessionManager, SessionMemoryError};
 use agentverse_skill::{SkillConfig, SkillError};
 use agentverse_tools::ToolRegistry;
 use serde::{Deserialize, Serialize};
@@ -13,11 +13,14 @@ use serde_json;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
+mod builder;
 mod invoke;
 mod resume;
 mod routing;
 mod sessions;
+mod workers;
 
+pub use builder::AgentBuilder;
 pub use routing::parse_phase_transition;
 
 struct CacheMemory {
@@ -102,76 +105,6 @@ pub struct Agent {
     longterm_memory: Option<Arc<dyn LongtermMemory>>,
     skills: Option<SkillConfig>,
     hitl: Option<HitlConfig>,
-}
-
-impl Agent {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        runner: Arc<LlmRunner>,
-        tools: Arc<ToolRegistry>,
-        prompts: Arc<PromptRegistry>,
-        session_memory: Arc<dyn SessionMemory>,
-        strategy: Arc<dyn RunStrategy>,
-        enable_http_server: bool,
-        longterm_memory: Option<Arc<dyn LongtermMemory>>,
-        skills: Option<SkillConfig>,
-        hitl: Option<HitlConfig>,
-    ) -> Arc<Self> {
-        let sm_for_workers = Arc::clone(&session_memory);
-        let agent = Arc::new(Self {
-            runner,
-            tools,
-            prompts,
-            sessions: Arc::new(SessionManager::new(session_memory)),
-            strategy,
-            cache_memory: Mutex::new(HashMap::new()),
-            buffer_ttl: Duration::from_secs(300),
-            longterm_memory,
-            skills,
-            hitl,
-        });
-
-        // Auto-spawn CleanupWorker — purges stale messages from consolidated sessions
-        tokio::spawn(
-            crate::workers::CleanupWorker::new(
-                Arc::clone(&sm_for_workers),
-                crate::workers::CleanupConfig::default(),
-            )
-            .run(),
-        );
-
-        // Spawn HitlSweepWorker when HITL is configured
-        if let Some(ref hitl_cfg) = agent.hitl {
-            tokio::spawn(
-                crate::workers::HitlSweepWorker::new(
-                    Arc::clone(&hitl_cfg.queue),
-                    crate::workers::HitlSweepConfig::default(),
-                )
-                .run(),
-            );
-        }
-
-        // Spawn ConsolidationWorker when longterm memory is configured
-        if let Some(ref ltm) = agent.longterm_memory {
-            tokio::spawn(
-                crate::workers::ConsolidationWorker::new(
-                    Arc::clone(&sm_for_workers),
-                    Arc::clone(ltm),
-                    crate::workers::ConsolidationConfig::default(),
-                )
-                .run(),
-            );
-        }
-
-        #[cfg(feature = "http")]
-        if enable_http_server {
-            crate::http::spawn_server(Arc::clone(&agent));
-        }
-
-        // Suppress unused variable warning when http feature is disabled
-        let _ = enable_http_server;
-        agent
-    }
 }
 
 #[cfg(test)]

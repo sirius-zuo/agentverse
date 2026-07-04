@@ -131,17 +131,7 @@ async fn main() {
             .expect("session store"),
     );
 
-    let agent = Agent::new(
-        runner,
-        client_registry,
-        prompts,
-        session_memory,
-        strategy,
-        false,
-        None,
-        None,
-        None,
-    );
+    let agent = Agent::builder(runner, client_registry, prompts, session_memory, strategy).build();
 
     // ── 5. Run a query ────────────────────────────────────────────────────────
     //

@@ -5,7 +5,8 @@ pub mod workers;
 mod http;
 
 pub use agent::{
-    parse_phase_transition, Agent, AgentError, AgentOutput, PhaseAdvanceResult, PhaseTransition,
+    parse_phase_transition, Agent, AgentBuilder, AgentError, AgentOutput, PhaseAdvanceResult,
+    PhaseTransition,
 };
 pub use agentverse_skill::{SkillConfig, SkillMode};
 pub use workers::{

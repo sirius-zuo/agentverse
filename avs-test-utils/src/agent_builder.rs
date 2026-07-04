@@ -38,17 +38,7 @@ pub async fn dead_endpoint_agent() -> Arc<Agent> {
             .await
             .expect("in-memory sqlite"),
     );
-    Agent::new(
-        runner,
-        tools,
-        prompts,
-        session_memory,
-        strategy,
-        false,
-        None,
-        None,
-        None,
-    )
+    Agent::builder(runner, tools, prompts, session_memory, strategy).build()
 }
 
 /// Resolve `AgentOutput` to its text content, panicking if interrupted.

@@ -296,17 +296,11 @@ mod tests {
             3,
         );
         let session_memory = Arc::new(SqliteSessionMemory::new("sqlite::memory:").await.unwrap());
-        Agent::new(
-            runner,
-            tools,
-            prompts,
-            session_memory,
-            strategy,
-            false,
-            None,
-            skills,
-            None,
-        )
+        let builder = Agent::builder(runner, tools, prompts, session_memory, strategy);
+        match skills {
+            Some(skills) => builder.with_skills(skills).build(),
+            None => builder.build(),
+        }
     }
 
     fn write_skill(dir: &std::path::Path, subdir: &str, name: &str, instructions: &str) {

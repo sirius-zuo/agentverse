@@ -406,17 +406,7 @@ mod tests {
             3,
         );
         let session_memory = Arc::new(SqliteSessionMemory::new("sqlite::memory:").await.unwrap());
-        Agent::new(
-            runner,
-            tools,
-            prompts,
-            session_memory,
-            strategy,
-            false,
-            None,
-            None,
-            None,
-        )
+        Agent::builder(runner, tools, prompts, session_memory, strategy).build()
     }
 
     #[tokio::test]
