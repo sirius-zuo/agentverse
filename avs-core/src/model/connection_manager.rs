@@ -84,6 +84,9 @@ pub struct ConnectionManager {
     api_key: String,
     model_name: String,
     provider: Box<dyn ModelProvider>,
+    /// Settings this instance was built from — retained so `with_model` can
+    /// re-invoke the same provider's factory when switching models.
+    settings: std::collections::HashMap<String, String>,
     circuit_breaker: Arc<Mutex<CircuitBreaker>>,
     max_retries: usize,
     retry_delay_ms: u64,
@@ -114,6 +117,7 @@ impl ConnectionManager {
             api_key: api_key.to_string(),
             model_name: model_name.to_string(),
             provider: Box::new(provider),
+            settings: std::collections::HashMap::new(),
             circuit_breaker: Arc::new(Mutex::new(CircuitBreaker::new(5, 30))),
             max_retries: 3,
             retry_delay_ms: 500,
@@ -121,58 +125,56 @@ impl ConnectionManager {
         }
     }
 
+    /// Settings mirror what the "anthropic" registry factory expects, so a
+    /// later `with_model` call on an instance built this way still resolves
+    /// correctly through the registry.
     pub fn anthropic(api_base: &str, model_name: &str, api_key: &str) -> Self {
-        Self::new(AnthropicProvider::new(), api_base, api_key, model_name)
+        let mut cm = Self::new(AnthropicProvider::new(), api_base, api_key, model_name);
+        cm.settings = std::collections::HashMap::from([
+            ("model_name".to_string(), model_name.to_string()),
+            ("api_key".to_string(), api_key.to_string()),
+        ]);
+        cm
     }
 
     pub fn openai(api_base: &str, model_name: &str, api_key: &str) -> Self {
-        Self::new(OpenAICompatible::new(), api_base, api_key, model_name)
+        let mut cm = Self::new(OpenAICompatible::new(), api_base, api_key, model_name);
+        cm.settings = std::collections::HashMap::from([
+            ("model_name".to_string(), model_name.to_string()),
+            ("api_key".to_string(), api_key.to_string()),
+        ]);
+        cm
     }
 
     pub fn gemini(api_base: &str, model_name: &str, api_key: &str) -> Self {
-        Self::new(GeminiProvider::new(), api_base, api_key, model_name)
+        let mut cm = Self::new(GeminiProvider::new(), api_base, api_key, model_name);
+        cm.settings = std::collections::HashMap::from([
+            ("model_name".to_string(), model_name.to_string()),
+            ("api_key".to_string(), api_key.to_string()),
+        ]);
+        cm
     }
 
-    pub fn from_config(config: ProviderConfig) -> Result<Self, ModelError> {
-        let api_key = match &config {
-            ProviderConfig::Anthropic { api_key, .. }
-            | ProviderConfig::OpenAI { api_key, .. }
-            | ProviderConfig::Gemini { api_key, .. } => api_key,
-        };
-        if HeaderValue::from_str(api_key).is_err() {
-            return Err(ModelError::InvalidApiKey(
-                "API key contains characters that are invalid in an HTTP header \
-                 (control characters or non-visible ASCII)"
-                    .into(),
-            ));
-        }
-        match config {
-            ProviderConfig::Anthropic {
-                model_name,
-                api_key,
-            } => Ok(Self::anthropic(
-                "https://api.anthropic.com",
-                &model_name,
-                &api_key,
-            )),
-            ProviderConfig::OpenAI {
-                model_name,
-                api_key,
-                base_url,
-            } => Ok(Self::openai(
-                base_url.as_deref().unwrap_or("https://api.openai.com/v1"),
-                &model_name,
-                &api_key,
-            )),
-            ProviderConfig::Gemini {
-                model_name,
-                api_key,
-            } => Ok(Self::gemini(
-                "https://generativelanguage.googleapis.com",
-                &model_name,
-                &api_key,
-            )),
-        }
+    pub fn from_config(
+        config: ProviderConfig,
+        registry: &crate::model::ProviderRegistry,
+    ) -> Result<Self, ModelError> {
+        let resolved = registry.build(&config.name, &config.settings)?;
+        // Built directly rather than via `Self::new` — `resolved.provider` is
+        // already `Box<dyn ModelProvider>`, and `new()` takes `impl ModelProvider`
+        // (for the un-boxed convenience constructors), so it can't accept it.
+        Ok(Self {
+            client: Client::new(),
+            api_base: resolved.api_base,
+            api_key: resolved.api_key,
+            model_name: resolved.model_name,
+            provider: resolved.provider,
+            settings: config.settings,
+            circuit_breaker: Arc::new(Mutex::new(CircuitBreaker::new(5, 30))),
+            max_retries: 3,
+            retry_delay_ms: 500,
+            fallback: None,
+        })
     }
 
     pub fn with_retries(mut self, max_retries: usize, retry_delay_ms: u64) -> Self {
@@ -193,21 +195,24 @@ impl ConnectionManager {
         self
     }
 
-    /// Return a new `ConnectionManager` targeting a different model. Used by
-    /// `SubAgentExecutor` for per-SubAgent model overrides.
-    pub fn with_model(&self, model_name: &str) -> Result<Self, ModelError> {
-        let provider: Box<dyn ModelProvider> = match self.provider.name() {
-            "anthropic" => Box::new(AnthropicProvider::new()),
-            "gemini" => Box::new(GeminiProvider::new()),
-            "openai" => Box::new(OpenAICompatible::new()),
-            other => return Err(ModelError::UnknownProvider(other.to_string())),
-        };
+    /// Return a new `ConnectionManager` targeting a different model within
+    /// the same provider/endpoint/key. Used by `SubAgentExecutor` for
+    /// per-SubAgent model overrides. `model_name` overrides whatever the
+    /// factory resolves from `self.settings` (which still holds the
+    /// original model_name) — same override semantics as before the registry.
+    pub fn with_model(
+        &self,
+        model_name: &str,
+        registry: &crate::model::ProviderRegistry,
+    ) -> Result<Self, ModelError> {
+        let resolved = registry.build(self.provider.name(), &self.settings)?;
         Ok(Self {
             client: self.client.clone(),
             api_base: self.api_base.clone(),
             api_key: self.api_key.clone(),
             model_name: model_name.to_string(),
-            provider,
+            provider: resolved.provider,
+            settings: self.settings.clone(),
             // Model overrides hit the same endpoint with the same key, so an
             // open circuit must apply to them too — share breaker state.
             circuit_breaker: Arc::clone(&self.circuit_breaker),
@@ -470,14 +475,16 @@ mod with_model_tests {
     #[test]
     fn with_model_unknown_provider_returns_error() {
         let cm = ConnectionManager::new(FakeProvider, "http://x", "k", "m");
-        let err = cm.with_model("other-model").unwrap_err();
+        let registry = crate::model::ProviderRegistry::with_builtins();
+        let err = cm.with_model("other-model", &registry).unwrap_err();
         assert!(matches!(err, ModelError::UnknownProvider(name) if name == "fake"));
     }
 
     #[test]
     fn with_model_shares_circuit_breaker() {
         let cm = ConnectionManager::openai("http://x", "m", "k");
-        let overridden = cm.with_model("m2").unwrap();
+        let registry = crate::model::ProviderRegistry::with_builtins();
+        let overridden = cm.with_model("m2", &registry).unwrap();
         assert_eq!(
             cm.circuit_breaker_ptr_for_test(),
             overridden.circuit_breaker_ptr_for_test()
@@ -510,10 +517,11 @@ mod with_model_tests {
 
     #[test]
     fn from_config_rejects_key_with_header_invalid_chars() {
-        let err = ConnectionManager::from_config(crate::config::ProviderConfig::Anthropic {
-            model_name: "m".into(),
-            api_key: "bad\nkey".into(),
-        })
+        let registry = crate::model::ProviderRegistry::with_builtins();
+        let err = ConnectionManager::from_config(
+            crate::config::ProviderConfig::anthropic("m".to_string(), "bad\nkey".to_string()),
+            &registry,
+        )
         .unwrap_err();
         assert!(matches!(err, ModelError::InvalidApiKey(_)));
     }
@@ -521,13 +529,15 @@ mod with_model_tests {
     #[test]
     fn from_config_accepts_empty_key() {
         // Local OpenAI-compatible endpoints legitimately use no key.
-        assert!(
-            ConnectionManager::from_config(crate::config::ProviderConfig::OpenAI {
-                model_name: "m".into(),
-                api_key: String::new(),
-                base_url: Some("http://localhost:9090/v1".into()),
-            })
-            .is_ok()
-        );
+        let registry = crate::model::ProviderRegistry::with_builtins();
+        assert!(ConnectionManager::from_config(
+            crate::config::ProviderConfig::openai(
+                "m".to_string(),
+                String::new(),
+                Some("http://localhost:9090/v1".to_string()),
+            ),
+            &registry,
+        )
+        .is_ok());
     }
 }

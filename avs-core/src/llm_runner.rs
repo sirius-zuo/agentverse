@@ -18,20 +18,16 @@ impl LlmRunner {
     pub fn from_config(config: Config) -> Result<Self, AgentError> {
         config.validate()?;
 
-        let (model_name, provider_name) = match &config.provider {
-            crate::config::ProviderConfig::OpenAI { model_name, .. } => {
-                (model_name.as_str(), "openai")
-            }
-            crate::config::ProviderConfig::Anthropic { model_name, .. } => {
-                (model_name.as_str(), "anthropic")
-            }
-            crate::config::ProviderConfig::Gemini { model_name, .. } => {
-                (model_name.as_str(), "gemini")
-            }
-        };
-        info!(model = %model_name, provider = %provider_name, "LlmRunner initialized");
+        let model_name = config
+            .provider
+            .settings
+            .get("model_name")
+            .cloned()
+            .unwrap_or_default();
+        info!(model = %model_name, provider = %config.provider.name, "LlmRunner initialized");
 
-        let cm = ConnectionManager::from_config(config.provider.clone())?;
+        let registry = crate::model::ProviderRegistry::with_builtins();
+        let cm = ConnectionManager::from_config(config.provider.clone(), &registry)?;
         Ok(Self {
             connection: Arc::new(cm),
         })

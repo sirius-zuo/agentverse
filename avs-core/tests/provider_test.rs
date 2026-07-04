@@ -9,30 +9,24 @@ use serde_json::json;
 
 #[test]
 fn test_connection_manager_from_config_openai() {
-    let config = ProviderConfig::OpenAI {
-        model_name: "gpt-4o".to_string(),
-        api_key: "sk-test".to_string(),
-        base_url: None,
-    };
-    assert!(ConnectionManager::from_config(config).is_ok());
+    let config = ProviderConfig::openai("gpt-4o".to_string(), "sk-test".to_string(), None);
+    let registry = agentverse::ProviderRegistry::with_builtins();
+    assert!(ConnectionManager::from_config(config, &registry).is_ok());
 }
 
 #[test]
 fn test_connection_manager_from_config_anthropic() {
-    let config = ProviderConfig::Anthropic {
-        model_name: "claude-3-5-sonnet-20241022".to_string(),
-        api_key: "key".to_string(),
-    };
-    assert!(ConnectionManager::from_config(config).is_ok());
+    let config =
+        ProviderConfig::anthropic("claude-3-5-sonnet-20241022".to_string(), "key".to_string());
+    let registry = agentverse::ProviderRegistry::with_builtins();
+    assert!(ConnectionManager::from_config(config, &registry).is_ok());
 }
 
 #[test]
 fn test_connection_manager_from_config_gemini() {
-    let config = ProviderConfig::Gemini {
-        model_name: "gemini-pro".to_string(),
-        api_key: "key".to_string(),
-    };
-    assert!(ConnectionManager::from_config(config).is_ok());
+    let config = ProviderConfig::gemini("gemini-pro".to_string(), "key".to_string());
+    let registry = agentverse::ProviderRegistry::with_builtins();
+    assert!(ConnectionManager::from_config(config, &registry).is_ok());
 }
 
 // ── AnthropicProvider tests ───────────────────────────────────────────────────
@@ -230,18 +224,16 @@ fn test_gemini_parse_response_empty_candidates_is_error() {
 
 #[test]
 fn test_provider_config_serialization() {
-    let config = ProviderConfig::OpenAI {
-        model_name: "gpt-4".to_string(),
-        api_key: "sk-xxx".to_string(),
-        base_url: Some("http://localhost:9090/v1".to_string()),
-    };
+    let config = ProviderConfig::openai(
+        "gpt-4".to_string(),
+        "sk-xxx".to_string(),
+        Some("http://localhost:9090/v1".to_string()),
+    );
     let yaml = serde_yaml::to_string(&config).unwrap();
     assert!(yaml.contains("gpt-4"));
     let deserialized: ProviderConfig = serde_yaml::from_str(&yaml).unwrap();
-    match deserialized {
-        ProviderConfig::OpenAI { model_name, .. } => assert_eq!(model_name, "gpt-4"),
-        _ => panic!("Expected OpenAI variant"),
-    }
+    assert_eq!(deserialized.name, "openai");
+    assert_eq!(deserialized.settings.get("model_name").unwrap(), "gpt-4");
 }
 
 #[test]
@@ -249,8 +241,9 @@ fn connection_manager_with_model_uses_new_model_name() {
     use agentverse::memory::{Message, MessageRole};
     let cm =
         ConnectionManager::anthropic("https://api.anthropic.com", "claude-sonnet-4-6", "test-key");
+    let registry = agentverse::ProviderRegistry::with_builtins();
     let overridden = cm
-        .with_model("claude-haiku-4-5-20251001")
+        .with_model("claude-haiku-4-5-20251001", &registry)
         .expect("known provider");
     let req = agentverse::GenerateRequest {
         system: None,
@@ -269,7 +262,10 @@ fn connection_manager_with_model_uses_new_model_name() {
 fn connection_manager_with_model_openai_uses_new_model_name() {
     use agentverse::memory::{Message, MessageRole};
     let cm = ConnectionManager::openai("https://api.openai.com/v1", "gpt-4o", "test-key");
-    let overridden = cm.with_model("gpt-4o-mini").expect("known provider");
+    let registry = agentverse::ProviderRegistry::with_builtins();
+    let overridden = cm
+        .with_model("gpt-4o-mini", &registry)
+        .expect("known provider");
     let req = agentverse::GenerateRequest {
         system: None,
         messages: vec![Message {
@@ -291,7 +287,10 @@ fn connection_manager_with_model_gemini_uses_new_model_name() {
         "gemini-2.0-flash",
         "test-key",
     );
-    let overridden = cm.with_model("gemini-1.5-pro").expect("known provider");
+    let registry = agentverse::ProviderRegistry::with_builtins();
+    let overridden = cm
+        .with_model("gemini-1.5-pro", &registry)
+        .expect("known provider");
     let req = agentverse::GenerateRequest {
         system: None,
         messages: vec![Message {

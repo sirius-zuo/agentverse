@@ -1,49 +1,13 @@
-use agentverse::{Config, ProviderConfig};
+use agentverse::{Config, ConnectionManager, ProviderConfig, ProviderRegistry};
 
 fn make_config() -> Config {
     Config {
-        provider: ProviderConfig::OpenAI {
-            model_name: "gpt-4".to_string(),
-            api_key: "sk-xxx".to_string(),
-            base_url: None,
-        },
+        provider: ProviderConfig::openai("gpt-4".to_string(), "sk-xxx".to_string(), None),
         max_messages: 100,
         tools: vec![],
         prompts_dir: None,
         system_prompt: None,
     }
-}
-
-#[test]
-fn test_config_validation_missing_key() {
-    let config = Config {
-        provider: ProviderConfig::OpenAI {
-            model_name: "gpt-4".to_string(),
-            api_key: String::new(),
-            base_url: None,
-        },
-        max_messages: 100,
-        tools: vec![],
-        prompts_dir: None,
-        system_prompt: None,
-    };
-    assert!(config.validate().is_err());
-}
-
-#[test]
-fn test_config_validation_missing_name() {
-    let config = Config {
-        provider: ProviderConfig::OpenAI {
-            model_name: String::new(),
-            api_key: "sk-xxx".to_string(),
-            base_url: None,
-        },
-        max_messages: 100,
-        tools: vec![],
-        prompts_dir: None,
-        system_prompt: None,
-    };
-    assert!(config.validate().is_err());
 }
 
 #[test]
@@ -53,13 +17,39 @@ fn test_config_validation_valid() {
 }
 
 #[test]
+fn test_config_validation_missing_provider_name() {
+    let config = Config {
+        provider: ProviderConfig::custom("", std::collections::HashMap::new()),
+        max_messages: 100,
+        tools: vec![],
+        prompts_dir: None,
+        system_prompt: None,
+    };
+    assert!(config.validate().is_err());
+}
+
+#[test]
+fn connection_manager_from_config_missing_api_key_errors() {
+    let config = ProviderConfig::openai("gpt-4".to_string(), String::new(), None);
+    let registry = ProviderRegistry::with_builtins();
+    assert!(ConnectionManager::from_config(config, &registry).is_err());
+}
+
+#[test]
+fn connection_manager_from_config_missing_model_name_errors() {
+    let config = ProviderConfig::openai(String::new(), "sk-xxx".to_string(), None);
+    let registry = ProviderRegistry::with_builtins();
+    assert!(ConnectionManager::from_config(config, &registry).is_err());
+}
+
+#[test]
 fn test_config_serialization() {
     let config = Config {
-        provider: ProviderConfig::OpenAI {
-            model_name: "gpt-4".to_string(),
-            api_key: "sk-xxx".to_string(),
-            base_url: Some("http://localhost:9090/v1".to_string()),
-        },
+        provider: ProviderConfig::openai(
+            "gpt-4".to_string(),
+            "sk-xxx".to_string(),
+            Some("http://localhost:9090/v1".to_string()),
+        ),
         max_messages: 200,
         tools: vec!["search".to_string()],
         prompts_dir: Some("prompts/".to_string()),
@@ -68,10 +58,7 @@ fn test_config_serialization() {
     let yaml = serde_yaml::to_string(&config).unwrap();
     assert!(yaml.contains("model_name: gpt-4"));
     let deserialized: Config = serde_yaml::from_str(&yaml).unwrap();
-    assert!(matches!(
-        deserialized.provider,
-        ProviderConfig::OpenAI { .. }
-    ));
+    assert_eq!(deserialized.provider.name, "openai");
     assert_eq!(deserialized.prompts_dir, Some("prompts/".to_string()));
     assert_eq!(
         deserialized.system_prompt,
@@ -82,10 +69,7 @@ fn test_config_serialization() {
 #[test]
 fn test_provider_config_anthropic() {
     let config = Config {
-        provider: ProviderConfig::Anthropic {
-            model_name: "claude-3".to_string(),
-            api_key: "anthropic-key".to_string(),
-        },
+        provider: ProviderConfig::anthropic("claude-3".to_string(), "anthropic-key".to_string()),
         max_messages: 50,
         tools: vec![],
         prompts_dir: None,
@@ -97,10 +81,7 @@ fn test_provider_config_anthropic() {
 #[test]
 fn test_provider_config_gemini() {
     let config = Config {
-        provider: ProviderConfig::Gemini {
-            model_name: "gemini-pro".to_string(),
-            api_key: "gemini-key".to_string(),
-        },
+        provider: ProviderConfig::gemini("gemini-pro".to_string(), "gemini-key".to_string()),
         max_messages: 50,
         tools: vec![],
         prompts_dir: None,
