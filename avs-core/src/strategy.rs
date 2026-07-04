@@ -1,11 +1,18 @@
 use crate::error::AgentError;
-use crate::hitl::HitlHook;
+use crate::hitl::{HitlHook, HitlInterrupt};
 use crate::memory::Message;
 use std::sync::Arc;
 
+/// What a strategy produced: either a final answer, or a HITL interrupt that
+/// must be persisted and surfaced to the caller before the strategy can continue.
+pub enum StrategyOutcome {
+    Done(String),
+    Interrupted(HitlInterrupt),
+}
+
 #[async_trait::async_trait]
 pub trait RunStrategy: Send + Sync {
-    async fn run(&self, messages: Vec<Message>) -> Result<String, AgentError>;
+    async fn run(&self, messages: Vec<Message>) -> Result<StrategyOutcome, AgentError>;
 
     /// Run the strategy using only the named tools (subset of the registry).
     /// Default implementation ignores `active_tool_names` and calls `run`.
@@ -14,7 +21,7 @@ pub trait RunStrategy: Send + Sync {
         &self,
         messages: Vec<Message>,
         _active_tool_names: &[String],
-    ) -> Result<String, AgentError> {
+    ) -> Result<StrategyOutcome, AgentError> {
         self.run(messages).await
     }
 
@@ -32,7 +39,7 @@ pub trait RunStrategy: Send + Sync {
         messages: Vec<Message>,
         active_tool_names: &[String],
         _hook: Arc<dyn HitlHook>,
-    ) -> Result<String, AgentError> {
+    ) -> Result<StrategyOutcome, AgentError> {
         self.run_with_active_tools(messages, active_tool_names)
             .await
     }

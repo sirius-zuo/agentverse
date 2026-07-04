@@ -9,20 +9,16 @@ impl Agent {
         &self,
         _user_id: &str,
         session_id: SessionId,
-        hitl_msg: &str,
-        active_tool_names: &[String],
+        interrupt: agentverse::hitl::HitlInterrupt,
         skill_ctx: &Option<SkillContext>,
     ) -> Result<AgentOutput, AgentError> {
-        // Wire format: "HITL:{uuid}:{kind_b64}:{history_b64}:{calls_b64}" — see agentverse::hitl::HitlWire
-        let wire = agentverse::hitl::HitlWire::parse(hitl_msg).map_err(|e| {
-            AgentError::Llm(agentverse::AgentError::Memory(format!(
-                "malformed HITL wire message: {e}"
-            )))
-        })?;
-        let approval_id: Uuid = wire.approval_id;
-        let kind_json = wire.kind_json;
-        let history_json = wire.history_json;
-        let pending_calls_json = wire.pending_calls_json;
+        let agentverse::hitl::HitlInterrupt {
+            approval_id,
+            kind_json,
+            history,
+            pending_calls,
+            active_tool_names,
+        } = interrupt;
 
         // Determine variant from kind_json
         let kind: InterruptKind = serde_json::from_str(&kind_json).map_err(|e| {
@@ -34,13 +30,15 @@ impl Agent {
         let skill_ctx_json = skill_ctx
             .as_ref()
             .and_then(|c| serde_json::to_string(c).ok());
+        let history_json = serde_json::to_string(&history)?;
+        let pending_calls_json = serde_json::to_string(&pending_calls)?;
 
         let state = match kind {
             InterruptKind::SkillCheckpoint { .. } => InterruptedState::PendingCheckpoint {
                 approval_id: approval_id.to_string(),
                 kind_json,
                 history_json,
-                active_tool_names: active_tool_names.to_vec(),
+                active_tool_names,
                 skill_context_json: skill_ctx_json,
             },
             _ => InterruptedState::PendingToolCall {
@@ -48,7 +46,7 @@ impl Agent {
                 kind_json,
                 history_json,
                 pending_calls_json,
-                active_tool_names: active_tool_names.to_vec(),
+                active_tool_names,
                 skill_context_json: skill_ctx_json,
             },
         };
@@ -226,16 +224,6 @@ impl Agent {
                                 kind_json,
                             }) => {
                                 // Another call in the batch needs approval.
-                                let msg = agentverse::hitl::HitlWire {
-                                    approval_id,
-                                    kind_json,
-                                    history_json: serde_json::to_string(&history)
-                                        .unwrap_or_default(),
-                                    pending_calls_json: serde_json::to_string(&pending)
-                                        .unwrap_or_default(),
-                                }
-                                .encode();
-                                let active_tool_names_vec: Vec<String> = active_tool_names;
                                 let skill_ctx_val: Option<SkillContext> = skill_ctx_json
                                     .as_deref()
                                     .and_then(|j| serde_json::from_str(j).ok());
@@ -243,8 +231,13 @@ impl Agent {
                                     .handle_tool_interrupt(
                                         user_id,
                                         session_id,
-                                        &msg,
-                                        &active_tool_names_vec,
+                                        agentverse::hitl::HitlInterrupt {
+                                            approval_id,
+                                            kind_json,
+                                            history: history.clone(),
+                                            pending_calls: pending.clone(),
+                                            active_tool_names: active_tool_names.clone(),
+                                        },
                                         &skill_ctx_val,
                                     )
                                     .await;
@@ -330,11 +323,9 @@ impl Agent {
         };
 
         match run_result {
-            Ok(text) => Ok(AgentOutput::Done(text)),
-            Err(agentverse::AgentError::Memory(ref msg))
-                if agentverse::hitl::HitlWire::is_wire(msg) =>
-            {
-                self.handle_tool_interrupt(user_id, session_id, msg, &active_tool_names, &skill_ctx)
+            Ok(agentverse::StrategyOutcome::Done(text)) => Ok(AgentOutput::Done(text)),
+            Ok(agentverse::StrategyOutcome::Interrupted(interrupt)) => {
+                self.handle_tool_interrupt(user_id, session_id, interrupt, &skill_ctx)
                     .await
             }
             Err(e) => Err(AgentError::Llm(e)),

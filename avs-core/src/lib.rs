@@ -36,6 +36,6 @@ pub use model::{
 };
 pub use prompt::PromptConfig;
 pub use prompt::PromptRegistry;
-pub use strategy::RunStrategy;
+pub use strategy::{RunStrategy, StrategyOutcome};
 pub use tool::{ErasedTool, Tool, ToolCall, ToolCallResult, ToolHandle, ToolResult};
 pub use tracing::{NoopTracer, Tracer};

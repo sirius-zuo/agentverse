@@ -157,8 +157,14 @@ impl Agent {
     pub async fn invoke_stateless(&self, input: &str) -> Result<String, AgentError> {
         // Stateless: no session, no memory context — always a fresh single-turn call.
         let messages = self.assemble_messages(self.assemble_system(None, None), vec![], input);
-        let response = self.strategy.run(messages).await?;
-        Ok(response)
+        match self.strategy.run(messages).await? {
+            agentverse::StrategyOutcome::Done(text) => Ok(text),
+            agentverse::StrategyOutcome::Interrupted(_) => Err(AgentError::Llm(
+                agentverse::AgentError::Memory(
+                    "HITL interrupt is not supported in invoke_stateless (no session to persist interrupted state into)".into(),
+                ),
+            )),
+        }
     }
 
     pub async fn invoke(
@@ -321,16 +327,14 @@ impl Agent {
         };
 
         let response = match run_result {
-            Ok(text) => text,
-            Err(agentverse::AgentError::Memory(ref msg))
-                if agentverse::hitl::HitlWire::is_wire(msg) =>
-            {
+            Ok(agentverse::StrategyOutcome::Done(text)) => text,
+            Ok(agentverse::StrategyOutcome::Interrupted(interrupt)) => {
                 agentverse::metrics::record_invoke_duration(
                     invoke_start.elapsed(),
                     agentverse::metrics::InvokeOutcome::Interrupted,
                 );
                 return self
-                    .handle_tool_interrupt(user_id, session_id, msg, &active_tool_names, &skill_ctx)
+                    .handle_tool_interrupt(user_id, session_id, interrupt, &skill_ctx)
                     .await;
             }
             Err(e) => {
