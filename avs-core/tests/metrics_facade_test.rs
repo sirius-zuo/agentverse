@@ -60,6 +60,7 @@ fn facade_records_all_instruments_with_expected_names_and_attributes() {
     agentverse::metrics::record_phase_transition(
         agentverse::metrics::PhaseTransitionOutcome::Advanced,
     );
+    agentverse::metrics::record_hitl_transition(agentverse::metrics::HitlTransition::Interrupted);
 
     provider.force_flush().unwrap();
     let finished = exporter.get_finished_metrics().unwrap();
@@ -85,6 +86,7 @@ fn facade_records_all_instruments_with_expected_names_and_attributes() {
         "agentverse.agent.cache.access",
         "agentverse.agent.skill_routing",
         "agentverse.agent.phase_transitions",
+        "agentverse.agent.hitl_transitions",
     ] {
         assert!(
             names.contains(&expected.to_string()),

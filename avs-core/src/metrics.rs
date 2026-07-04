@@ -56,6 +56,11 @@ pub enum PhaseTransitionOutcome {
     PendingApproval,
 }
 
+pub enum HitlTransition {
+    Interrupted,
+    Resumed,
+}
+
 struct Instruments {
     token_usage: Histogram<u64>,
     llm_duration: Histogram<f64>,
@@ -70,6 +75,7 @@ struct Instruments {
     cache_access: Counter<u64>,
     skill_routing: Counter<u64>,
     phase_transitions: Counter<u64>,
+    hitl_transitions: Counter<u64>,
 }
 
 fn instruments() -> &'static Instruments {
@@ -132,6 +138,10 @@ fn instruments() -> &'static Instruments {
             phase_transitions: meter
                 .u64_counter("agentverse.agent.phase_transitions")
                 .with_description("Skill phase-transition outcomes")
+                .build(),
+            hitl_transitions: meter
+                .u64_counter("agentverse.agent.hitl_transitions")
+                .with_description("Agent-level HITL interrupt/resume events")
                 .build(),
         }
     })
@@ -264,4 +274,14 @@ pub fn record_phase_transition(outcome: PhaseTransitionOutcome) {
     instruments()
         .phase_transitions
         .add(1, &[KeyValue::new("outcome", outcome)]);
+}
+
+pub fn record_hitl_transition(transition: HitlTransition) {
+    let transition = match transition {
+        HitlTransition::Interrupted => "interrupted",
+        HitlTransition::Resumed => "resumed",
+    };
+    instruments()
+        .hitl_transitions
+        .add(1, &[KeyValue::new("transition", transition)]);
 }
