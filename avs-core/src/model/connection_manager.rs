@@ -249,6 +249,9 @@ impl ConnectionManager {
     }
 
     pub async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, ModelError> {
+        let call_start = Instant::now();
+        let provider_name = self.provider.name();
+
         // 1. Log prompt
         tracing::debug!(">>>>>>>>>> LLM PROMPT BEGIN <<<<<<<<<<");
         if let Some(sys) = &request.system {
@@ -263,8 +266,10 @@ impl ConnectionManager {
         {
             let mut cb = self.circuit_breaker.lock().await;
             if !cb.can_execute() {
+                crate::metrics::record_circuit_open(provider_name);
                 if let Some(ref fallback) = self.fallback {
                     tracing::warn!("Primary circuit open; using fallback provider");
+                    crate::metrics::record_llm_fallback(provider_name);
                     return Box::pin(fallback.generate(request)).await;
                 }
                 return Err(ModelError::CircuitOpen(
@@ -308,6 +313,7 @@ impl ConnectionManager {
                     self.circuit_breaker.lock().await.record_failure();
                     last_error = Some(err);
                     if attempt < self.max_retries {
+                        crate::metrics::record_llm_retry(crate::metrics::RetryReason::Transport);
                         tokio::time::sleep(Duration::from_millis(self.backoff_ms(attempt))).await;
                         continue;
                     }
@@ -332,6 +338,9 @@ impl ConnectionManager {
                         self.circuit_breaker.lock().await.record_failure();
                         last_error = Some(err);
                         if attempt < self.max_retries {
+                            crate::metrics::record_llm_retry(
+                                crate::metrics::RetryReason::RateLimited,
+                            );
                             let delay_ms = retry_after_ms
                                 .unwrap_or_else(|| self.rate_limit_backoff_ms(attempt));
                             tokio::time::sleep(Duration::from_millis(delay_ms)).await;
@@ -343,8 +352,16 @@ impl ConnectionManager {
                         self.circuit_breaker.lock().await.record_failure();
                         if let Some(ref fallback) = self.fallback {
                             tracing::warn!(primary_error = %err, "Primary provider failed; attempting fallback");
+                            crate::metrics::record_llm_fallback(provider_name);
                             return Box::pin(fallback.generate(request)).await;
                         }
+                        crate::metrics::record_llm_call(
+                            provider_name,
+                            &self.model_name,
+                            None,
+                            call_start.elapsed(),
+                            Some("api_error"),
+                        );
                         return Err(err);
                     } else {
                         match self.provider.parse_response(&body_text) {
@@ -361,11 +378,25 @@ impl ConnectionManager {
                                 tracing::debug!(">>>>>>>>>> LLM RESPONSE BEGIN <<<<<<<<<<");
                                 tracing::debug!(content = %response.content, "RESPONSE");
                                 tracing::debug!(">>>>>>>>>> LLM RESPONSE END <<<<<<<<<<");
+                                crate::metrics::record_llm_call(
+                                    provider_name,
+                                    &self.model_name,
+                                    Some(&response.usage),
+                                    call_start.elapsed(),
+                                    None,
+                                );
                                 return Ok(response);
                             }
                             Err(e) => {
                                 self.circuit_breaker.lock().await.record_failure();
                                 error!(error = %e, "Failed to parse LLM response");
+                                crate::metrics::record_llm_call(
+                                    provider_name,
+                                    &self.model_name,
+                                    None,
+                                    call_start.elapsed(),
+                                    Some("invalid_response"),
+                                );
                                 return Err(e);
                             }
                         }
@@ -379,8 +410,21 @@ impl ConnectionManager {
             last_error.unwrap_or_else(|| ModelError::ApiError("No response".to_string()));
         if let Some(ref fallback) = self.fallback {
             tracing::warn!(primary_error = %primary_err, "Primary provider exhausted retries; attempting fallback");
+            crate::metrics::record_llm_fallback(provider_name);
             return Box::pin(fallback.generate(request)).await;
         }
+        let error_type = if matches!(primary_err, ModelError::RateLimited(_)) {
+            "rate_limited"
+        } else {
+            "api_error"
+        };
+        crate::metrics::record_llm_call(
+            provider_name,
+            &self.model_name,
+            None,
+            call_start.elapsed(),
+            Some(error_type),
+        );
         Err(primary_err)
     }
 }
