@@ -170,6 +170,12 @@ for the full list. Install any OTel SDK meter provider before constructing
 the agent; `example-http-agent` shows an OTLP/gRPC setup gated on
 `OTEL_EXPORTER_OTLP_ENDPOINT`.
 
+Point it at any OTLP/gRPC collector, e.g. a local one-liner:
+
+```bash
+docker run -p 4317:4317 otel/opentelemetry-collector:latest
+```
+
 ## Configuration
 
 ### Environment Variables
