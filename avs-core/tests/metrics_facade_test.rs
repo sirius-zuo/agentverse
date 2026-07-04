@@ -57,6 +57,9 @@ fn facade_records_all_instruments_with_expected_names_and_attributes() {
     );
     agentverse::metrics::record_cache_access(agentverse::metrics::CacheResult::Hit);
     agentverse::metrics::record_skill_routing(agentverse::metrics::SkillRoutingOutcome::Matched);
+    agentverse::metrics::record_phase_transition(
+        agentverse::metrics::PhaseTransitionOutcome::Advanced,
+    );
 
     provider.force_flush().unwrap();
     let finished = exporter.get_finished_metrics().unwrap();
@@ -81,6 +84,7 @@ fn facade_records_all_instruments_with_expected_names_and_attributes() {
         "agentverse.agent.invoke.duration",
         "agentverse.agent.cache.access",
         "agentverse.agent.skill_routing",
+        "agentverse.agent.phase_transitions",
     ] {
         assert!(
             names.contains(&expected.to_string()),

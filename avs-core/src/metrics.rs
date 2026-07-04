@@ -51,6 +51,11 @@ pub enum SkillRoutingOutcome {
     NoMatch,
 }
 
+pub enum PhaseTransitionOutcome {
+    Advanced,
+    PendingApproval,
+}
+
 struct Instruments {
     token_usage: Histogram<u64>,
     llm_duration: Histogram<f64>,
@@ -64,6 +69,7 @@ struct Instruments {
     invoke_duration: Histogram<f64>,
     cache_access: Counter<u64>,
     skill_routing: Counter<u64>,
+    phase_transitions: Counter<u64>,
 }
 
 fn instruments() -> &'static Instruments {
@@ -122,6 +128,10 @@ fn instruments() -> &'static Instruments {
             skill_routing: meter
                 .u64_counter("agentverse.agent.skill_routing")
                 .with_description("Skill router outcomes on first invoke")
+                .build(),
+            phase_transitions: meter
+                .u64_counter("agentverse.agent.phase_transitions")
+                .with_description("Skill phase-transition outcomes")
                 .build(),
         }
     })
@@ -243,5 +253,15 @@ pub fn record_skill_routing(outcome: SkillRoutingOutcome) {
     };
     instruments()
         .skill_routing
+        .add(1, &[KeyValue::new("outcome", outcome)]);
+}
+
+pub fn record_phase_transition(outcome: PhaseTransitionOutcome) {
+    let outcome = match outcome {
+        PhaseTransitionOutcome::Advanced => "advanced",
+        PhaseTransitionOutcome::PendingApproval => "pending_approval",
+    };
+    instruments()
+        .phase_transitions
         .add(1, &[KeyValue::new("outcome", outcome)]);
 }
