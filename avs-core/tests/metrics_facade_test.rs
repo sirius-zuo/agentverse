@@ -61,6 +61,7 @@ fn facade_records_all_instruments_with_expected_names_and_attributes() {
         agentverse::metrics::PhaseTransitionOutcome::Advanced,
     );
     agentverse::metrics::record_hitl_transition(agentverse::metrics::HitlTransition::Interrupted);
+    agentverse::metrics::record_worker_restart("cleanup");
 
     provider.force_flush().unwrap();
     let finished = exporter.get_finished_metrics().unwrap();
@@ -87,6 +88,7 @@ fn facade_records_all_instruments_with_expected_names_and_attributes() {
         "agentverse.agent.skill_routing",
         "agentverse.agent.phase_transitions",
         "agentverse.agent.hitl_transitions",
+        "agentverse.worker.restarts",
     ] {
         assert!(
             names.contains(&expected.to_string()),

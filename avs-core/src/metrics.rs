@@ -76,6 +76,7 @@ struct Instruments {
     skill_routing: Counter<u64>,
     phase_transitions: Counter<u64>,
     hitl_transitions: Counter<u64>,
+    worker_restarts: Counter<u64>,
 }
 
 fn instruments() -> &'static Instruments {
@@ -142,6 +143,10 @@ fn instruments() -> &'static Instruments {
             hitl_transitions: meter
                 .u64_counter("agentverse.agent.hitl_transitions")
                 .with_description("Agent-level HITL interrupt/resume events")
+                .build(),
+            worker_restarts: meter
+                .u64_counter("agentverse.worker.restarts")
+                .with_description("Background worker restarts after panic or unexpected exit")
                 .build(),
         }
     })
@@ -284,4 +289,10 @@ pub fn record_hitl_transition(transition: HitlTransition) {
     instruments()
         .hitl_transitions
         .add(1, &[KeyValue::new("transition", transition)]);
+}
+
+pub fn record_worker_restart(worker: &'static str) {
+    instruments()
+        .worker_restarts
+        .add(1, &[KeyValue::new("worker", worker)]);
 }
