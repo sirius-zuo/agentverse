@@ -142,6 +142,7 @@ impl ConnectionManager {
         cm.settings = std::collections::HashMap::from([
             ("model_name".to_string(), model_name.to_string()),
             ("api_key".to_string(), api_key.to_string()),
+            ("base_url".to_string(), api_base.to_string()),
         ]);
         cm
     }

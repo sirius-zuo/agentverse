@@ -280,6 +280,16 @@ fn connection_manager_with_model_openai_uses_new_model_name() {
 }
 
 #[test]
+fn connection_manager_with_model_keyless_openai_local_endpoint_succeeds() {
+    let cm = ConnectionManager::openai("http://localhost:9090/v1", "m", "");
+    let registry = agentverse::ProviderRegistry::with_builtins();
+    assert!(
+        cm.with_model("m2", &registry).is_ok(),
+        "with_model should succeed for a keyless local-endpoint openai manager, matching pre-registry behavior"
+    );
+}
+
+#[test]
 fn connection_manager_with_model_gemini_uses_new_model_name() {
     use agentverse::memory::{Message, MessageRole};
     let cm = ConnectionManager::gemini(
