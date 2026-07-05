@@ -19,8 +19,8 @@ toml = { workspace = true }
 uuid = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
+httpmock = { workspace = true }
 
 [dev-dependencies]
-httpmock = { workspace = true }
 schemars = { workspace = true }
 tempfile = "3"

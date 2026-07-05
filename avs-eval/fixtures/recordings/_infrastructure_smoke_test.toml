@@ -1,0 +1,6 @@
+[[agent_turns]]
+body_contains = "hello"
+content = "Thought: done.\nAnswer: hi there"
+
+[judge_turn]
+content = "{\"verdict\": \"pass\", \"reasoning\": \"looks good\"}"
