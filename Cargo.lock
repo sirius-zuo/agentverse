@@ -314,7 +314,6 @@ name = "agentverse-strategy"
 version = "0.1.0"
 dependencies = [
  "agentverse",
- "agentverse-memory",
  "agentverse-plan",
  "agentverse-react",
  "agentverse-tools",
