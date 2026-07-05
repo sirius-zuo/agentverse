@@ -195,4 +195,112 @@ pub async fn run_conformance_suite<S: SessionMemory>(store: &S) {
          only checks that consolidation alone doesn't cause perpetual re-listing when \
          nothing is actually prunable yet in the same tick"
     );
+
+    // delete_session: immediate, unconditional, cascades to messages.
+    let to_delete = store
+        .create("erin")
+        .await
+        .expect("create session to delete");
+    store
+        .append_turn(
+            to_delete.id,
+            Message {
+                role: MessageRole::User,
+                content: "will be deleted".into(),
+            },
+            Message {
+                role: MessageRole::Assistant,
+                content: "ok".into(),
+            },
+        )
+        .await
+        .expect("append_turn before delete");
+    store
+        .delete_session(to_delete.id)
+        .await
+        .expect("delete_session");
+    assert!(
+        store
+            .get(to_delete.id)
+            .await
+            .expect("get after delete")
+            .is_none(),
+        "session must be gone after delete_session"
+    );
+
+    // delete_ended_sessions_before: only non-active + past-cutoff sessions
+    // are removed; active sessions and not-yet-past-cutoff sessions survive.
+    let old_ended = store
+        .create("frank")
+        .await
+        .expect("create old ended session");
+    store
+        .update_status(old_ended.id, SessionStatus::Completed)
+        .await
+        .expect("end old session");
+    let still_active = store
+        .create("grace")
+        .await
+        .expect("create still-active session");
+    let recently_ended = store
+        .create("henry")
+        .await
+        .expect("create recently-ended session");
+    store
+        .update_status(recently_ended.id, SessionStatus::Completed)
+        .await
+        .expect("end recently-ended session");
+
+    let far_future_cutoff = chrono::Utc::now().timestamp() + 86_400; // 1 day from now
+    let deleted_count = store
+        .delete_ended_sessions_before(far_future_cutoff)
+        .await
+        .expect("delete_ended_sessions_before");
+    assert!(
+        deleted_count >= 2,
+        "both ended sessions should be deleted by a future cutoff"
+    );
+    assert!(
+        store
+            .get(old_ended.id)
+            .await
+            .expect("get old_ended")
+            .is_none(),
+        "old ended session must be deleted"
+    );
+    assert!(
+        store
+            .get(recently_ended.id)
+            .await
+            .expect("get recently_ended")
+            .is_none(),
+        "recently-ended session must be deleted too, since the cutoff is in the future"
+    );
+    assert!(
+        store.get(still_active.id).await.expect("get still_active").is_some(),
+        "an active session must NEVER be deleted by delete_ended_sessions_before, regardless of cutoff"
+    );
+
+    // A not-yet-past-cutoff ended session must survive.
+    let ended_but_recent = store
+        .create("iris")
+        .await
+        .expect("create another ended session");
+    store
+        .update_status(ended_but_recent.id, SessionStatus::Completed)
+        .await
+        .expect("end session");
+    let far_past_cutoff = chrono::Utc::now().timestamp() - 86_400; // 1 day ago
+    store
+        .delete_ended_sessions_before(far_past_cutoff)
+        .await
+        .expect("delete_ended_sessions_before with a past cutoff");
+    assert!(
+        store
+            .get(ended_but_recent.id)
+            .await
+            .expect("get ended_but_recent")
+            .is_some(),
+        "a session ended just now must survive a cutoff of 1 day ago (not old enough yet)"
+    );
 }

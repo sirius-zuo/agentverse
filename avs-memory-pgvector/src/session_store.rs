@@ -467,6 +467,28 @@ impl SessionMemory for PostgresSessionMemory {
         Ok(result.rows_affected())
     }
 
+    async fn delete_ended_sessions_before(
+        &self,
+        cutoff_ts: i64,
+    ) -> Result<u64, SessionMemoryError> {
+        let result =
+            sqlx::query("DELETE FROM sessions WHERE status != 'active' AND updated_at < $1")
+                .bind(cutoff_ts)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+        Ok(result.rows_affected())
+    }
+
+    async fn delete_session(&self, session_id: SessionId) -> Result<(), SessionMemoryError> {
+        sqlx::query("DELETE FROM sessions WHERE id = $1")
+            .bind(session_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+        Ok(())
+    }
+
     async fn list_sessions_needing_maintenance(&self) -> Result<Vec<Session>, SessionMemoryError> {
         let rows = sqlx::query_as::<_, (String, String, String, i64, i64)>(
             "SELECT DISTINCT s.id, s.user_id, s.status, s.created_at, s.updated_at \

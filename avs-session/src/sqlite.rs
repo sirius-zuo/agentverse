@@ -372,6 +372,28 @@ impl SessionMemory for SqliteSessionMemory {
         Ok(result.rows_affected())
     }
 
+    async fn delete_ended_sessions_before(
+        &self,
+        cutoff_ts: i64,
+    ) -> Result<u64, SessionMemoryError> {
+        let result =
+            sqlx::query("DELETE FROM sessions WHERE status != 'active' AND updated_at < ?")
+                .bind(cutoff_ts)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+        Ok(result.rows_affected())
+    }
+
+    async fn delete_session(&self, session_id: SessionId) -> Result<(), SessionMemoryError> {
+        sqlx::query("DELETE FROM sessions WHERE id = ?")
+            .bind(session_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+        Ok(())
+    }
+
     async fn set_skill_context(
         &self,
         session_id: SessionId,

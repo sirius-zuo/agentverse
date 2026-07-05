@@ -142,6 +142,18 @@ impl SessionMemory for FakeStore {
     async fn list_sessions_needing_maintenance(&self) -> Result<Vec<Session>, SessionMemoryError> {
         Ok(vec![])
     }
+
+    async fn delete_ended_sessions_before(
+        &self,
+        _cutoff_ts: i64,
+    ) -> Result<u64, SessionMemoryError> {
+        Ok(0)
+    }
+
+    async fn delete_session(&self, session_id: SessionId) -> Result<(), SessionMemoryError> {
+        self.sessions.lock().unwrap().remove(&session_id);
+        Ok(())
+    }
 }
 
 #[tokio::test]
