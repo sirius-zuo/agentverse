@@ -615,6 +615,21 @@ Phase gates surface differently: `Agent::advance_phase` returns `PhaseAdvanceRes
 
 **Approval backends:** any type implementing `agentverse_hitl::ApprovalQueue` works. Built in: `InMemoryQueue` (process-local, for demos) and `SqliteQueue` (durable, for production). A `HitlSweepWorker` is auto-spawned whenever `hitl` is `Some(_)` — it polls `queue.sweep_expired()` every 60s to reject stale pending approvals.
 
+## Eval Harness
+
+`avs-eval` provides regression testing for two different concerns:
+
+- **Deterministic scaffold tests** — zero LLM calls. Pin exact input→output behavior for the ReAct parser, the skill router's keyword-overlap matching, and prompt template rendering.
+- **Judge-based quality regression tests** — replay recorded LLM interactions through the real `Agent`/strategy stack, then score the output against a rubric using a second, also-replayed, judge model call. Every judge case runs fully offline (no live API calls) via recorded `httpmock` responses.
+
+Run both: `cargo test -p agentverse-eval`
+
+Add a new deterministic fixture: drop a `.toml` file into `avs-eval/fixtures/{parser,router,templates}/` following the existing files' shape.
+
+Add a new judge case: see `avs-eval/tests/judge_test.rs` for the pattern (construct the real strategy/agent against a mock LLM server, capture its output, then judge it against a rubric via a second mock).
+
+See `DEVELOPMENT.md`'s "Testing Strategies" section for the full design and how to refresh recordings against live models.
+
 ## Development
 
 ```bash
