@@ -28,6 +28,7 @@ pub struct AgentBuilder {
     longterm_memory: Option<Arc<dyn LongtermMemory>>,
     skills: Option<SkillConfig>,
     hitl: Option<HitlConfig>,
+    cleanup_config: Option<crate::workers::CleanupConfig>,
 }
 
 impl AgentBuilder {
@@ -48,6 +49,7 @@ impl AgentBuilder {
             longterm_memory: None,
             skills: None,
             hitl: None,
+            cleanup_config: None,
         }
     }
 
@@ -71,6 +73,11 @@ impl AgentBuilder {
         self
     }
 
+    pub fn with_cleanup_config(mut self, config: crate::workers::CleanupConfig) -> Self {
+        self.cleanup_config = Some(config);
+        self
+    }
+
     pub fn build(self) -> Arc<Agent> {
         let session_memory_for_workers = Arc::clone(&self.session_memory);
         let agent = Arc::new(Agent {
@@ -84,6 +91,7 @@ impl AgentBuilder {
             longterm_memory: self.longterm_memory,
             skills: self.skills,
             hitl: self.hitl,
+            cleanup_config: self.cleanup_config.unwrap_or_default(),
         });
 
         agent.spawn_background_workers(session_memory_for_workers);

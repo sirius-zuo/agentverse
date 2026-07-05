@@ -1,6 +1,7 @@
 pub mod manager;
 pub mod session;
 pub mod sqlite;
+mod sqlite_maintenance;
 pub mod store;
 
 pub use manager::SessionManager;

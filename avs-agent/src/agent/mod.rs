@@ -105,11 +105,15 @@ pub struct Agent {
     longterm_memory: Option<Arc<dyn LongtermMemory>>,
     skills: Option<SkillConfig>,
     hitl: Option<HitlConfig>,
+    cleanup_config: crate::workers::CleanupConfig,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentverse::Config;
+    use agentverse_session::SqliteSessionMemory;
+    use agentverse_strategy::{build, StrategyKind};
 
     #[tokio::test]
     async fn agent_output_done_variant_carries_string() {
@@ -131,5 +135,46 @@ mod tests {
         let id = uuid::Uuid::new_v4();
         let r = PhaseAdvanceResult::Pending { approval_id: id };
         assert!(matches!(r, PhaseAdvanceResult::Pending { approval_id } if approval_id == id));
+    }
+
+    #[tokio::test]
+    async fn agent_builder_accepts_custom_cleanup_config() {
+        let runner = Arc::new(
+            LlmRunner::from_config(Config {
+                provider: agentverse::ProviderConfig::openai(
+                    "test".to_string(),
+                    "sk-test".to_string(),
+                    Some("http://127.0.0.1:1/v1".to_string()),
+                ),
+                max_messages: 10,
+                tools: vec![],
+                prompts_dir: None,
+                system_prompt: None,
+            })
+            .unwrap(),
+        );
+        let tools = ToolRegistry::new();
+        let prompts = Arc::new(PromptRegistry::new());
+        let strategy = build(
+            StrategyKind::React,
+            Arc::clone(&runner),
+            Arc::clone(&prompts),
+            Arc::clone(&tools),
+            3,
+        );
+        let session_memory = Arc::new(SqliteSessionMemory::new("sqlite::memory:").await.unwrap());
+        let config = crate::workers::CleanupConfig {
+            message_retention: std::time::Duration::from_secs(3600),
+            session_retention: std::time::Duration::from_secs(86400),
+            poll_interval: std::time::Duration::from_secs(60),
+        };
+        // Proves with_cleanup_config exists, is chainable with the other
+        // with_* methods, and that build() succeeds when it's used — the
+        // real end-to-end proof that the worker actually HONORS this
+        // config lives in avs-agent/src/workers.rs's
+        // cleanup_worker_deletes_ended_sessions_past_retention.
+        let _agent = Agent::builder(runner, tools, prompts, session_memory, strategy)
+            .with_cleanup_config(config)
+            .build();
     }
 }

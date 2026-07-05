@@ -61,6 +61,11 @@ pub enum HitlTransition {
     Resumed,
 }
 
+pub enum SessionDeleteReason {
+    EndedTtl,
+    UserRequest,
+}
+
 struct Instruments {
     token_usage: Histogram<u64>,
     llm_duration: Histogram<f64>,
@@ -77,6 +82,8 @@ struct Instruments {
     phase_transitions: Counter<u64>,
     hitl_transitions: Counter<u64>,
     worker_restarts: Counter<u64>,
+    session_deleted: Counter<u64>,
+    maintenance_backlog: Histogram<u64>,
 }
 
 fn instruments() -> &'static Instruments {
@@ -147,6 +154,16 @@ fn instruments() -> &'static Instruments {
             worker_restarts: meter
                 .u64_counter("agentverse.worker.restarts")
                 .with_description("Background worker restarts after panic or unexpected exit")
+                .build(),
+            session_deleted: meter
+                .u64_counter("agentverse.session.deleted")
+                .with_description("Sessions deleted, by reason")
+                .build(),
+            maintenance_backlog: meter
+                .u64_histogram("agentverse.session.maintenance_backlog")
+                .with_description(
+                    "Number of sessions returned by list_sessions_needing_maintenance per call",
+                )
                 .build(),
         }
     })
@@ -295,4 +312,18 @@ pub fn record_worker_restart(worker: &'static str) {
     instruments()
         .worker_restarts
         .add(1, &[KeyValue::new("worker", worker)]);
+}
+
+pub fn record_session_deleted(reason: SessionDeleteReason, count: u64) {
+    let reason = match reason {
+        SessionDeleteReason::EndedTtl => "ended_ttl",
+        SessionDeleteReason::UserRequest => "user_request",
+    };
+    instruments()
+        .session_deleted
+        .add(count, &[KeyValue::new("reason", reason)]);
+}
+
+pub fn record_maintenance_backlog(count: u64) {
+    instruments().maintenance_backlog.record(count, &[]);
 }

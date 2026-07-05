@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use sqlx::PgPool;
 
 pub struct PostgresSessionMemory {
-    pool: PgPool,
+    pub(crate) pool: PgPool,
 }
 
 impl PostgresSessionMemory {
@@ -27,7 +27,7 @@ impl PostgresSessionMemory {
         }
     }
 
-    fn str_to_role(role: &str) -> Result<MessageRole, SessionMemoryError> {
+    pub(crate) fn str_to_role(role: &str) -> Result<MessageRole, SessionMemoryError> {
         match role {
             "user" => Ok(MessageRole::User),
             "assistant" => Ok(MessageRole::Assistant),
@@ -380,13 +380,7 @@ impl SessionMemory for PostgresSessionMemory {
     }
 
     async fn get_watermark(&self, session_id: SessionId) -> Result<i64, SessionMemoryError> {
-        let wm: i64 =
-            sqlx::query_scalar("SELECT consolidation_watermark FROM sessions WHERE id = $1")
-                .bind(session_id.to_string())
-                .fetch_one(&self.pool)
-                .await
-                .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
-        Ok(wm)
+        crate::session_store_maintenance::get_watermark(self, session_id).await
     }
 
     async fn advance_watermark(
@@ -394,49 +388,14 @@ impl SessionMemory for PostgresSessionMemory {
         session_id: SessionId,
         new_watermark: i64,
     ) -> Result<(), SessionMemoryError> {
-        let result = sqlx::query(
-            "UPDATE sessions \
-             SET consolidation_watermark = GREATEST(consolidation_watermark, $1) \
-             WHERE id = $2",
-        )
-        .bind(new_watermark)
-        .bind(session_id.to_string())
-        .execute(&self.pool)
-        .await
-        .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
-        if result.rows_affected() == 0 {
-            return Err(SessionMemoryError::NotFound(session_id));
-        }
-        Ok(())
+        crate::session_store_maintenance::advance_watermark(self, session_id, new_watermark).await
     }
 
     async fn load_messages_above_watermark(
         &self,
         session_id: SessionId,
     ) -> Result<Vec<(i64, Message)>, SessionMemoryError> {
-        let wm = self.get_watermark(session_id).await?;
-        let rows = sqlx::query_as::<_, (i64, String, String)>(
-            "SELECT sequence_num, role, content \
-             FROM messages \
-             WHERE session_id = $1 AND sequence_num > $2 \
-             ORDER BY sequence_num ASC",
-        )
-        .bind(session_id.to_string())
-        .bind(wm)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
-        rows.into_iter()
-            .map(|(seq, role, content)| {
-                Ok((
-                    seq,
-                    Message {
-                        role: Self::str_to_role(&role)?,
-                        content,
-                    },
-                ))
-            })
-            .collect::<Result<Vec<_>, SessionMemoryError>>()
+        crate::session_store_maintenance::load_messages_above_watermark(self, session_id).await
     }
 
     async fn cleanup_expired_messages(
@@ -445,50 +404,25 @@ impl SessionMemory for PostgresSessionMemory {
         cutoff_ts: i64,
         watermark: i64,
     ) -> Result<u64, SessionMemoryError> {
-        if watermark == 0 {
-            return Ok(0);
-        }
-        // Cap at stored watermark to protect unconsolidated messages
-        let stored_wm = self.get_watermark(session_id).await?;
-        let effective_watermark = watermark.min(stored_wm);
-        if effective_watermark == 0 {
-            return Ok(0);
-        }
-        let result = sqlx::query(
-            "DELETE FROM messages \
-             WHERE session_id = $1 AND created_at < $2 AND sequence_num <= $3",
+        crate::session_store_maintenance::cleanup_expired_messages(
+            self, session_id, cutoff_ts, watermark,
         )
-        .bind(session_id.to_string())
-        .bind(cutoff_ts)
-        .bind(effective_watermark)
-        .execute(&self.pool)
         .await
-        .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
-        Ok(result.rows_affected())
     }
 
-    async fn list_all_active_sessions(&self) -> Result<Vec<Session>, SessionMemoryError> {
-        let rows = sqlx::query_as::<_, (String, String, String, i64, i64)>(
-            "SELECT id, user_id, status, created_at, updated_at \
-             FROM sessions WHERE status = 'active' ORDER BY updated_at ASC",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| SessionMemoryError::Database(e.to_string()))?;
+    async fn delete_ended_sessions_before(
+        &self,
+        cutoff_ts: i64,
+    ) -> Result<u64, SessionMemoryError> {
+        crate::session_store_maintenance::delete_ended_sessions_before(self, cutoff_ts).await
+    }
 
-        rows.into_iter()
-            .map(|(id, user_id, status, created_at, updated_at)| {
-                Ok(Session {
-                    id: id.parse().map_err(|_| {
-                        SessionMemoryError::Database(format!("invalid UUID: {}", id))
-                    })?,
-                    user_id,
-                    status: status.parse().unwrap_or(SessionStatus::Active),
-                    created_at: chrono::DateTime::from_timestamp(created_at, 0).unwrap_or_default(),
-                    updated_at: chrono::DateTime::from_timestamp(updated_at, 0).unwrap_or_default(),
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()
+    async fn delete_session(&self, session_id: SessionId) -> Result<(), SessionMemoryError> {
+        crate::session_store_maintenance::delete_session(self, session_id).await
+    }
+
+    async fn list_sessions_needing_maintenance(&self) -> Result<Vec<Session>, SessionMemoryError> {
+        crate::session_store_maintenance::list_sessions_needing_maintenance(self).await
     }
 
     async fn set_skill_context(

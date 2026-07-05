@@ -62,6 +62,11 @@ fn facade_records_all_instruments_with_expected_names_and_attributes() {
     );
     agentverse::metrics::record_hitl_transition(agentverse::metrics::HitlTransition::Interrupted);
     agentverse::metrics::record_worker_restart("cleanup");
+    agentverse::metrics::record_session_deleted(
+        agentverse::metrics::SessionDeleteReason::EndedTtl,
+        3,
+    );
+    agentverse::metrics::record_maintenance_backlog(42);
 
     provider.force_flush().unwrap();
     let finished = exporter.get_finished_metrics().unwrap();
@@ -89,6 +94,8 @@ fn facade_records_all_instruments_with_expected_names_and_attributes() {
         "agentverse.agent.phase_transitions",
         "agentverse.agent.hitl_transitions",
         "agentverse.worker.restarts",
+        "agentverse.session.deleted",
+        "agentverse.session.maintenance_backlog",
     ] {
         assert!(
             names.contains(&expected.to_string()),

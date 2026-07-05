@@ -11,4 +11,5 @@ agentverse-agent = { path = "../avs-agent" }
 agentverse-session = { path = "../avs-session" }
 agentverse-strategy = { path = "../avs-strategy" }
 agentverse-tools = { path = "../avs-tools" }
+chrono = { workspace = true }
 tokio = { workspace = true }
