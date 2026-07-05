@@ -78,6 +78,7 @@ impl ConsolidationWorker {
             .session_memory
             .list_sessions_needing_maintenance()
             .await?;
+        agentverse::metrics::record_maintenance_backlog(sessions.len() as u64);
         for session in sessions {
             let msgs = self
                 .session_memory
@@ -145,6 +146,10 @@ impl CleanupWorker {
                 sessions_deleted,
                 "CleanupWorker deleted ended sessions past retention"
             );
+            agentverse::metrics::record_session_deleted(
+                agentverse::metrics::SessionDeleteReason::EndedTtl,
+                sessions_deleted,
+            );
         }
 
         let message_cutoff_ts =
@@ -153,6 +158,7 @@ impl CleanupWorker {
             .session_memory
             .list_sessions_needing_maintenance()
             .await?;
+        agentverse::metrics::record_maintenance_backlog(sessions.len() as u64);
         for session in sessions {
             let wm = self.session_memory.get_watermark(session.id).await?;
             let deleted = self

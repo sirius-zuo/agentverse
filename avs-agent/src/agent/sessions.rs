@@ -53,6 +53,12 @@ impl Agent {
         }
         let mut cache = self.cache_memory.lock().await;
         cache.retain(|(cached_user_id, _), _| cached_user_id != user_id);
+        if !sessions.is_empty() {
+            agentverse::metrics::record_session_deleted(
+                agentverse::metrics::SessionDeleteReason::UserRequest,
+                sessions.len() as u64,
+            );
+        }
         Ok(())
     }
 
