@@ -295,15 +295,8 @@ version = "0.1.0"
 dependencies = [
  "agentverse",
  "agentverse-memory",
- "async-trait",
- "chrono",
- "serde",
- "serde_json",
  "tempfile",
- "thiserror 1.0.69",
  "tokio",
- "tracing",
- "uuid",
 ]
 
 [[package]]
