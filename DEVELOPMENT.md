@@ -35,6 +35,7 @@ AgentVerse/
 ├── avs-session/           # Session model, SessionManager, SessionMemory trait, SqliteSessionMemory
 ├── avs-subagent/          # Subagent runtime: SubAgentExecutor, SubAgentSpec, Budget, SubAgentHandle, SubAgentTool
 ├── avs-logging/           # avs_logging::init() (RUST_LOG / LOG_FORMAT)
+├── avs-eval/              # Eval harness: deterministic scaffold + judge-based quality regression tests
 ├── avs-react/             # ReAct strategy loop
 ├── avs-plan/              # Plan-and-Execute + Hierarchical strategies
 ├── avs-router/            # Dynamic strategy routing
@@ -1155,6 +1156,17 @@ cargo test --workspace
 cargo test -p agentverse-agent
 cargo test --workspace -- --nocapture
 ```
+
+### Eval Harness
+
+The `avs-eval` crate (see the [Eval Harness README section](README.md#eval-harness)) covers two distinct testing concerns, deliberately kept separate:
+
+1. **Deterministic scaffold regression** (`avs-eval/tests/deterministic_test.rs`) — pure-function tests with zero LLM/network calls, for the ReAct parser, the skill router, and prompt template rendering. Fixtures live in `avs-eval/fixtures/{parser,router,templates}/*.toml`.
+2. **Judge-based quality regression** (`avs-eval/tests/judge_test.rs`) — runs the real `Agent`/strategy stack against a *recorded* LLM response (via `httpmock`, loaded from `avs-eval/fixtures/recordings/*.toml`), captures the output, then scores it against a rubric using a *recorded* judge-model response. Both the agent-under-test and the judge are fully mocked in every automated run — this project has no CI job, scheduled workflow, or any other automated path that ever makes a live LLM call, and this harness does not introduce the first one.
+
+**Refreshing recordings against live models:** each recording file (`avs-eval/fixtures/recordings/<case>.toml`) holds a sequence of agent-model turns plus one judge-model turn, each just a `body_contains` matcher and a `content` string — see `scripts/refresh-judge-recordings.sh` for the exact manual procedure to re-capture these against a live model. This script is never run by CI; a developer runs it locally with real API keys, reviews the newly-captured live model output, and commits the updated recording file(s) like any other fixture change. This is intentional: it keeps a human in the loop reviewing what a live model actually said before it becomes a permanent regression expectation.
+
+**Why judge scoring is Pass/Fail, not a numeric score:** a strict binary verdict against an explicit rubric avoids the calibration drift that numeric LLM-judge scores are prone to — a case either meets its rubric or it doesn't, with no threshold to tune.
 
 ---
 

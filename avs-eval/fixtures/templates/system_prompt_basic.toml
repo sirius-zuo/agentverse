@@ -1,0 +1,6 @@
+template = "You are {{ role }}. Today is {{ date }}."
+expected = "You are a helpful assistant. Today is 2026-07-04."
+
+[context]
+role = "a helpful assistant"
+date = "2026-07-04"

@@ -33,6 +33,7 @@ members = [
     "examples/support-router",
     "examples/accountant-workflow",
     "avs-test-utils",
+    "avs-eval",
 ]
 resolver = "2"
 

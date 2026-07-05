@@ -1,0 +1,4 @@
+message = "can you review my code for bugs and style"
+skill_id = "code-review"
+threshold = 0.1
+expected_debug = "Some(\"code-review\")"

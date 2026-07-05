@@ -1,0 +1,10 @@
+[[agent_turns]]
+body_contains = "You are a planning assistant"
+content = '{"description":"Answer a simple question","steps":[{"id":1,"description":"Echo the answer","tool":"echo","args":{"text":"42"},"depends_on":[]}]}'
+
+[[agent_turns]]
+body_contains = "You executed the following plan"
+content = "The answer is 42, based on the executed plan."
+
+[judge_turn]
+content = "{\"verdict\": \"pass\", \"reasoning\": \"addresses the original request\"}"

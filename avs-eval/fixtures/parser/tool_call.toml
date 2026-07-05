@@ -1,0 +1,2 @@
+input = "Thought: searching.\nAction: search\nAction Input: {\"q\": \"test\"}"
+expected_debug = "ToolCall { tool_name: \"search\", args: Object {\"q\": String(\"test\")} }"

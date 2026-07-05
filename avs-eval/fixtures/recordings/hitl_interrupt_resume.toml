@@ -1,0 +1,10 @@
+[[agent_turns]]
+body_contains = "ran: ls"
+content = "Thought: done.\nAnswer: The ls command completed successfully."
+
+[[agent_turns]]
+body_contains = "please run ls"
+content = "Thought: need to run it.\nAction: exec_command\nAction Input: {\"cmd\": \"ls\"}"
+
+[judge_turn]
+content = "{\"verdict\": \"pass\", \"reasoning\": \"correctly reflects the approved tool's result\"}"
