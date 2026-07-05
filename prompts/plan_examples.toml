@@ -1,7 +1,0 @@
-[[example]]
-input = "Search for the weather and tell me if I should go outside"
-output = '{"description": "Check weather and advise", "steps": [{"id": 1, "description": "Get weather data", "tool": "weather", "args": {"city": "current"}, "depends_on": []}, {"id": 2, "description": "Analyze and respond", "tool": null, "args": null, "depends_on": [1]}]}'
-
-[[example]]
-input = "Find the best pizza places in NYC"
-output = '{"description": "Search and rank pizza places", "steps": [{"id": 1, "description": "Search pizza places", "tool": "search", "args": {"query": "best pizza NYC"}, "depends_on": []}, {"id": 2, "description": "Rank results", "tool": null, "args": null, "depends_on": [1]}]}'
