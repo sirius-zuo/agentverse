@@ -31,12 +31,24 @@ fn chat_completion_envelope(content: &str) -> serde_json::Value {
 }
 
 /// Registers one `httpmock` mock per `agent_turns` entry against `server`,
-/// each matched by that entry's `body_contains` substring. Entries must be
-/// mutually exclusive by their `body_contains` text (httpmock matches by
-/// request-body content, not registration order) — if two turns' markers
-/// both match a given request, the mock server's behavior is undefined by
-/// this loader; picking distinct, non-overlapping substrings is the
-/// recording file author's responsibility.
+/// each matched by that entry's `body_contains` substring, registered in
+/// list order.
+///
+/// Prefer picking `body_contains` substrings that are truly mutually
+/// exclusive across turns. That isn't always possible in a multi-turn
+/// conversation, though: later turns' requests carry the full cumulative
+/// message history, so an earlier turn's marker can still be present in a
+/// later turn's request (e.g. the original user message persists across an
+/// entire ReAct loop). When two turns' markers both match a given request,
+/// `httpmock` resolves the tie by registration order — the first-registered
+/// matching mock wins (verified against `httpmock` 0.7's `BTreeMap`-backed,
+/// insertion-ordered mock table). In that situation, order this function's
+/// *caller* registers the more-specific/later-appearing marker first in the
+/// recording file's `agent_turns` list, so it's checked (and matches) before
+/// a broader earlier-turn marker would. This is an internal `httpmock`
+/// implementation detail, not a documented public guarantee — a future
+/// `httpmock` upgrade could change it silently, so treat truly disjoint
+/// substrings as the safer choice whenever the conversation shape allows it.
 pub async fn register_agent_turns(server: &MockServer, recording: &Recording) {
     for turn in &recording.agent_turns {
         let body_contains = turn.body_contains.clone();
