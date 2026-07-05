@@ -49,3 +49,13 @@ pub struct RouterCase {
     pub threshold: f32,
     pub expected_debug: String,
 }
+
+/// A prompt-template regression case: a template string to register, a
+/// context (as a TOML table, converted to JSON values for rendering), and
+/// the expected exact rendered output.
+#[derive(serde::Deserialize)]
+pub struct TemplateCase {
+    pub template: String,
+    pub context: std::collections::HashMap<String, toml::Value>,
+    pub expected: String,
+}
