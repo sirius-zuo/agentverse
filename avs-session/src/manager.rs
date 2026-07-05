@@ -41,6 +41,10 @@ impl SessionManager {
             .await
     }
 
+    pub async fn delete_session(&self, session_id: SessionId) -> Result<(), SessionMemoryError> {
+        self.store.delete_session(session_id).await
+    }
+
     pub async fn list_sessions(&self, user_id: &str) -> Result<Vec<Session>, SessionMemoryError> {
         self.store.list_by_user(user_id).await
     }
