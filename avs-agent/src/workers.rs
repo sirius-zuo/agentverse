@@ -22,6 +22,7 @@ impl Default for ConsolidationConfig {
     }
 }
 
+#[derive(Clone)]
 pub struct CleanupConfig {
     /// Delete raw turns older than this window, once consolidated.
     pub message_retention: Duration,

@@ -38,12 +38,10 @@ impl Agent {
         session_memory: Arc<dyn agentverse_session::SessionMemory>,
     ) {
         let sm_for_cleanup = Arc::clone(&session_memory);
+        let cleanup_config = self.cleanup_config.clone();
         spawn_supervised("cleanup", move || {
-            crate::workers::CleanupWorker::new(
-                Arc::clone(&sm_for_cleanup),
-                crate::workers::CleanupConfig::default(),
-            )
-            .run()
+            crate::workers::CleanupWorker::new(Arc::clone(&sm_for_cleanup), cleanup_config.clone())
+                .run()
         });
 
         if let Some(ref hitl_cfg) = self.hitl {

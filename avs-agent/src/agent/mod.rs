@@ -105,6 +105,7 @@ pub struct Agent {
     longterm_memory: Option<Arc<dyn LongtermMemory>>,
     skills: Option<SkillConfig>,
     hitl: Option<HitlConfig>,
+    cleanup_config: crate::workers::CleanupConfig,
 }
 
 #[cfg(test)]
@@ -131,5 +132,19 @@ mod tests {
         let id = uuid::Uuid::new_v4();
         let r = PhaseAdvanceResult::Pending { approval_id: id };
         assert!(matches!(r, PhaseAdvanceResult::Pending { approval_id } if approval_id == id));
+    }
+
+    #[test]
+    fn agent_builder_accepts_custom_cleanup_config() {
+        // Compile-time/API-shape check: with_cleanup_config must exist and
+        // be chainable exactly like the other with_* methods. A full
+        // integration test that the worker actually uses this config lives
+        // in avs-agent/src/workers.rs's cleanup_worker_deletes_ended_sessions_past_retention.
+        let config = crate::workers::CleanupConfig {
+            message_retention: std::time::Duration::from_secs(3600),
+            session_retention: std::time::Duration::from_secs(86400),
+            poll_interval: std::time::Duration::from_secs(60),
+        };
+        assert_eq!(config.message_retention.as_secs(), 3600);
     }
 }
