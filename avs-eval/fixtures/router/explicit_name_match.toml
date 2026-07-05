@@ -1,0 +1,4 @@
+message = "please use code-review to check this"
+skill_id = "code-review"
+threshold = 0.99
+expected_debug = "Some(\"code-review\")"

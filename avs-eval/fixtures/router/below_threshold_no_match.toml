@@ -1,0 +1,4 @@
+message = "what's the weather like today"
+skill_id = "code-review"
+threshold = 0.99
+expected_debug = "None"

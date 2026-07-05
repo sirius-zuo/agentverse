@@ -38,3 +38,14 @@ pub struct ParserCase {
     pub input: String,
     pub expected_debug: String,
 }
+
+/// A router regression case: a message, one target skill's id/description
+/// (used to build a minimal `Skill` candidate), a threshold, and the
+/// expected `Option<String>` match result (as a debug string).
+#[derive(serde::Deserialize)]
+pub struct RouterCase {
+    pub message: String,
+    pub skill_id: String,
+    pub threshold: f32,
+    pub expected_debug: String,
+}
