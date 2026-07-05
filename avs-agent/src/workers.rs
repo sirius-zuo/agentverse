@@ -70,7 +70,10 @@ impl ConsolidationWorker {
     }
 
     async fn tick(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let sessions = self.session_memory.list_all_active_sessions().await?;
+        let sessions = self
+            .session_memory
+            .list_sessions_needing_maintenance()
+            .await?;
         for session in sessions {
             let msgs = self
                 .session_memory
@@ -127,7 +130,10 @@ impl CleanupWorker {
     async fn tick(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let cutoff_ts =
             chrono::Utc::now().timestamp() - self.config.retention_window.as_secs() as i64;
-        let sessions = self.session_memory.list_all_active_sessions().await?;
+        let sessions = self
+            .session_memory
+            .list_sessions_needing_maintenance()
+            .await?;
         for session in sessions {
             let wm = self.session_memory.get_watermark(session.id).await?;
             let deleted = self

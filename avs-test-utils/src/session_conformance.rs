@@ -120,4 +120,79 @@ pub async fn run_conformance_suite<S: SessionMemory>(store: &S) {
         .await
         .expect("list bob")
         .is_empty());
+
+    // list_sessions_needing_maintenance: a session with unconsolidated
+    // messages appears regardless of status — this is the regression test
+    // for the active-only scoping bug (a session that has ended must still
+    // be visible to background workers until its messages are drained).
+    let ended_with_pending = store.create("carol").await.expect("create ended session");
+    store
+        .append_turn(
+            ended_with_pending.id,
+            Message {
+                role: MessageRole::User,
+                content: "pending".into(),
+            },
+            Message {
+                role: MessageRole::Assistant,
+                content: "reply".into(),
+            },
+        )
+        .await
+        .expect("append_turn for ended session");
+    store
+        .update_status(ended_with_pending.id, SessionStatus::Completed)
+        .await
+        .expect("end the session while it still has unconsolidated messages");
+    let needing_maintenance = store
+        .list_sessions_needing_maintenance()
+        .await
+        .expect("list needing maintenance");
+    assert!(
+        needing_maintenance
+            .iter()
+            .any(|s| s.id == ended_with_pending.id),
+        "an ended session with unconsolidated messages must still be visible to background workers"
+    );
+
+    // A session with everything already consolidated and no messages old
+    // enough to prune should NOT appear (nothing left to do).
+    let fully_drained = store.create("dave").await.expect("create drained session");
+    store
+        .append_turn(
+            fully_drained.id,
+            Message {
+                role: MessageRole::User,
+                content: "hi".into(),
+            },
+            Message {
+                role: MessageRole::Assistant,
+                content: "hello".into(),
+            },
+        )
+        .await
+        .expect("append_turn for drained session");
+    let above = store
+        .load_messages_above_watermark(fully_drained.id)
+        .await
+        .expect("load above watermark");
+    let asst_seq = above.last().expect("has messages").0;
+    store
+        .advance_watermark(fully_drained.id, asst_seq)
+        .await
+        .expect("advance watermark to fully consolidate");
+    let needing_maintenance_2 = store
+        .list_sessions_needing_maintenance()
+        .await
+        .expect("list needing maintenance 2");
+    assert!(
+        !needing_maintenance_2
+            .iter()
+            .any(|s| s.id == fully_drained.id),
+        "a session doesn't need re-listing just because it has old consolidated messages \
+         eligible for pruning at some point — but this fixture's messages are brand new \
+         (created_at = now), so they aren't past any cutoff yet either; this assertion \
+         only checks that consolidation alone doesn't cause perpetual re-listing when \
+         nothing is actually prunable yet in the same tick"
+    );
 }

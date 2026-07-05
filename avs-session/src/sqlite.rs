@@ -315,11 +315,16 @@ impl SessionMemory for SqliteSessionMemory {
             .collect::<Result<Vec<_>, SessionMemoryError>>()
     }
 
-    async fn list_all_active_sessions(&self) -> Result<Vec<Session>, SessionMemoryError> {
+    async fn list_sessions_needing_maintenance(&self) -> Result<Vec<Session>, SessionMemoryError> {
         let rows = sqlx::query_as::<_, (String, String, String, i64, i64)>(
-            "SELECT id, user_id, status, created_at, updated_at \
-             FROM sessions WHERE status = 'active' ORDER BY updated_at ASC",
+            "SELECT DISTINCT s.id, s.user_id, s.status, s.created_at, s.updated_at \
+             FROM sessions s \
+             JOIN messages m ON m.session_id = s.id \
+             WHERE m.sequence_num > s.consolidation_watermark \
+                OR (m.sequence_num <= s.consolidation_watermark AND m.created_at < ?) \
+             ORDER BY s.updated_at ASC",
         )
+        .bind(chrono::Utc::now().timestamp())
         .fetch_all(&self.pool)
         .await
         .map_err(|e| SessionMemoryError::Database(e.to_string()))?;

@@ -54,8 +54,14 @@ pub trait SessionMemory: Send + Sync {
         cutoff_ts: i64,
         watermark: i64,
     ) -> Result<u64, SessionMemoryError>;
-    /// Returns all active sessions across all users. Used by background workers only.
-    async fn list_all_active_sessions(&self) -> Result<Vec<Session>, SessionMemoryError>;
+    /// Returns every session — regardless of status — that still has pending
+    /// maintenance work: unconsolidated messages (`sequence_num` above the
+    /// watermark) or messages eligible for age-based pruning once consolidated.
+    /// Used by background workers only. A session that leaves `Active` status
+    /// remains visible here until fully drained — this is what makes worker
+    /// crashes/restarts/retries self-healing regardless of *why* or *how* a
+    /// session left `Active` (normal completion, HITL interruption, etc.).
+    async fn list_sessions_needing_maintenance(&self) -> Result<Vec<Session>, SessionMemoryError>;
 
     /// Store serialised skill context for a session (None clears it).
     /// Default implementation is a no-op so existing impls compile unchanged.

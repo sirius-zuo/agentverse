@@ -139,7 +139,7 @@ impl SessionMemory for FakeStore {
         Ok(0)
     }
 
-    async fn list_all_active_sessions(&self) -> Result<Vec<Session>, SessionMemoryError> {
+    async fn list_sessions_needing_maintenance(&self) -> Result<Vec<Session>, SessionMemoryError> {
         Ok(vec![])
     }
 }
