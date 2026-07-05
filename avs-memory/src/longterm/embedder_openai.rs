@@ -64,6 +64,25 @@ impl Embedder for OpenAiEmbedder {
         let mut data = parsed.data;
         data.sort_by_key(|d| d.index);
 
+        if data.len() != texts.len() {
+            return Err(MemoryError::Embedding(format!(
+                "expected {} embeddings, got {}",
+                texts.len(),
+                data.len()
+            )));
+        }
+        // After sorting, indices must be exactly 0..texts.len() — a duplicate or
+        // gap would silently mis-map vectors to inputs.
+        for (expected, d) in data.iter().enumerate() {
+            if d.index != expected {
+                return Err(MemoryError::Embedding(format!(
+                    "response indices are not exactly 0..{} (duplicate or gap at index {})",
+                    texts.len(),
+                    d.index
+                )));
+            }
+        }
+
         for d in &data {
             if d.embedding.len() != self.dimensions {
                 return Err(MemoryError::Embedding(format!(

@@ -47,19 +47,21 @@ impl Embedder for GeminiEmbedder {
             })
             .collect();
 
+        // `without_url()` strips the URL from reqwest's error Display — the URL
+        // carries the API key in its query string and must never reach logs.
         let response = self
             .client
             .post(&url)
             .json(&serde_json::json!({ "requests": requests }))
             .send()
             .await
-            .map_err(|e| MemoryError::Embedding(e.to_string()))?;
+            .map_err(|e| MemoryError::Embedding(e.without_url().to_string()))?;
 
         let status = response.status();
         let body = response
             .text()
             .await
-            .map_err(|e| MemoryError::Embedding(e.to_string()))?;
+            .map_err(|e| MemoryError::Embedding(e.without_url().to_string()))?;
 
         if !status.is_success() {
             return Err(MemoryError::Embedding(format!("{status}: {body}")));

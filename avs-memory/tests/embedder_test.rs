@@ -102,3 +102,57 @@ fn unknown_provider_errors() {
         .build("nope", &HashMap::new())
         .is_err());
 }
+
+#[tokio::test]
+async fn openai_duplicate_index_is_error() {
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method(POST).path("/embeddings");
+        then.status(200).json_body(serde_json::json!({
+            "data": [
+                {"index": 0, "embedding": [0.1, 0.2, 0.3]},
+                {"index": 0, "embedding": [0.4, 0.5, 0.6]}
+            ]
+        }));
+    });
+    let reg = EmbedderRegistry::with_builtins();
+    let e = reg
+        .build(
+            "openai",
+            &settings(&[
+                ("model_name", "m"),
+                ("base_url", &server.url("")),
+                ("dimensions", "3"),
+            ]),
+        )
+        .unwrap();
+    let err = e.embed(&["a".into(), "b".into()]).await.unwrap_err();
+    assert!(
+        err.to_string().contains("duplicate or gap"),
+        "expected index-integrity error, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn gemini_connection_error_does_not_leak_api_key() {
+    let api_key = "super-secret-key";
+    let reg = EmbedderRegistry::with_builtins();
+    let e = reg
+        .build(
+            "gemini",
+            &settings(&[
+                ("model_name", "text-embedding-004"),
+                ("api_key", api_key),
+                // Unroutable port: connection refused, no server involved.
+                ("base_url", "http://127.0.0.1:1"),
+                ("dimensions", "2"),
+            ]),
+        )
+        .unwrap();
+    let err = e.embed(&["a".into()]).await.unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        !msg.contains(api_key),
+        "error message leaked the api key: {msg}"
+    );
+}
