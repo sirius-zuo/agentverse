@@ -1,5 +1,6 @@
 use super::{Agent, AgentError, AgentOutput, CacheMemory};
-use agentverse::memory::{LongtermRecord, Message, MessageRole};
+use agentverse::memory::{Message, MessageRole};
+use agentverse_memory::LongtermRecord;
 use agentverse_session::SessionId;
 use agentverse_skill::{RouteSkills, SkillContext, SkillRouter};
 use std::time::Instant;

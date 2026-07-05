@@ -1,6 +1,6 @@
 use super::{Agent, HitlConfig};
-use agentverse::memory::LongtermMemory;
 use agentverse::{LlmRunner, PromptRegistry, RunStrategy};
+use agentverse_memory::LongtermMemory;
 use agentverse_session::{SessionManager, SessionMemory};
 use agentverse_skill::SkillConfig;
 use agentverse_tools::ToolRegistry;

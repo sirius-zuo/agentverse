@@ -2,9 +2,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use agentverse::memory::{LongtermMemory, Message};
+use agentverse::memory::Message;
 use agentverse::{LlmRunner, PromptRegistry, RunStrategy};
 use agentverse_hitl::InterruptKind;
+use agentverse_memory::LongtermMemory;
 use agentverse_session::{SessionId, SessionManager, SessionMemoryError};
 use agentverse_skill::{SkillConfig, SkillError};
 use agentverse_tools::ToolRegistry;

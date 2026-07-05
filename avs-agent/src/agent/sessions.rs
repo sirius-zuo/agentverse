@@ -75,8 +75,9 @@ impl Agent {
 #[cfg(test)]
 mod tests {
     use super::super::{Agent, CacheMemory};
-    use agentverse::memory::{LongtermMemory, LongtermRecord, MemoryError, ScoredMemory};
+    use agentverse::memory::MemoryError;
     use agentverse::{Config, LlmRunner, PromptRegistry};
+    use agentverse_memory::{LongtermMemory, LongtermRecord, ScoredMemory};
     use agentverse_session::SqliteSessionMemory;
     use agentverse_strategy::{build, StrategyKind};
     use agentverse_tools::ToolRegistry;

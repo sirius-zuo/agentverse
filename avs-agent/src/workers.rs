@@ -1,4 +1,4 @@
-use agentverse::memory::{LongtermMemory, LongtermRecord};
+use agentverse_memory::{LongtermMemory, LongtermRecord};
 use agentverse_session::SessionMemory;
 use std::sync::Arc;
 use std::time::Duration;

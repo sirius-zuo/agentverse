@@ -1,19 +1,8 @@
-use super::traits::{LongTermBackend, Summarizer};
-use agentverse::memory::{MemoryError, Message, MessageRole};
+use super::traits::LongTermBackend;
+use agentverse::memory::{MemoryError, Message};
 use async_trait::async_trait;
 
-pub struct NoopSummarizer;
 pub struct NoopBackend;
-
-#[async_trait]
-impl Summarizer for NoopSummarizer {
-    async fn summarize(&self, _messages: &[Message]) -> Result<Message, MemoryError> {
-        Ok(Message {
-            role: MessageRole::System,
-            content: "[summary]".to_string(),
-        })
-    }
-}
 
 #[async_trait]
 impl LongTermBackend for NoopBackend {
