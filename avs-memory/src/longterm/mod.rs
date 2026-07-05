@@ -2,6 +2,9 @@ use agentverse::memory::MemoryError;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
+pub mod vector;
+pub use vector::{NoopVectorStore, VectorHit, VectorRecord, VectorStore};
+
 #[derive(Debug, Clone)]
 pub struct LongtermRecord {
     pub content: String,
