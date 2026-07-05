@@ -12,12 +12,15 @@ Complete guide for developing, testing, and deploying agents with AgentVerse.
 - [Multi-LLM Provider Configuration](#multi-llm-provider-configuration)
 - [Writing Tools](#writing-tools)
 - [Using MCP (Model Context Protocol)](#using-mcp-model-context-protocol)
+- [Using the SubAgent Runtime](#using-the-subagent-runtime)
 - [Prompt Engineering](#prompt-engineering)
 - [Testing Strategies](#testing-strategies)
 - [Deploying Agents](#deploying-agents)
 - [Adding Long-Term Memory](#adding-long-term-memory)
+  - [Retention and Data Deletion](#retention-and-data-deletion)
 - [Integrating External Systems](#integrating-external-systems)
 - [Debugging & Observability](#debugging--observability)
+- [Quick Reference](#quick-reference)
 
 ---
 
@@ -36,6 +39,7 @@ AgentVerse/
 ├── avs-subagent/          # Subagent runtime: SubAgentExecutor, SubAgentSpec, Budget, SubAgentHandle, SubAgentTool
 ├── avs-logging/           # avs_logging::init() (RUST_LOG / LOG_FORMAT)
 ├── avs-eval/              # Eval harness: deterministic scaffold + judge-based quality regression tests
+├── avs-test-utils/        # Dev-dependency only: shared SessionMemory conformance suite + agent test helpers
 ├── avs-react/             # ReAct strategy loop
 ├── avs-plan/              # Plan-and-Execute + Hierarchical strategies
 ├── avs-router/            # Dynamic strategy routing
@@ -67,11 +71,13 @@ AgentVerse/
 
 | Concept | Crate | Description |
 |---------|-------|-------------|
-| **Agent** | `agentverse-agent` | Single LLM access point — composes `LlmRunner`, strategy, `SessionManager`, memory layers, and optional `SkillConfig` |
+| **Agent** | `agentverse-agent` | Single LLM access point — composes `LlmRunner`, strategy, `SessionManager`, memory layers, and optional `SkillConfig`. Constructed only via `AgentBuilder`; there is no direct constructor. |
+| **AgentBuilder** | `agentverse-agent` | `Agent::builder(runner, tools, prompts, session_memory, strategy)` returns this; chain `.with_http_server()`, `.with_longterm_memory(...)`, `.with_skills(...)`, `.with_hitl(...)`, `.with_cleanup_config(...)`, then `.build() -> Arc<Agent>` |
 | **SkillConfig** | `agentverse-agent` | Wraps `SkillRegistry`, `SkillMode`, routing threshold, and precomputed caches; constructed via `SkillConfig::load` |
 | **SkillMode** | `agentverse-agent` | `Open` (all skills eligible) or `Constrained(ids)` (allowlist); also re-exported from `agentverse-skill` |
 | **SkillRouter** | `agentverse-skill` | Keyword-overlap scorer; binds a skill to a session on first invoke above threshold |
-| **HitlConfig** | `agentverse-agent` | `{ policy: HitlPolicy, queue: Arc<dyn ApprovalQueue> }`; passed to `Agent::new` to enable HITL gates |
+| **HitlConfig** | `agentverse-agent` | `{ policy: HitlPolicy, queue: Arc<dyn ApprovalQueue> }`; passed to `AgentBuilder::with_hitl` to enable HITL gates |
+| **CleanupConfig** | `agentverse-agent` (`workers` module) | `{ message_retention, session_retention, poll_interval }`; passed to `AgentBuilder::with_cleanup_config` to override the default 24h/30-day/5-min retention windows |
 | **HitlPolicy** | `agentverse-hitl` | Declares which tools/skills/phases require approval: `global_tool_blocklist`, `skill_tool_gates`, `skill_phase_gates`, `skill_checkpoints` |
 | **ApprovalQueue** | `agentverse-hitl` | Trait for approval storage/resolution: `submit`, `resolve`, `poll`, `sweep_expired`; built-in `InMemoryQueue` and `SqliteQueue` |
 | **AgentOutput** | `agentverse-agent` | `Done(String)` or `Interrupted { approval_id, kind }`; returned by `invoke`/`resume` when a HITL gate fires |
@@ -81,7 +87,7 @@ AgentVerse/
 | **PromptRegistry** | `agentverse` | Template engine (Minijinja) + example storage |
 | **Tool** | `agentverse` | `Tool` trait with associated `type Args: JsonSchema + DeserializeOwned`; `ErasedTool` for object-safe registry dispatch |
 | **SessionMemory** | `agentverse-session` | Layer-2 durable conversation transcript; `SessionManager` wraps it with ownership checks |
-| **LongtermMemory** | `agentverse` | Layer-3 cross-session knowledge store; opt-in via `Agent::new(..., Some(store))` |
+| **LongtermMemory** | `agentverse` | Layer-3 cross-session knowledge store; opt-in via `AgentBuilder::with_longterm_memory(store)`. No deletion capability exists on this trait anywhere in agentverse — that data's retention is explicitly out of scope, see [Retention and Data Deletion](#retention-and-data-deletion) |
 | **RunStrategy** | `agentverse` | Trait implemented by all strategies; pure `Vec<Message> → String`, no memory coupling |
 | **SubAgentExecutor** | `agentverse-subagent` | Orchestrates isolated worker agents; cloneable; built alongside (not inside) `Agent` |
 | **SubAgentSpec** / **Budget** | `agentverse-subagent` | Describes one worker: objective, system prompt, allowed tools, model override, step/token/timeout budget |
@@ -108,12 +114,31 @@ cargo check --workspace
 # Run all tests
 cargo test --workspace
 
-# Run clippy with warnings as errors
-cargo clippy --all -- -D warnings
+# Run clippy with warnings as errors (CI runs --all-targets; do the same before pushing
+# signature changes, since plain `--all` misses tests/examples/benches)
+cargo clippy --workspace --all-targets -- -D warnings
 
 # Format all code
 cargo fmt --all
 ```
+
+### CI Fitness Checks
+
+Two additional checks run in CI beyond the standard fmt/clippy/test/check gate — both are plain scripts, run them locally before pushing if you've added a file or a new crate dependency:
+
+```bash
+# Fails if any .rs file exceeds 600 lines, unless allowlisted at a recorded cap
+# (scripts/file-size-allowlist.txt). Prevents unbounded growth of the kind that
+# produced the pre-decomposition agent.rs (1,829 lines, since split into avs-agent/src/agent/*.rs).
+./scripts/check-file-sizes.sh
+
+# Fails if any crate depends on a crate in a higher architectural layer than
+# itself — catches one-directional layering violations that Cargo's own
+# dependency-cycle check doesn't (a cycle requires both directions; this doesn't).
+./scripts/check-layering.sh
+```
+
+`cargo-deny` (licenses/advisories/bans/sources) also runs in CI but is **not** part of the local dev gate above — it has its own job. A new crate needs `license.workspace = true` in its `Cargo.toml` (every existing crate already has it) or the CI `deny` job fails after merge, since nothing in the standard local gate exercises it. Run `cargo deny check licenses` locally if you're scaffolding a new crate and want to confirm before pushing.
 
 ### Local LLM Development
 
@@ -177,11 +202,7 @@ async fn main() {
         .unwrap_or_else(|_| "my-model".to_string());
 
     let runner = Arc::new(LlmRunner::from_config(Config {
-        provider: ProviderConfig::OpenAI {
-            model_name,
-            api_key,
-            base_url: Some(base_url),
-        },
+        provider: ProviderConfig::openai(model_name, api_key, Some(base_url)),
         max_messages: 100,
         tools: vec![],
         prompts_dir: None,
@@ -209,8 +230,8 @@ async fn main() {
         SqliteSessionMemory::new("sqlite::memory:").await.expect("session memory")
     );
 
-    // enable_http_server=false: console only; None = no long-term memory; None = no skills
-    let agent = Agent::new(runner, tools, prompts, session_memory, strategy, false, None, None, None);
+    // No .with_http_server()/.with_longterm_memory()/.with_skills()/.with_hitl() calls: console-only, no extras
+    let agent = Agent::builder(runner, tools, prompts, session_memory, strategy).build();
 
     // Stateless invoke (no session history)
     match agent.invoke_stateless("What is 6 * 7?").await {
@@ -232,16 +253,18 @@ let reply = agent.invoke("alice", session_id, "What did I just say?").await?;
 
 ### Option 3: HTTP Agent
 
-Add `features = ["http"]` to `agentverse-agent` in Cargo.toml and pass `enable_http_server=true`:
+Add `features = ["http"]` to `agentverse-agent` in Cargo.toml and call `.with_http_server()`:
 
 ```toml
 agentverse-agent = { path = "path/to/avs-agent", features = ["http"] }
 ```
 
 ```rust
-// enable_http_server=true: spawns HTTP server as a background task
+// .with_http_server() spawns an HTTP server as a background task
 // reads HOST (default 0.0.0.0) and PORT (default 3000) from env
-let _agent = Agent::new(runner, tools, prompts, session_memory, strategy, true, None, None, None);
+let _agent = Agent::builder(runner, tools, prompts, session_memory, strategy)
+    .with_http_server()
+    .build();
 
 // Keep the process alive
 tokio::signal::ctrl_c().await.unwrap();
@@ -253,10 +276,10 @@ Binding a non-loopback `HOST` without `API_KEY` now aborts startup unless `ALLOW
 
 ```rust
 let runner = Arc::new(LlmRunner::from_config(Config {
-    provider: ProviderConfig::Anthropic {
-        model_name: "claude-sonnet-4-6".to_string(),
-        api_key: std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY"),
-    },
+    provider: ProviderConfig::anthropic(
+        "claude-sonnet-4-6",
+        std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY"),
+    ),
     max_messages: 50,
     tools: vec![],
     prompts_dir: None,
@@ -339,13 +362,9 @@ let skills = SkillConfig::load(skills_dir, SkillMode::Open)
 // Print skill IDs at startup (precomputed — no extra lock needed)
 println!("Skills loaded: {}", skills.ids.lock().unwrap().join(", "));
 
-let agent = Agent::new(
-    runner, tools, prompts, session_memory, strategy,
-    false,        // enable_http_server
-    None,         // longterm_memory
-    Some(skills), // skill config
-    None,         // hitl config
-);
+let agent = Agent::builder(runner, tools, prompts, session_memory, strategy)
+    .with_skills(skills)
+    .build();
 ```
 
 ### Routing Modes
@@ -453,13 +472,13 @@ Tool names must match the `name()` return value of the tool struct exactly (e.g.
 | `ApprovalQueue` | `agentverse-hitl` | Trait: `submit(req) -> ApprovalId`, `resolve(id, decision)`, `poll(id) -> ApprovalStatus`, `sweep_expired() -> u64` |
 | `InMemoryQueue` | `agentverse-hitl` | Process-local `ApprovalQueue` impl; approvals lost on restart — fine for demos and tests |
 | `SqliteQueue` | `agentverse-hitl` | Durable `ApprovalQueue` impl backed by SQLite (`SqliteQueue::new(database_url)`); survives restarts |
-| `HitlConfig` | `agentverse-agent` | `{ policy: HitlPolicy, queue: Arc<dyn ApprovalQueue> }`; passed to `Agent::new` |
+| `HitlConfig` | `agentverse-agent` | `{ policy: HitlPolicy, queue: Arc<dyn ApprovalQueue> }`; passed to `AgentBuilder::with_hitl` |
 | `ApprovalDecision` | `agentverse-hitl` | `Approved`, `Rejected { reason }`, `Modified { new_args }` |
 | `ApprovalRequest` / `ApprovalStatus` | `agentverse-hitl` | Queue entry and its lifecycle state (`Pending`, `Resolved(decision)`, `Expired`) |
 | `RequestCheckpointTool` | `agentverse-hitl` | Tool named `request_checkpoint`; register it whenever any loaded skill declares `checkpoints` |
 | `AgentOutput` | `agentverse-agent` | `Done(String)` or `Interrupted { approval_id, kind }` — returned by `invoke` and `resume` |
 | `PhaseAdvanceResult` | `agentverse-agent` | `Advanced(PhaseTransition)` or `Pending { approval_id }` — returned by `advance_phase` |
-| `HitlSweepWorker` | `agentverse-agent` | Auto-spawned by `Agent::new` when `hitl` is `Some(_)`; polls `queue.sweep_expired()` every 60s (`HitlSweepConfig::default()`) to reject stale pending approvals |
+| `HitlSweepWorker` | `agentverse-agent` | Auto-spawned by `Agent::builder(...).build()` when `.with_hitl(...)` was called; polls `queue.sweep_expired()` every 60s (`HitlSweepConfig::default()`) to reject stale pending approvals |
 
 ### Deriving a Policy from Loaded Skills
 
@@ -484,7 +503,7 @@ let policy = {
 };
 ```
 
-### Wiring into `Agent::new`
+### Wiring into `Agent::builder`
 
 ```rust
 use agentverse_agent::agent::HitlConfig;
@@ -498,13 +517,10 @@ let hitl = HitlConfig {
     queue: Arc::clone(&queue) as Arc<dyn agentverse_hitl::ApprovalQueue>,
 };
 
-let agent = Agent::new(
-    runner, tools, prompts, session_memory, strategy,
-    false,        // enable_http_server
-    None,         // longterm_memory
-    Some(skills), // skill config
-    Some(hitl),   // hitl config
-);
+let agent = Agent::builder(runner, tools, prompts, session_memory, strategy)
+    .with_skills(skills)
+    .with_hitl(hitl)
+    .build();
 ```
 
 ### The Interrupt / Resume Loop
@@ -556,49 +572,77 @@ See `examples/accountant-workflow/src/main.rs` for a complete run loop that hand
 
 ## Multi-LLM Provider Configuration
 
-### ProviderConfig Enum
+### ProviderConfig
 
-| Variant | Fields | Use Case | Structured output |
-|---------|--------|----------|-------------------|
-| `OpenAI` | `model_name`, `api_key`, `base_url` | OpenAI API or any OpenAI-compatible endpoint (llama.cpp, Ollama, vLLM, etc.). `api_key` is optional when `base_url` is set. | Yes — `response_format: { type: "json_schema", ... }` enforced by server |
-| `Anthropic` | `model_name`, `api_key` | Claude models via Anthropic API | Yes — `output_config: { format: { type: "json_schema", schema } }` enforced by server |
-| `Gemini` | `model_name`, `api_key` | Google Gemini models | No — `response_format` silently ignored; free text returned |
+`ProviderConfig` is an open, registry-keyed struct — not a closed enum — so a downstream crate can add a new provider without touching `avs-core`:
+
+```rust
+pub struct ProviderConfig {
+    pub name: String,                        // looked up in a ProviderRegistry by name
+    pub settings: HashMap<String, String>,    // provider-specific keys (model_name, api_key, base_url, ...)
+}
+```
+
+`ConnectionManager::from_config(config, &registry)` resolves `config.name` against the registry's factories and calls the matched factory with `config.settings`; an unrecognized name fails with `ModelError::UnknownProvider`, and a missing required setting fails with `ModelError::MissingSetting(setting, provider)`.
+
+| Built-in name | Ergonomic constructor | Settings used | Structured output |
+|---|---|---|---|
+| `openai` | `ProviderConfig::openai(model_name, api_key, base_url)` | `model_name`, `api_key` (optional when `base_url` is set), `base_url` (optional — omit for the real OpenAI API) | Yes — `response_format: { type: "json_schema", ... }` enforced by server |
+| `anthropic` | `ProviderConfig::anthropic(model_name, api_key)` | `model_name`, `api_key` | Yes — `output_config: { format: { type: "json_schema", schema } }` enforced by server |
+| `gemini` | `ProviderConfig::gemini(model_name, api_key)` | `model_name`, `api_key` | No — `response_format` silently ignored; free text returned |
+
+`ProviderConfig::custom(name, settings)` builds a config for any name, including one a caller has registered themselves (see below).
 
 ### Configuration Examples
 
 **Local OpenAI-compatible endpoint:**
 ```rust
-ProviderConfig::OpenAI {
-    model_name: "my-model".to_string(),
-    api_key: String::new(),            // empty is fine for local endpoints
-    base_url: Some("http://127.0.0.1:9090/v1".to_string()),
-}
+ProviderConfig::openai(
+    "my-model",
+    "",                                       // empty is fine for local endpoints
+    Some("http://127.0.0.1:9090/v1".to_string()),
+)
 ```
 
 **OpenAI:**
 ```rust
-ProviderConfig::OpenAI {
-    model_name: "gpt-4o".to_string(),
-    api_key: std::env::var("OPENAI_API_KEY").unwrap(),
-    base_url: None,                    // uses OpenAI default
-}
+ProviderConfig::openai(
+    "gpt-4o",
+    std::env::var("OPENAI_API_KEY").unwrap(),
+    None,                                     // uses OpenAI default base URL
+)
 ```
 
 **Anthropic:**
 ```rust
-ProviderConfig::Anthropic {
-    model_name: "claude-sonnet-4-6".to_string(),
-    api_key: std::env::var("ANTHROPIC_API_KEY").unwrap(),
-}
+ProviderConfig::anthropic("claude-sonnet-4-6", std::env::var("ANTHROPIC_API_KEY").unwrap())
 ```
 
 **Gemini:**
 ```rust
-ProviderConfig::Gemini {
-    model_name: "gemini-pro".to_string(),
-    api_key: std::env::var("GEMINI_API_KEY").unwrap(),
-}
+ProviderConfig::gemini("gemini-pro", std::env::var("GEMINI_API_KEY").unwrap())
 ```
+
+### Registering a Custom Provider
+
+`ProviderRegistry` is a plain, name-keyed table of factories — not global state. `LlmRunner::from_config` always resolves against `ProviderRegistry::with_builtins()` internally (the three providers above), so adding a fourth provider means building a `ConnectionManager` directly against your own registry rather than going through `LlmRunner::from_config`:
+
+```rust
+use agentverse::{ConnectionManager, LlmRunner, ProviderConfig, ProviderRegistry};
+
+let mut registry = ProviderRegistry::with_builtins();
+registry.register("my-provider", Box::new(|settings| {
+    // Build and return a `ResolvedProvider { provider, api_base, api_key, model_name }`
+    // by reading whatever keys your provider needs out of `settings`.
+    my_provider_factory(settings)
+}));
+
+let config = ProviderConfig::custom("my-provider", my_settings);
+let connection = ConnectionManager::from_config(config, &registry)?;
+let runner = LlmRunner::new(std::sync::Arc::new(connection));
+```
+
+No `avs-core` changes are required — this is the fix for what used to require editing a closed 3-variant enum and every `match` over it (`ConnectionManager::from_config`, `with_model`, etc.) to add a provider.
 
 ### Structured Output
 
@@ -926,7 +970,9 @@ let executor = Arc::new(SubAgentExecutor::new(cm, tools, prompts));
 let agent_tools = ToolRegistry::new();
 SubAgentExecutor::register_tool(&executor, &agent_tools);   // registers "spawn_subagent"
 
-let agent = Agent::new(runner, agent_tools, prompts, session, strategy, false, None, Some(skills), None);
+let agent = Agent::builder(runner, agent_tools, prompts, session, strategy)
+    .with_skills(skills)
+    .build();
 ```
 
 In `SKILL.md`, use prose — not template variables — to reference the user's input. The parser stores the body verbatim with no substitution:
@@ -1135,11 +1181,7 @@ use agentverse::{Config, LlmRunner, ProviderConfig};
 #[test]
 fn test_runner_creation() {
     let runner = LlmRunner::from_config(Config {
-        provider: ProviderConfig::OpenAI {
-            model_name: "gpt-4".to_string(),
-            api_key: "test-key".to_string(),
-            base_url: None,
-        },
+        provider: ProviderConfig::openai("gpt-4", "test-key", None),
         max_messages: 10,
         tools: vec![],
         prompts_dir: None,
@@ -1167,6 +1209,26 @@ The `avs-eval` crate (see the [Eval Harness README section](README.md#eval-harne
 **Refreshing recordings against live models:** each recording file (`avs-eval/fixtures/recordings/<case>.toml`) holds a sequence of agent-model turns plus one judge-model turn, each just a `body_contains` matcher and a `content` string — see `scripts/refresh-judge-recordings.sh` for the exact manual procedure to re-capture these against a live model. This script is never run by CI; a developer runs it locally with real API keys, reviews the newly-captured live model output, and commits the updated recording file(s) like any other fixture change. This is intentional: it keeps a human in the loop reviewing what a live model actually said before it becomes a permanent regression expectation.
 
 **Why judge scoring is Pass/Fail, not a numeric score:** a strict binary verdict against an explicit rubric avoids the calibration drift that numeric LLM-judge scores are prone to — a case either meets its rubric or it doesn't, with no threshold to tune.
+
+### SessionMemory Conformance Suite
+
+`agentverse-test-utils::session_conformance::run_conformance_suite` is a single, shared test function exercising the full `SessionMemory` trait contract. Both backends run it against a real instance of themselves:
+
+```rust
+// avs-test-utils/tests/sqlite_conformance.rs
+use agentverse_session::SqliteSessionMemory;
+use agentverse_test_utils::session_conformance::run_conformance_suite;
+
+#[tokio::test]
+async fn sqlite_session_store_conforms() {
+    let store = SqliteSessionMemory::new("sqlite::memory:").await.unwrap();
+    run_conformance_suite(&store).await;
+}
+```
+
+The Postgres equivalent (`avs-memory-pgvector/tests/pg_conformance.rs`) reads `TEST_DATABASE_URL` and early-returns if it's unset — set it to a real Postgres instance to actually exercise it; without it, `cargo test --workspace` reports the test as passed without having run any Postgres-specific logic.
+
+Adding a third `SessionMemory` backend means writing one `#[tokio::test]` like the one above, not duplicating test logic. This is also how the two backends are kept behaviorally identical by construction — a semantic drift between SQLite and Postgres (e.g. one cascading a delete and the other not) fails the same shared assertions on both, rather than relying on two independently-written test suites staying in sync by discipline alone.
 
 ---
 
@@ -1218,7 +1280,7 @@ docker run -p 3000:3000 \
 
 ## Adding Long-Term Memory
 
-Layer-3 `LongtermMemory` is opt-in. Pass `Some(store)` as the `longterm_memory` argument to `Agent::new`; pass `None` to disable it entirely.
+Layer-3 `LongtermMemory` is opt-in. Call `.with_longterm_memory(store)` on `AgentBuilder`; omit the call to disable it entirely.
 
 ```rust
 use agentverse::memory::LongtermMemory;
@@ -1227,7 +1289,9 @@ use std::sync::Arc;
 // Any type implementing LongtermMemory works here
 let longterm: Arc<dyn LongtermMemory> = Arc::new(MyLongtermStore::new().await?);
 
-let agent = Agent::new(runner, tools, prompts, session_memory, strategy, false, Some(longterm), None, None);
+let agent = Agent::builder(runner, tools, prompts, session_memory, strategy)
+    .with_longterm_memory(longterm)
+    .build();
 ```
 
 On each `invoke` call the agent:
@@ -1235,6 +1299,43 @@ On each `invoke` call the agent:
 2. Asynchronously writes the completed turn as a `LongtermRecord` (fire-and-forget, off the latency path).
 
 Background workers (`ConsolidationWorker`, `CleanupWorker` in `avs-agent`) handle batch consolidation and retention-window cleanup independently of the per-turn write.
+
+`LongtermMemory` exposes `write`/`retrieve` only — **no deletion method exists on this trait anywhere in agentverse.** This is a deliberate, firm design decision, not a gap: Layer-3 data may serve purposes beyond a single agent's own runtime (e.g. training corpora), so its retention policy is treated as the operator's responsibility, not this framework's. See [Retention and Data Deletion](#retention-and-data-deletion) below for what *is* deletable (Layers 1 and 2).
+
+### Retention and Data Deletion
+
+Two independent, unrelated cleanup concerns run on the same `CleanupWorker`, configured via `AgentBuilder::with_cleanup_config`:
+
+```rust
+use agentverse_agent::workers::CleanupConfig;
+use std::time::Duration;
+
+let agent = Agent::builder(runner, tools, prompts, session_memory, strategy)
+    .with_cleanup_config(CleanupConfig {
+        message_retention: Duration::from_secs(86_400),    // default: 24h
+        session_retention: Duration::from_secs(2_592_000), // default: 30 days
+        poll_interval: Duration::from_secs(300),           // default: 5 min
+    })
+    .build();
+```
+
+| Field | Governs |
+|---|---|
+| `message_retention` | How long a raw message survives *after* it has been consolidated into `LongtermMemory` (or is exempt, if no `LongtermMemory` is configured). Never prunes an unconsolidated message, regardless of age — weakening this to an age-only check would risk permanent, silent data loss. |
+| `session_retention` | How long a session survives after it ends (`Completed`/`Interrupted`), before the whole session row — and all of its messages, via `ON DELETE CASCADE` — is deleted. |
+| `poll_interval` | How often the worker runs both checks. |
+
+Each tick: bulk-deletes ended sessions past `session_retention` first, then prunes eligible messages from whatever sessions remain — avoiding wasted per-message work on a session about to be deleted wholesale in the same tick.
+
+`SessionMemory::list_sessions_needing_maintenance()` (used by both `ConsolidationWorker` and `CleanupWorker`) is scoped by *pending work*, not by session status — a session that has ended but still has unconsolidated messages remains visible until fully drained. (An earlier version of this scoping incorrectly filtered to `status = 'active'` only, silently stranding any session's trailing messages the moment the conversation ended — this is why the check is worth calling out explicitly here.)
+
+For an explicit per-user delete (e.g. a "right to be forgotten" API endpoint):
+
+```rust
+agent.delete_all_user_data("alice").await?;
+```
+
+This deletes every Layer-2 (`SessionMemory`) session the user owns and evicts every matching Layer-1 (`CacheMemory`) entry. It does **not** call `assert_owner` — unlike `end_session`/`get_session`, it never takes a caller-supplied `session_id` to check against `user_id`; every session it touches comes from `list_sessions(user_id)` itself, already scoped by the trusted `user_id` parameter. It does **not** touch Layer-3 `LongtermMemory`, per the design decision above.
 
 ### SQLite database location
 
@@ -1259,7 +1360,7 @@ RUST_LOG=sqlx=trace cargo run -p example-http-agent
 use agentverse_integration::{Event, IntegrationRuntime};
 use std::sync::Arc;
 
-let agent = Arc::new(Agent::new(/* ... */));
+let agent = Arc::new(Agent::builder(runner, tools, prompts, session_memory, strategy).build());
 let runtime = IntegrationRuntime::from_config("agent.toml").await?;
 
 runtime
@@ -1335,7 +1436,7 @@ Strategy completed        iteration=3
 ### Common Debugging Scenarios
 
 **`Config(Missing("provider.api_key is required"))` at startup:**
-- This error is only raised for `ProviderConfig::OpenAI` when `base_url` is `None` (i.e., real OpenAI endpoint). Set `MODEL_API_KEY` or provide `base_url`.
+- This error is only raised for the `openai` provider when `base_url` is unset (i.e., real OpenAI endpoint). Set `MODEL_API_KEY` or provide `base_url`.
 - For local endpoints, `api_key` can be empty as long as `base_url` is set.
 
 **Agent not responding:**
@@ -1370,8 +1471,8 @@ Strategy completed        iteration=3
 
 | Crate | Key Types |
 |-------|-----------|
-| `agentverse` | `LlmRunner` (`invoke`, `invoke_structured`), `Config`, `ProviderConfig`, `PromptRegistry`, `RunStrategy`, `Tool`, `ErasedTool`, `ToolCall`, `ToolResult`, `ModelError` |
-| `agentverse-agent` | `Agent`, `AgentError`, `AgentOutput`, `HitlConfig`, `PhaseAdvanceResult`, `parse_phase_transition`, `SkillConfig`, `SkillMode` |
+| `agentverse` | `LlmRunner` (`invoke`, `invoke_structured`), `Config`, `ProviderConfig`, `ProviderRegistry`, `ConnectionManager`, `PromptRegistry`, `RunStrategy`, `Tool`, `ErasedTool`, `ToolCall`, `ToolResult`, `ModelError` |
+| `agentverse-agent` | `Agent`, `AgentBuilder`, `AgentError`, `AgentOutput`, `HitlConfig`, `CleanupConfig` (in `workers`), `PhaseAdvanceResult`, `parse_phase_transition`, `SkillConfig`, `SkillMode` |
 | `agentverse-skill` | `SkillRegistry`, `SkillRouter`, `SkillMode`, `SkillConfig`, `Skill`, `SkillContext`, `SkillError` |
 | `agentverse-hitl` | `HitlPolicy`, `ApprovalQueue`, `InMemoryQueue`, `SqliteQueue`, `HitlContext`, `ApprovalRequest`, `ApprovalDecision`, `ApprovalStatus`, `InterruptKind`, `RequestCheckpointTool`, `HitlError` |
 | `agentverse-strategy` | `build()`, `StrategyKind` |
@@ -1385,18 +1486,19 @@ Strategy completed        iteration=3
 | `agentverse-mcp` | `McpClient`, `McpServer`, `McpTransport`, `McpCatalogSource`, `McpLoader`, `McpServerConfig`, `McpToolAdapter`, `McpError` |
 | `agentverse-subagent` | `SubAgentExecutor`, `SubAgentSpec`, `Budget`, `ModelOverride`, `SubAgentContext`, `ResourceContent`, `SubAgentHandle`, `SubAgentResult`, `SubAgentError`, `SubAgentTool` |
 | `agentverse-integration` | `IntegrationRuntime`, `Event` |
+| `agentverse-eval` | (test-only; no public library API consumed by other crates) |
+| `agentverse-test-utils` | `dead_endpoint_agent`, `unwrap_done`, `session_conformance::run_conformance_suite` |
 
-### ProviderConfig Enum
+### ProviderConfig Struct
 
 ```rust
-pub enum ProviderConfig {
-    OpenAI { model_name: String, api_key: String, base_url: Option<String> },
-    Anthropic { model_name: String, api_key: String },
-    Gemini { model_name: String, api_key: String },
+pub struct ProviderConfig {
+    pub name: String,
+    pub settings: HashMap<String, String>,
 }
 ```
 
-`api_key` is validated as non-empty only for `OpenAI` when `base_url` is `None`.
+Not a closed enum — `name` is looked up against a `ProviderRegistry` at connection time (built-ins: `openai`, `anthropic`, `gemini`; extensible via `ProviderRegistry::register`). Ergonomic constructors: `ProviderConfig::openai(model_name, api_key, base_url)`, `::anthropic(model_name, api_key)`, `::gemini(model_name, api_key)`, `::custom(name, settings)`. `api_key` is validated as non-empty only for `openai` when `base_url` is unset — see [Multi-LLM Provider Configuration](#multi-llm-provider-configuration).
 
 ### ModelError Variants
 

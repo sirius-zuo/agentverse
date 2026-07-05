@@ -41,47 +41,33 @@ cargo test -p agentverse-react
 cargo test -p agentverse-tools
 ```
 
-Expected output: **141 tests, 0 failures** across all crates.
+Expected output: all tests passing, 0 failures. The exact count grows as the codebase does (531 passing as of Wave 3) — don't hardcode a number when checking this locally; a shrinking count across a change is the signal to look for, not a fixed target.
 
-Tests are pure-unit (no network). Integration tests that require a live endpoint are gated by feature flags or explicit `#[ignore]`.
+Tests are pure-unit (no network) with two exceptions, both fully offline via mocking rather than live network calls: `avs-eval`'s judge-based regression tests replay recorded LLM responses via `httpmock` (see [DEVELOPMENT.md's Eval Harness section](DEVELOPMENT.md#eval-harness)), and `avs-memory-pgvector`'s Postgres conformance test requires `TEST_DATABASE_URL` to be set against a real instance or it silently skips (see [DEVELOPMENT.md's SessionMemory Conformance Suite section](DEVELOPMENT.md#sessionmemory-conformance-suite)). Neither makes a live LLM call in CI or in a default local run.
 
-### Formatting check (required by CI)
+### Formatting and lint checks (required by CI)
 
 ```bash
-cargo fmt --check        # check only
-cargo fmt                # apply in place
+cargo fmt --all --check                              # check only
+cargo fmt --all                                       # apply in place
+cargo clippy --workspace --all-targets -- -D warnings # matches CI; catches tests/examples too
 ```
+
+CI also runs two structural fitness checks (`./scripts/check-file-sizes.sh`, `./scripts/check-layering.sh`) and a `cargo-deny` licenses/advisories job — see [DEVELOPMENT.md's CI Fitness Checks section](DEVELOPMENT.md#ci-fitness-checks) for details; none of these are exercised by the commands above.
 
 ---
 
 ## Workspace Layout
 
-```
-AgentVerse/
-├── avs-core/           # agentverse — ModelProvider trait, memory, prompt registry
-├── avs-guardrails/     # agentverse-guardrails — prompt injection / output filtering
-├── avs-react/          # agentverse-react — ReActStrategy + CycleSkeleton
-├── avs-plan/           # agentverse-plan — plan-and-execute strategy
-├── avs-router/         # agentverse-router — strategy router
-├── avs-tools/          # agentverse-tools — Calculator, FileSearch, HttpClient, DateTimeTool
-├── avs-memory/         # agentverse-memory — memory traits
-├── avs-memory-lancedb/ # LanceDB vector memory backend
-├── avs-memory-pgvector/# pgvector memory backend
-├── avs-mcp/            # MCP protocol implementation
-├── avs-server/         # REST server exposing agents via HTTP
-├── avs-integration/    # cross-crate integration tests
-└── examples/
-    ├── hello-agent/        # simplest: no tools, one question
-    ├── rag-qa/             # Calculator tool
-    ├── web-search-agent/   # FileSearch tool
-    └── code-review-agent/  # FileSearch + Calculator
-```
+See [DEVELOPMENT.md](DEVELOPMENT.md#architecture-overview) for the authoritative, maintained crate list and descriptions — this section previously drifted out of sync with the real workspace (it referenced an `avs-server` crate and a `rag-qa` example that no longer exist) and is kept intentionally short here to avoid a second copy going stale again.
+
+Crates relevant to this guide's build/test commands: `avs-core`, `avs-agent`, `avs-session`, `avs-tools`, `avs-react`, `avs-plan`, `avs-strategy`, `avs-logging`. Full workspace: 20 library crates + `examples/*` (see `Cargo.toml`'s `[workspace] members`).
 
 ---
 
 ## E2E Examples
 
-All four examples use `ReActStrategy` and make real LLM calls. They are configured entirely via environment variables — no code changes needed to switch providers or models.
+The four examples below make real LLM calls and are configured entirely via environment variables — no code changes needed to switch providers or models. Only two (`hello-agent`, `react-calculator`) use `ReActStrategy`; `web-search-agent` uses `PlanStrategy` and `code-review-agent` uses `HierarchicalStrategy` (see each example's own section below).
 
 ### Environment Variables
 
@@ -90,8 +76,8 @@ All four examples use `ReActStrategy` and make real LLM calls. They are configur
 | `MODEL_BASE_URL` | no | `http://localhost:9090/v1` | OpenAI-compatible base URL |
 | `MODEL_NAME` | no | `Qwen3.6-35B-A3B-GGUF` | Model name passed in the request |
 | `MODEL_API_KEY` | no | _(empty)_ | Bearer token; omit for local endpoints |
-| `LLAMA_DISABLE_THINKING` | no | `0` | Set to `1` to send `chat_template_kwargs: {"enable_thinking": false}` — required for Qwen3 on llama.cpp |
-| `PROJECT_DIR` | no | `/Users/jinzuo/projects/AgentVerse` | Root path used by FileSearch examples |
+| `LLAMA_DISABLE_THINKING` | no | _(unset = disabled)_ | Thinking is disabled by default (`chat_template_kwargs: {"enable_thinking": false}` sent on every request); set to `0` or `false` to leave a model's native thinking mode on |
+| `PROJECT_DIR` | no | `/Users/jinzuo/projects/AgentVerse` | Root path used by `code-review-agent`'s `FileSearch`/`ShellTool` |
 
 ### Local llama.cpp Setup
 
@@ -111,194 +97,106 @@ curl http://localhost:9090/v1/models
 # → {"models": [{"name": "unsloth/Qwen3.6-35B-A3B-GGUF", ...}]}
 ```
 
-> **Why `LLAMA_DISABLE_THINKING=1`?** Qwen3 models have thinking mode enabled by default in llama.cpp. When the ReAct loop appends the model's previous response as an assistant message and sends it back, llama.cpp rejects the request with HTTP 400 ("Assistant response prefill is incompatible with enable_thinking"). Setting this env var adds `chat_template_kwargs: {"enable_thinking": false}` to every request, disabling the internal thinking mode while preserving normal response quality.
+> **`LLAMA_DISABLE_THINKING` is now on by default.** `chat_template_kwargs: {"enable_thinking": false}` is sent on every OpenAI-compatible request unless you explicitly set `LLAMA_DISABLE_THINKING=0` (or `false`) — the examples below no longer need to pass `LLAMA_DISABLE_THINKING=1`. This exists because Qwen3 models have thinking mode enabled by default in llama.cpp, and when the ReAct loop appends the model's previous response as an assistant message and sends it back, llama.cpp rejects the request with HTTP 400 ("Assistant response prefill is incompatible with enable_thinking") unless thinking is disabled. Set `LLAMA_DISABLE_THINKING=0` only if you're deliberately using a model that needs its native thinking mode left on.
 
 ---
+
+> **A note on this section's traces:** the four examples below are now interactive REPLs (or take CLI args) rather than fixed single-shot Q&A binaries, so there is no longer one canonical "expected output" transcript to capture ahead of time — actual model output depends on which model you run. What's documented below (run command, tools, strategy, skill-system behavior) is verified directly against each example's current source; the printed transcripts are illustrative of the shape of a session, not a byte-for-byte captured trace.
 
 ### Example 1 — hello-agent
 
-No tools. Simplest smoke test for the provider connection.
+`SkillMode::Open` — the `SkillRouter` auto-selects between `math-helper` (Calculator) and `datetime-helper` (DateTimeTool) based on your message, or answers directly with no tool if neither matches. `ReActStrategy`, interactive REPL.
 
 **Run:**
 ```bash
 MODEL_BASE_URL=http://localhost:9090/v1 \
 MODEL_NAME=unsloth/Qwen3.6-35B-A3B-GGUF \
-LLAMA_DISABLE_THINKING=1 \
 cargo run -p example-hello-agent
 ```
 
-**Request sent to the model** (first and only iteration):
-```json
-{
-  "model": "unsloth/Qwen3.6-35B-A3B-GGUF",
-  "messages": [
-    {
-      "role": "system",
-      "content": "You are a helpful AI assistant.\nYou are concise and accurate. Never claim to have done something you haven't.\nIf you don't know something, say so.\n\nAlways end your response with:\nAnswer: <your answer>"
-    },
-    {
-      "role": "user",
-      "content": "Hello! Introduce yourself briefly and name two things you can help with."
-    }
-  ],
-  "chat_template_kwargs": {"enable_thinking": false}
-}
 ```
+Skills loaded: math-helper, datetime-helper, travel-advisor
+Type your question and press Enter. Type "exit" or press Ctrl+C to quit.
 
-**Expected output:**
-```
-Hello Agent — model: unsloth/Qwen3.6-35B-A3B-GGUF @ http://localhost:9090/v1
-> Hello! Introduce yourself briefly and name two things you can help with.
+You: What is 6 * 7?
 
-Agent: I am Qwen, an AI developed by Alibaba Group's Tongyi Lab, and I can help with
-       complex problem solving and creative/professional writing.
-
-[tokens] input=81 output=124 cache_read=0 cache_write=0
+Agent: 42
 ```
 
 ---
 
-### Example 2 — rag-qa (Calculator)
+### Example 2 — react-calculator
 
-Uses the `calculator` tool. Exercises the full ReAct tool-call loop.
+Replaces the older `rag-qa` example. `Calculator` only, no skill system, `ReActStrategy`, interactive REPL — exercises the full multi-step ReAct tool-call loop directly.
 
 **Run:**
 ```bash
 MODEL_BASE_URL=http://localhost:9090/v1 \
 MODEL_NAME=unsloth/Qwen3.6-35B-A3B-GGUF \
-LLAMA_DISABLE_THINKING=1 \
-cargo run -p example-rag-qa
+cargo run -p example-react-calculator
 ```
 
-**System prompt tool section** (rendered from DEFAULT_SYSTEM_TEMPLATE):
 ```
-Available tools:
+Type an arithmetic question. Type "exit" or press Ctrl+C to quit.
 
-- calculator: Perform arithmetic calculations: add, subtract, multiply, divide
-  Parameters:
-    - operation (required): Arithmetic operation
-    - a (required): First operand
-    - b (required): Second operand
-
-Always respond in this exact format:
-Thought: <your reasoning>
-Action: <tool_name>
-Action Input: <json args>
-
-When you have the final answer:
-Thought: <your reasoning>
-Answer: <final answer>
-```
-
-**ReAct loop trace** (two tool calls, one answer):
-
-| Iteration | Model output | Framework action |
-|---|---|---|
-| 1 | `Thought: I need to multiply 42 by 37 first.\nAction: calculator\nAction Input: {"operation":"multiply","a":42,"b":37}` | Calls `Calculator.execute({"operation":"multiply","a":42,"b":37})` → `{"result":1554}` |
-| 2 | `Thought: Now add 15.\nAction: calculator\nAction Input: {"operation":"add","a":1554,"b":15}` | Calls `Calculator.execute({"operation":"add","a":1554,"b":15})` → `{"result":1569}` |
-| 3 | `Thought: I have the final result.\nAnswer: 1569` | Returns `CycleResult { answer: "1569", ... }` |
-
-**Expected output:**
-```
-RAG QA Agent — model: unsloth/Qwen3.6-35B-A3B-GGUF @ http://localhost:9090/v1
-Tool: Calculator
-> What is 42 multiplied by 37, then add 15 to the result?
+You: What is 42 multiplied by 37, then add 15 to the result?
 
 Agent: 1569
-
-[tokens] input=949 output=152 cache_read=0 cache_write=0
 ```
+
+Internally this drives at least two sequential `Action: calculator` tool calls (multiply, then add) before the model emits `Answer:`.
 
 ---
 
-### Example 3 — web-search-agent (FileSearch)
+### Example 3 — web-search-agent
 
-Uses the `file_search` tool to locate `.rs` files on disk.
+Takes CLI args, not an interactive REPL: `cargo run -p example-web-search-agent -- "<topic>" <n>`. `SkillMode::Constrained(["web-search"])`, `WebSearch` tool, `PlanStrategy`. Also demonstrates the Shadow pattern — `skills/user/web-search/` overrides `skills/system/web-search/` (same `name:`) with stricter citation rules, no code change.
 
 **Run:**
 ```bash
 MODEL_BASE_URL=http://localhost:9090/v1 \
 MODEL_NAME=unsloth/Qwen3.6-35B-A3B-GGUF \
-LLAMA_DISABLE_THINKING=1 \
-PROJECT_DIR=/Users/jinzuo/projects/AgentVerse \
-cargo run -p example-web-search-agent
+cargo run -p example-web-search-agent -- "rust async programming" 3
 ```
 
-**Tool definition in system prompt:**
 ```
-- file_search: Search for files matching a pattern in a directory
-  Parameters:
-    - path (required): Directory to search in
-    - pattern (required): Glob pattern (e.g., '*.txt', '**/*.rs')
-```
+> Search for 'rust async programming' and summarize the top 3 results.
 
-**ReAct loop trace:**
-
-| Iteration | Model output | Framework action |
-|---|---|---|
-| 1 | `Action: file_search\nAction Input: {"path":"/Users/.../avs-core/src","pattern":"*.rs"}` | Returns `{"matches":[...9 paths...],"count":9}` |
-| 2 | `Answer: The .rs files are: agent.rs, builder.rs, ...` | Loop ends |
-
-**Expected output:**
-```
-Web Search Agent — model: unsloth/Qwen3.6-35B-A3B-GGUF @ http://localhost:9090/v1
-Tool: FileSearch (project: /Users/jinzuo/projects/AgentVerse)
-> Use the file_search tool to find all .rs files in /Users/jinzuo/projects/AgentVerse/avs-core/src and list their names.
-
-Agent: The .rs files in /Users/jinzuo/projects/AgentVerse/avs-core/src are:
-1. agent.rs
-2. builder.rs
-3. config.rs
-4. error.rs
-5. example.rs
-6. lib.rs
-7. model.rs
-8. prompt.rs
-9. tool.rs
-
-[tokens] input=544 output=151 cache_read=0 cache_write=0
+Agent: <summary of 3 web-search results, with footnote citations per the shadowed skill's rules>
 ```
 
 ---
 
-### Example 4 — code-review-agent (FileSearch + Calculator)
+### Example 4 — code-review-agent
 
-Uses both tools in a single loop: search, count, arithmetic.
+Uses `FileSearch` + `ShellTool` (not Calculator — that changed since this guide was last accurate). Explicit skill binding (`create_session_with_skill("user", "code-review")` — the `SkillRouter` never runs), `HierarchicalStrategy`, interactive REPL. `ShellTool` is sandboxed to `PROJECT_DIR` with a blocked-command list (`rm`, `rmdir`, `mv`, `dd`, `sudo`, `chmod`, `chown`) but — per the tool's own security note — `workdir` is not a real filesystem sandbox; absolute paths and `cd` can still reach outside it.
 
 **Run:**
 ```bash
 MODEL_BASE_URL=http://localhost:9090/v1 \
 MODEL_NAME=unsloth/Qwen3.6-35B-A3B-GGUF \
-LLAMA_DISABLE_THINKING=1 \
-PROJECT_DIR=/Users/jinzuo/projects/AgentVerse \
+PROJECT_DIR=/path/to/project \
 cargo run -p example-code-review-agent
 ```
 
-**ReAct loop trace:**
-
-| Iteration | Tool | Input | Result |
-|---|---|---|---|
-| 1 | `file_search` | `{"path":".../avs-react/src","pattern":"*.rs"}` | 4 files found |
-| 2 | `calculator` | `{"operation":"multiply","a":4,"b":100}` | `{"result":400}` |
-| 3 | — | — | `Answer: 400` |
-
-**Expected output:**
 ```
-Code Review Agent — model: unsloth/Qwen3.6-35B-A3B-GGUF @ http://localhost:9090/v1
-Tools: FileSearch + Calculator
-> Find all .rs files in /Users/jinzuo/projects/AgentVerse/avs-react/src using file_search,
-  count how many there are, then use calculator to multiply that count by 100.
+Code Review Agent — explicit skill binding (code-review)
+Active tools: file_search, shell
+Type a review request and press Enter. Type "exit" to quit.
 
-Agent: 400
+Review> Find all .rs files under src/ and summarize what each one does.
 
-[tokens] input=933 output=161 cache_read=0 cache_write=0
+Agent:
+<file_search + shell-driven review, format per the code-review SKILL.md>
 ```
+
+`PROJECT_DIR` defaults to `/Users/jinzuo/projects/AgentVerse` (a hardcoded fallback in the example's own source, not something this doc controls) — always set it explicitly to the project you actually want reviewed.
 
 ---
 
 ## Using a Different Provider
 
-The `OpenAICompatible` provider works with any OpenAI-compatible endpoint. To use a hosted API:
+The `openai` provider (`ProviderConfig::openai(model_name, api_key, base_url)`) works with any OpenAI-compatible endpoint — llama.cpp, OpenAI itself, or any other compatible backend — by changing the same three env vars each example already reads:
 
 ```bash
 # OpenAI
@@ -311,28 +209,21 @@ cargo run -p example-hello-agent
 MODEL_BASE_URL=https://your-endpoint/v1 \
 MODEL_NAME=your-model \
 MODEL_API_KEY=your-key \
-cargo run -p example-rag-qa
+cargo run -p example-react-calculator
 ```
 
-Do not set `LLAMA_DISABLE_THINKING=1` for non-llama.cpp endpoints — the `chat_template_kwargs` field is only meaningful to llama.cpp and will be ignored or rejected elsewhere.
+`LLAMA_DISABLE_THINKING` only affects the `openai` provider's request body (`chat_template_kwargs`) — it is meaningless for non-llama.cpp endpoints, but sending it is harmless (compatible servers ignore unrecognized fields; it is only relevant when targeting llama.cpp specifically). See [DEVELOPMENT.md's Multi-LLM Provider Configuration](DEVELOPMENT.md#multi-llm-provider-configuration) for the full `ProviderConfig` API, including `::anthropic(...)`, `::gemini(...)`, and how to register a provider beyond the three built-ins.
 
-For the Anthropic provider, use `AnthropicProvider` instead of `OpenAICompatible` in the example source — it handles prompt caching automatically via the `anthropic-beta: prompt-caching-2024-07-31` header.
+For Anthropic, none of the four examples above use it directly — see `examples/anthropic-react` (`ProviderConfig::anthropic(model_name, api_key)`), which handles prompt caching automatically via the `anthropic-beta` header.
 
 ---
 
 ## Token Usage
 
-Every example prints a `[tokens]` line after the agent completes:
+`UsageStats { input_tokens, output_tokens, cache_write_tokens, cache_read_tokens }` (`avs-core/src/model.rs`) is tracked on every provider call and accumulated across a multi-step strategy loop via `AddAssign`, but **none of the four examples above print it** — `Agent::invoke()` returns `AgentOutput` (`Done(String)` or `Interrupted{..}`), which doesn't carry usage. It's still reachable if you need it:
 
-```
-[tokens] input=949 output=152 cache_read=0 cache_write=0
-```
+- `LlmRunner::invoke`/`invoke_structured` return `GenerateResponse { content, usage }` directly.
+- A strategy's internal `CycleResult { answer, total_usage, .. }` carries the cumulative usage across all ReAct/Plan/Hierarchical iterations in one invocation.
+- `SubAgentResult { answer, usage, steps }` (`agentverse-subagent`) surfaces it per-subagent for the multi-agent examples (`project-feasibility`, `business-report`).
 
-| Field | Source | Meaning |
-|---|---|---|
-| `input` | `usage.prompt_tokens` | Total prompt tokens across all iterations |
-| `output` | `usage.completion_tokens` | Total generated tokens across all iterations |
-| `cache_read` | `usage.prompt_tokens_details.cached_tokens` | Tokens served from the provider cache (OpenAI KV cache / Anthropic prompt cache) |
-| `cache_write` | Anthropic only | Tokens written to prompt cache in this request |
-
-For multi-iteration runs (tool-using examples), these are **cumulative** across the entire ReAct loop — each `generate()` call's `UsageStats` is accumulated via `AddAssign` in `CycleSkeleton`.
+If you need per-turn token visibility from a console binary like the ones above, call `LlmRunner` directly instead of going through `Agent::invoke`, or install an OTel meter provider and read `gen_ai.client.token.usage` — see [README.md's Metrics section](README.md#metrics).

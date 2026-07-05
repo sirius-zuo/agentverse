@@ -32,7 +32,7 @@ your binary
         └── spawn(spec, ctx) → Handle   — parallel, input order via await_result()
 ```
 
-`Agent` is the only way to invoke the LLM. You choose a strategy with `agentverse_strategy::build(StrategyKind::*)` and pass it to `Agent::new`. The agent handles session history, memory assembly, prompt construction, skill routing, and optional HTTP serving.
+`Agent` is the only way to invoke the LLM. You choose a strategy with `agentverse_strategy::build(StrategyKind::*)` and pass it to `Agent::builder(...).build()`. The agent handles session history, memory assembly, prompt construction, skill routing, and optional HTTP serving.
 
 ## What Is Implemented
 
@@ -42,7 +42,8 @@ your binary
 - **Three-layer memory**: Layer 1 `CacheMemory` (in-process, TTL), Layer 2 `SessionMemory` (durable transcript), Layer 3 `LongtermMemory` (distilled cross-session knowledge, opt-in).
 - **Subagent runtime**: `agentverse-subagent` provides isolated, budget-limited worker agents (`SubAgentExecutor`). Each subagent runs its own ReAct loop with a scoped tool registry, a step/token/timeout budget, and returns a single text answer. Supports programmatic orchestration (`run`, `run_many`, `spawn`) and LLM-driven dispatch via the `spawn_subagent` tool.
 - **Multi-user sessions**: `Agent` routes through `SessionManager` for durable per-user conversation history with ownership enforcement.
-- **HTTP sidecar**: `Agent::new(..., enable_http_server: true)` spawns an HTTP server as a background task. The agent can run without it; the server cannot run without the agent.
+- **HTTP sidecar**: `Agent::builder(...).with_http_server().build()` spawns an HTTP server as a background task. The agent can run without it; the server cannot run without the agent.
+- **Retention**: `Agent::builder(...).with_cleanup_config(config)` overrides the background `CleanupWorker`'s message/session retention windows (24h/30 days by default). `Agent::delete_all_user_data(user_id)` deletes every L1 (in-process cache) and L2 (`SessionMemory`) record for a user; Layer-3 `LongtermMemory` is never touched by any deletion path — that data's retention is explicitly outside agentverse's responsibility.
 - **Agent-owned integrations**: `IntegrationRuntime` reads connector config, starts Slack/GitHub/WhatsApp or console connectors, calls an agent handler, and sends responses.
 - **Strategies and tools**: `ToolRegistry`, built-in tools, and MCP adapters are wired into strategies at agent construction.
 - **Structured output**: `LlmRunner::invoke_structured(messages, schema)` enforces a JSON Schema at the server level. OpenAI-compatible endpoints use `response_format: { type: "json_schema", ... }`; Anthropic uses `output_config: { format: { type: "json_schema", schema } }`. Gemini is not yet supported and returns free text.
@@ -165,10 +166,14 @@ AgentVerse library crates are instrumented with the OpenTelemetry metrics API
 (no-op unless your binary installs a meter provider). Instruments follow the
 GenAI semantic conventions: `gen_ai.client.token.usage`,
 `gen_ai.client.operation.duration`, plus `agentverse.tool.*`,
-`agentverse.llm.*`, and `agentverse.hitl.*`. See `avs-core/src/metrics.rs`
-for the full list. Install any OTel SDK meter provider before constructing
-the agent; `example-http-agent` shows an OTLP/gRPC setup gated on
-`OTEL_EXPORTER_OTLP_ENDPOINT`.
+`agentverse.llm.*`, `agentverse.hitl.*`, `agentverse.agent.*`
+(invoke duration, cache access, skill routing, phase transitions),
+`agentverse.worker.restarts` (background-worker panic recovery), and
+`agentverse.session.*` (`deleted` — counter by reason `EndedTtl`/`UserRequest`;
+`maintenance_backlog` — histogram of sessions awaiting consolidation/cleanup
+per poll). See `avs-core/src/metrics.rs` for the full list. Install any OTel
+SDK meter provider before constructing the agent; `example-http-agent` shows
+an OTLP/gRPC setup gated on `OTEL_EXPORTER_OTLP_ENDPOINT`.
 
 Point it at any OTLP/gRPC collector, e.g. a local one-liner:
 
@@ -196,14 +201,17 @@ docker run -p 4317:4317 otel/opentelemetry-collector:latest
 
 ### YAML Config
 
+`ProviderConfig` is `{ name: String, settings: HashMap<String, String> }` — an open, registry-keyed shape rather than a closed set of variants. Built-in provider names are `openai`, `anthropic`, `gemini`; a downstream crate can register additional names via `ProviderRegistry::register` (see [Multi-LLM Provider Configuration](DEVELOPMENT.md#multi-llm-provider-configuration) in `DEVELOPMENT.md`).
+
 ```yaml
 agent:
   provider:
-    type: openai
-    model_name: "gpt-4o"
-    api_key: "sk-xxx"
-    base_url: "https://api.openai.com/v1"
-  max_iterations: 10
+    name: openai
+    settings:
+      model_name: "gpt-4o"
+      api_key: "sk-xxx"
+      base_url: "https://api.openai.com/v1"
+  max_messages: 10
 ```
 
 ## Multi-User Sessions
@@ -227,6 +235,33 @@ Available session memory backends:
 - `SqliteSessionMemory` in `agentverse-session` (default)
 - `PostgresSessionMemory` in `agentverse-memory-pgvector`
 
+### Retention and Data Deletion
+
+A background `CleanupWorker` (spawned automatically by `Agent::builder(...).build()`) enforces two independent retention windows, configurable via `with_cleanup_config`:
+
+```rust
+use agentverse_agent::Agent;
+use std::time::Duration;
+
+let agent = Agent::builder(runner, tools, prompts, session_memory, strategy)
+    .with_cleanup_config(agentverse_agent::workers::CleanupConfig {
+        message_retention: Duration::from_secs(86_400),    // default: 24h — prune consolidated messages older than this
+        session_retention: Duration::from_secs(2_592_000), // default: 30 days — delete an ended session this long after it ends
+        poll_interval: Duration::from_secs(300),           // default: 5 min
+    })
+    .build();
+```
+
+A message is only ever pruned once it has already been consolidated into Layer-3 `LongtermMemory` (or is exempt because no `LongtermMemory` is configured) — the age check never overrides that gate, so unconsolidated messages are never lost even if they outlive `message_retention`. Whole-session deletion (cascading to all of that session's messages) is a separate, coarser sweep keyed only on how long the session has been ended.
+
+For an explicit per-user deletion request (e.g. a "right to be forgotten" API), call:
+
+```rust
+agent.delete_all_user_data("alice").await?;
+```
+
+This removes every Layer-1 (in-process cache) and Layer-2 (`SessionMemory`) record for the user. **Layer-3 `LongtermMemory` is never touched by any deletion path in agentverse** — that data may serve purposes beyond a single agent's runtime (e.g. training corpora), and its retention policy is a deliberate, explicit decision left to the operator, not something this framework does on their behalf.
+
 ## Integrations
 
 `agentverse-integration` is owned by the agent. The agent creates an `IntegrationRuntime` and provides a handler; the runtime handles connector I/O.
@@ -235,7 +270,7 @@ Available session memory backends:
 use agentverse_integration::{Event, IntegrationRuntime};
 use std::sync::Arc;
 
-let agent = Arc::new(Agent::new(/* ... */));
+let agent = Arc::new(Agent::builder(runner, tools, prompts, session_memory, strategy).build());
 let runtime = IntegrationRuntime::from_config("agent.toml").await?;
 
 runtime
@@ -450,6 +485,8 @@ let registry = Arc::new(PromptRegistry::new());
 | `avs-memory-pgvector` | `agentverse-memory-pgvector` | pgvector memory backend and Postgres session store |
 | `avs-guardrails` | `agentverse-guardrails` | Prompt, output, action, and rate-limit guardrails |
 | `avs-logging` | `agentverse-logging` | Tracing subscriber initialization |
+| `avs-eval` | `agentverse-eval` | Eval harness: deterministic scaffold tests (parser/router/templates) + judge-based quality regression tests, both fully offline |
+| `avs-test-utils` | `agentverse-test-utils` | Dev-dependency only: shared `SessionMemory` conformance suite (run against both SQLite and Postgres) and agent-construction test helpers (`dead_endpoint_agent`, `unwrap_done`) |
 
 ## Examples
 
@@ -523,7 +560,7 @@ arithmetic — never compute in your head. Show your working steps clearly.
 
 The `agentverse.tools` list restricts which registered tools the LLM can call in that session. Tools not listed are invisible to the LLM for that session even if registered on the agent.
 
-**Wiring into `Agent::new`:**
+**Wiring into `Agent::builder`:**
 
 ```rust
 use agentverse_agent::{Agent, SkillConfig, SkillMode};
@@ -532,8 +569,9 @@ let skills_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/skills");
 let skills = SkillConfig::load(skills_dir, SkillMode::Open)
     .expect("skills dir not found");
 
-let agent = Agent::new(runner, tools, prompts, session_memory, strategy,
-                       false, None, Some(skills), None);
+let agent = Agent::builder(runner, tools, prompts, session_memory, strategy)
+    .with_skills(skills)
+    .build();
 ```
 
 **Routing modes:**
@@ -593,8 +631,10 @@ let hitl = HitlConfig {
     queue: Arc::clone(&queue) as Arc<dyn agentverse_hitl::ApprovalQueue>,
 };
 
-let agent = Agent::new(runner, tools, prompts, session_memory, strategy,
-                       false, None, Some(skills), Some(hitl));
+let agent = Agent::builder(runner, tools, prompts, session_memory, strategy)
+    .with_skills(skills)
+    .with_hitl(hitl)
+    .build();
 ```
 
 **Approve/resume loop:**
@@ -662,10 +702,14 @@ AgentVerse/
 |-- avs-memory-pgvector/
 |-- avs-guardrails/
 |-- avs-logging/
+|-- avs-eval/               (eval harness: deterministic + judge-based regression tests)
+|-- avs-test-utils/         (dev-dependency: shared SessionMemory conformance suite + test helpers)
 `-- examples/
     |-- demo-tools/          (library: 6 MCP-exposed domain tools)
     |-- project-feasibility/ (programmatic multi-agent pipeline)
     |-- business-report/     (LLM-driven multi-agent via skill)
+    |-- doc-pipeline/        (Pattern A: self-directing skill chain, ReAct -> Plan -> ReAct)
+    |-- support-router/      (Pattern C: coordinator dispatch, React + Hierarchical + React)
     `-- accountant-workflow/ (three-phase HITL pipeline: checkpoint + phase gate + tool approval)
 ```
 
