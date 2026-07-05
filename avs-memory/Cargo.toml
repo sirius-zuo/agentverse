@@ -15,7 +15,9 @@ chrono.workspace = true
 uuid.workspace = true
 tokio.workspace = true
 sqlx = { version = "0.8", features = ["runtime-tokio", "tls-none", "sqlite", "uuid", "chrono", "migrate"] }
+reqwest.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tempfile = "3"
+httpmock.workspace = true

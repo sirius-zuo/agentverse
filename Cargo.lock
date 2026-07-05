@@ -191,6 +191,8 @@ dependencies = [
  "agentverse",
  "async-trait",
  "chrono",
+ "httpmock",
+ "reqwest",
  "serde",
  "serde_json",
  "sqlx",

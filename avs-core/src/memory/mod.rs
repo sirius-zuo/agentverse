@@ -23,4 +23,6 @@ pub enum MemoryError {
     Storage(String),
     #[error("Retrieval failed: {0}")]
     Retrieval(String),
+    #[error("Embedding failed: {0}")]
+    Embedding(String),
 }
