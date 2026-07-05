@@ -1,0 +1,2 @@
+input = "Thought: logging.\nAction: log\nAction Input: {\"message\": \"Observation: nothing found\"}"
+expected_debug = "ToolCall { tool_name: \"log\", args: Object {\"message\": String(\"Observation: nothing found\")} }"
