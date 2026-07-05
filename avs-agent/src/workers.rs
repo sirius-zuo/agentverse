@@ -23,8 +23,10 @@ impl Default for ConsolidationConfig {
 }
 
 pub struct CleanupConfig {
-    /// Delete raw turns older than this window.
-    pub retention_window: Duration,
+    /// Delete raw turns older than this window, once consolidated.
+    pub message_retention: Duration,
+    /// Delete a session (and all its messages, via cascade) this long after it ends.
+    pub session_retention: Duration,
     /// How often the worker polls.
     pub poll_interval: Duration,
 }
@@ -32,8 +34,9 @@ pub struct CleanupConfig {
 impl Default for CleanupConfig {
     fn default() -> Self {
         Self {
-            retention_window: Duration::from_secs(86400), // 24h
-            poll_interval: Duration::from_secs(300),      // 5 min
+            message_retention: Duration::from_secs(86400), // 24h
+            session_retention: Duration::from_secs(2_592_000), // 30 days
+            poll_interval: Duration::from_secs(300),       // 5 min
         }
     }
 }
@@ -128,8 +131,23 @@ impl CleanupWorker {
     }
 
     async fn tick(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let cutoff_ts =
-            chrono::Utc::now().timestamp() - self.config.retention_window.as_secs() as i64;
+        // Delete whole ended-and-expired sessions FIRST — a session removed
+        // here never needs its individual messages evaluated below.
+        let session_cutoff_ts =
+            chrono::Utc::now().timestamp() - self.config.session_retention.as_secs() as i64;
+        let sessions_deleted = self
+            .session_memory
+            .delete_ended_sessions_before(session_cutoff_ts)
+            .await?;
+        if sessions_deleted > 0 {
+            tracing::info!(
+                sessions_deleted,
+                "CleanupWorker deleted ended sessions past retention"
+            );
+        }
+
+        let message_cutoff_ts =
+            chrono::Utc::now().timestamp() - self.config.message_retention.as_secs() as i64;
         let sessions = self
             .session_memory
             .list_sessions_needing_maintenance()
@@ -138,7 +156,7 @@ impl CleanupWorker {
             let wm = self.session_memory.get_watermark(session.id).await?;
             let deleted = self
                 .session_memory
-                .cleanup_expired_messages(session.id, cutoff_ts, wm)
+                .cleanup_expired_messages(session.id, message_cutoff_ts, wm)
                 .await?;
             if deleted > 0 {
                 tracing::debug!(
@@ -206,7 +224,57 @@ mod tests {
     #[test]
     fn cleanup_config_defaults_are_sensible() {
         let cfg = CleanupConfig::default();
-        assert!(cfg.retention_window.as_secs() > 0);
+        assert!(cfg.message_retention.as_secs() > 0);
+        assert!(cfg.session_retention.as_secs() > 0);
+        assert!(cfg.session_retention > cfg.message_retention);
         assert!(cfg.poll_interval.as_secs() > 0);
+    }
+
+    #[tokio::test]
+    async fn cleanup_worker_deletes_ended_sessions_past_retention() {
+        use agentverse::memory::{Message, MessageRole};
+        use agentverse_session::{SessionMemory, SessionStatus, SqliteSessionMemory};
+
+        let store = std::sync::Arc::new(SqliteSessionMemory::new("sqlite::memory:").await.unwrap());
+        let session = store.create("alice").await.unwrap();
+        store
+            .append_turn(
+                session.id,
+                Message {
+                    role: MessageRole::User,
+                    content: "hi".into(),
+                },
+                Message {
+                    role: MessageRole::Assistant,
+                    content: "hello".into(),
+                },
+            )
+            .await
+            .unwrap();
+        store
+            .update_status(session.id, SessionStatus::Completed)
+            .await
+            .unwrap();
+
+        // `updated_at` and `delete_ended_sessions_before`'s cutoff are both
+        // second-precision, and the comparison is strict (`<`); without this,
+        // a fast test run lands the update and the cutoff in the same second
+        // and the session is never seen as past retention.
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+
+        let worker = CleanupWorker::new(
+            store.clone(),
+            CleanupConfig {
+                message_retention: Duration::from_secs(86400),
+                session_retention: Duration::from_secs(0), // anything ended is immediately eligible
+                poll_interval: Duration::from_secs(300),
+            },
+        );
+        worker.tick().await.unwrap();
+
+        assert!(
+            store.get(session.id).await.unwrap().is_none(),
+            "session must be deleted once past session_retention (0s here, so immediately)"
+        );
     }
 }
