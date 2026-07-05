@@ -1,14 +1,14 @@
-use agentverse::memory::{MemoryError, Message, MessageRole};
-use agentverse_memory::LongTermBackend;
+use agentverse::memory::MemoryError;
+use agentverse_memory::{VectorHit, VectorRecord, VectorStore};
 use sqlx::PgPool;
 use sqlx::Row;
 
-/// pgvector-backed long-term memory.
-pub struct PgVectorBackend {
+/// pgvector-backed, user-scoped long-term vector memory.
+pub struct PgVectorStore {
     pool: PgPool,
 }
 
-impl PgVectorBackend {
+impl PgVectorStore {
     pub async fn new(database_url: &str) -> Result<Self, MemoryError> {
         let pool = PgPool::connect(database_url)
             .await
@@ -22,37 +22,35 @@ impl PgVectorBackend {
     }
 }
 
-#[async_trait::async_trait]
-impl LongTermBackend for PgVectorBackend {
-    async fn store(&self, message: Message, embedding: Vec<f32>) -> Result<(), MemoryError> {
-        let id = uuid::Uuid::new_v4();
-        let content = message.content;
-        let role = format!("{:?}", message.role);
-        let metadata = serde_json::Value::Null;
-        let created_at = chrono::Utc::now();
+fn embedding_to_vector_str(embedding: &[f32]) -> String {
+    format!(
+        "[{}]",
+        embedding
+            .iter()
+            .map(|v| v.to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    )
+}
 
-        // Build embedding vector string for pgvector
-        let embedding_str = format!(
-            "[{}]",
-            embedding
-                .iter()
-                .map(|v| v.to_string())
-                .collect::<Vec<_>>()
-                .join(",")
-        );
+#[async_trait::async_trait]
+impl VectorStore for PgVectorStore {
+    async fn store(&self, record: VectorRecord) -> Result<(), MemoryError> {
+        let id = uuid::Uuid::new_v4();
+        let embedding_str = embedding_to_vector_str(&record.embedding);
 
         sqlx::query(
             r#"
-            INSERT INTO agent_memory (id, content, role, metadata, embedding, created_at)
+            INSERT INTO agent_memory (id, user_id, content, importance, embedding, created_at)
             VALUES ($1, $2, $3, $4, $5::vector, $6)
             "#,
         )
         .bind(id)
-        .bind(content)
-        .bind(role)
-        .bind(metadata)
+        .bind(record.user_id)
+        .bind(record.content)
+        .bind(record.importance)
         .bind(embedding_str)
-        .bind(created_at)
+        .bind(record.created_at)
         .execute(&self.pool)
         .await
         .map_err(|e| MemoryError::Storage(e.to_string()))?;
@@ -60,54 +58,58 @@ impl LongTermBackend for PgVectorBackend {
         Ok(())
     }
 
-    async fn search(&self, embedding: Vec<f32>, top_k: usize) -> Result<Vec<Message>, MemoryError> {
-        let embedding_str = format!(
-            "[{}]",
-            embedding
-                .iter()
-                .map(|v| v.to_string())
-                .collect::<Vec<_>>()
-                .join(",")
-        );
+    async fn search(
+        &self,
+        user_id: &str,
+        embedding: &[f32],
+        top_k: usize,
+    ) -> Result<Vec<VectorHit>, MemoryError> {
+        let embedding_str = embedding_to_vector_str(embedding);
 
         let rows = sqlx::query(
             r#"
-            SELECT content, role
+            SELECT content, importance, created_at, (embedding <=> $2::vector) AS distance
             FROM agent_memory
-            ORDER BY embedding <-> $1::vector
-            LIMIT $2
+            WHERE user_id = $1
+            ORDER BY embedding <=> $2::vector
+            LIMIT $3
             "#,
         )
+        .bind(user_id)
         .bind(embedding_str)
-        .bind(top_k as i32)
+        .bind(top_k as i64)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| MemoryError::Retrieval(e.to_string()))?;
 
-        let mut messages = Vec::new();
+        let mut hits = Vec::new();
         for row in rows {
             let content: String = row
                 .try_get("content")
                 .map_err(|e| MemoryError::Retrieval(e.to_string()))?;
-            let role_str: String = row
-                .try_get("role")
+            let importance: f32 = row
+                .try_get("importance")
+                .map_err(|e| MemoryError::Retrieval(e.to_string()))?;
+            let created_at = row
+                .try_get("created_at")
+                .map_err(|e| MemoryError::Retrieval(e.to_string()))?;
+            let distance: f64 = row
+                .try_get("distance")
                 .map_err(|e| MemoryError::Retrieval(e.to_string()))?;
 
-            let role = match role_str.as_str() {
-                "System" => MessageRole::System,
-                "Assistant" => MessageRole::Assistant,
-                "Tool" => MessageRole::Tool,
-                _ => MessageRole::User,
-            };
-
-            messages.push(Message { role, content });
+            hits.push(VectorHit {
+                content,
+                relevance: 1.0 / (1.0 + distance as f32),
+                importance,
+                created_at,
+            });
         }
 
-        Ok(messages)
+        Ok(hits)
     }
 }
 
-impl PgVectorBackend {
+impl PgVectorStore {
     pub async fn purge_old(
         &self,
         before: chrono::DateTime<chrono::Utc>,
