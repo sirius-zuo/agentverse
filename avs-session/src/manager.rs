@@ -1,6 +1,7 @@
-use crate::session::{Session, SessionId, SessionStatus};
-use crate::store::{SessionMemory, SessionMemoryError};
 use agentverse::memory::Message;
+use agentverse_memory::session::{
+    Session, SessionId, SessionMemory, SessionMemoryError, SessionStatus,
+};
 use std::sync::Arc;
 
 pub struct SessionManager {

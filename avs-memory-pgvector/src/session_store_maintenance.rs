@@ -8,8 +8,7 @@
 
 use crate::session_store::PostgresSessionMemory;
 use agentverse::memory::Message;
-use agentverse_session::session::{Session, SessionId, SessionStatus};
-use agentverse_session::store::SessionMemoryError;
+use agentverse_memory::session::{Session, SessionId, SessionMemoryError, SessionStatus};
 
 pub(crate) async fn get_watermark(
     store: &PostgresSessionMemory,

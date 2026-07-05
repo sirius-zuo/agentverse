@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod noop;
+pub mod session;
 pub mod simple;
 pub mod traits;
 

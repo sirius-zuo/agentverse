@@ -6,9 +6,9 @@
 //! blocks — only inherent `impl Type { .. }` blocks can be split that way.
 //! The trait methods in `sqlite.rs` delegate to these functions.
 
-use crate::session::{Session, SessionId, SessionStatus};
-use crate::sqlite::SqliteSessionMemory;
-use crate::store::SessionMemoryError;
+use super::sqlite::SqliteSessionMemory;
+use super::store::SessionMemoryError;
+use super::types::{Session, SessionId, SessionStatus};
 use agentverse::memory::Message;
 
 pub(crate) async fn get_watermark(
