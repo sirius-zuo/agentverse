@@ -77,6 +77,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentverse-eval"
+version = "0.1.0"
+dependencies = [
+ "agentverse",
+ "agentverse-agent",
+ "agentverse-hitl",
+ "agentverse-plan",
+ "agentverse-react",
+ "agentverse-session",
+ "agentverse-skill",
+ "agentverse-strategy",
+ "agentverse-tools",
+ "async-trait",
+ "httpmock",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "toml",
+ "uuid",
+]
+
+[[package]]
 name = "agentverse-guardrails"
 version = "0.1.0"
 dependencies = [

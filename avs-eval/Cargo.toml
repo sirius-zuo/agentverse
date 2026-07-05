@@ -1,0 +1,26 @@
+[package]
+name = "agentverse-eval"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+agentverse = { path = "../avs-core" }
+agentverse-react = { path = "../avs-react" }
+agentverse-skill = { path = "../avs-skill" }
+agentverse-plan = { path = "../avs-plan" }
+agentverse-agent = { path = "../avs-agent" }
+agentverse-hitl = { path = "../avs-hitl" }
+agentverse-session = { path = "../avs-session" }
+agentverse-strategy = { path = "../avs-strategy" }
+agentverse-tools = { path = "../avs-tools" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+uuid = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+httpmock = { workspace = true }
+schemars = { workspace = true }
+tempfile = "3"

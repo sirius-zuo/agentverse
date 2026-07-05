@@ -1,0 +1,2 @@
+input = "Thought: need the final tool.\nAction: final\nAction Input: {\"x\": 1}"
+expected_debug = "ToolCall { tool_name: \"final\", args: Object {\"x\": Number(1)} }"
