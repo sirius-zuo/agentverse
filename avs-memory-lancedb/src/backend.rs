@@ -1,31 +1,51 @@
-use agentverse::memory::{MemoryError, Message, MessageRole};
-use agentverse_memory::LongTermBackend;
-use arrow_array::{RecordBatch, StringArray};
+use agentverse::memory::MemoryError;
+use agentverse_memory::{VectorHit, VectorRecord, VectorStore};
+use arrow_array::{Array, FixedSizeListArray};
+use arrow_array::{Float32Array, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema};
+use chrono::DateTime;
 use futures_util::stream::StreamExt;
 use lancedb::query::{ExecutableQuery, QueryBase};
 use lancedb::table::AddDataMode;
 use std::sync::Arc;
 use uuid::Uuid;
 
-/// LanceDB-backed long-term memory.
-/// Stores messages as vector records with metadata.
-pub struct LanceDBBackend {
-    db_path: String,
-    table_name: String,
+fn schema(dims: usize) -> Arc<Schema> {
+    Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Utf8, false),
+        Field::new("user_id", DataType::Utf8, false),
+        Field::new("content", DataType::Utf8, false),
+        Field::new("importance", DataType::Float32, false),
+        Field::new("created_at", DataType::Utf8, false), // rfc3339
+        Field::new(
+            "embedding",
+            DataType::FixedSizeList(
+                Arc::new(Field::new("item", DataType::Float32, true)),
+                dims as i32,
+            ),
+            false,
+        ),
+    ]))
 }
 
-impl LanceDBBackend {
-    pub fn new(db_path: &str, table_name: &str) -> Self {
+/// LanceDB-backed, user-scoped long-term vector memory with real ANN search.
+pub struct LanceDbVectorStore {
+    db_path: String,
+    table_name: String,
+    dimensions: usize,
+}
+
+impl LanceDbVectorStore {
+    pub fn new(db_path: &str, table_name: &str, dimensions: usize) -> Self {
         Self {
             db_path: db_path.to_string(),
             table_name: table_name.to_string(),
+            dimensions,
         }
     }
 
     async fn connect(&self) -> Result<lancedb::Connection, MemoryError> {
-        let uri = format!("file://{}", self.db_path);
-        lancedb::connect(&uri)
+        lancedb::connect(&self.db_path)
             .execute()
             .await
             .map_err(|e| MemoryError::Storage(e.to_string()))
@@ -35,34 +55,13 @@ impl LanceDBBackend {
         &self,
         conn: &lancedb::Connection,
     ) -> Result<lancedb::table::Table, MemoryError> {
-        // Try to open existing table, or create if it doesn't exist
         match conn.open_table(&self.table_name).execute().await {
             Ok(table) => Ok(table),
-            Err(_) => {
-                // Create an empty table with the schema
-                let schema = Arc::new(Schema::new(vec![
-                    Field::new("id", DataType::Utf8, false),
-                    Field::new("content", DataType::Utf8, false),
-                    Field::new("role", DataType::Utf8, false),
-                    Field::new("metadata", DataType::Utf8, true),
-                    Field::new("created_at", DataType::Utf8, false),
-                ]));
-                let empty_batch = RecordBatch::try_new(
-                    schema.clone(),
-                    vec![
-                        Arc::new(StringArray::from(Vec::<&str>::new())),
-                        Arc::new(StringArray::from(Vec::<&str>::new())),
-                        Arc::new(StringArray::from(Vec::<&str>::new())),
-                        Arc::new(StringArray::from(Vec::<&str>::new())),
-                        Arc::new(StringArray::from(Vec::<&str>::new())),
-                    ],
-                )
-                .map_err(|e| MemoryError::Storage(e.to_string()))?;
-                conn.create_table(&self.table_name, vec![empty_batch])
-                    .execute()
-                    .await
-                    .map_err(|e| MemoryError::Storage(e.to_string()))
-            }
+            Err(_) => conn
+                .create_empty_table(&self.table_name, schema(self.dimensions))
+                .execute()
+                .await
+                .map_err(|e| MemoryError::Storage(e.to_string())),
         }
     }
 
@@ -75,38 +74,46 @@ impl LanceDBBackend {
         &self,
         _before: chrono::DateTime<chrono::Utc>,
     ) -> Result<usize, MemoryError> {
-        // LanceDB doesn't have native time-based deletion in MVP
+        // LanceDB time-based deletion is a follow-up ticket.
         Ok(0)
     }
 }
 
 #[async_trait::async_trait]
-impl LongTermBackend for LanceDBBackend {
-    async fn store(&self, message: Message, embedding: Vec<f32>) -> Result<(), MemoryError> {
+impl VectorStore for LanceDbVectorStore {
+    async fn store(&self, record: VectorRecord) -> Result<(), MemoryError> {
+        if record.embedding.len() != self.dimensions {
+            return Err(MemoryError::Storage(format!(
+                "embedding has {} dimensions, expected {}",
+                record.embedding.len(),
+                self.dimensions
+            )));
+        }
+
         let conn = self.connect().await?;
         let table = self.open_or_create_table(&conn).await?;
 
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Utf8, false),
-            Field::new("content", DataType::Utf8, false),
-            Field::new("role", DataType::Utf8, false),
-            Field::new("metadata", DataType::Utf8, true),
-            Field::new("created_at", DataType::Utf8, false),
-        ]));
-
         let id = Uuid::new_v4().to_string();
-        let role = format!("{:?}", message.role);
-        let metadata = serde_json::to_string(&embedding).unwrap_or_default();
-        let created_at = chrono::Utc::now().to_rfc3339();
+        let created_at = record.created_at.to_rfc3339();
+
+        let embedding_values = Float32Array::from(record.embedding);
+        let embedding_array = FixedSizeListArray::try_new(
+            Arc::new(Field::new("item", DataType::Float32, true)),
+            self.dimensions as i32,
+            Arc::new(embedding_values),
+            None,
+        )
+        .map_err(|e| MemoryError::Storage(e.to_string()))?;
 
         let batch = RecordBatch::try_new(
-            schema,
+            schema(self.dimensions),
             vec![
                 Arc::new(StringArray::from(vec![id])),
-                Arc::new(StringArray::from(vec![message.content])),
-                Arc::new(StringArray::from(vec![role])),
-                Arc::new(StringArray::from(vec![metadata])),
+                Arc::new(StringArray::from(vec![record.user_id])),
+                Arc::new(StringArray::from(vec![record.content])),
+                Arc::new(Float32Array::from(vec![record.importance])),
                 Arc::new(StringArray::from(vec![created_at])),
+                Arc::new(embedding_array),
             ],
         )
         .map_err(|e| MemoryError::Storage(e.to_string()))?;
@@ -123,86 +130,121 @@ impl LongTermBackend for LanceDBBackend {
 
     async fn search(
         &self,
-        _embedding: Vec<f32>,
+        user_id: &str,
+        embedding: &[f32],
         top_k: usize,
-    ) -> Result<Vec<Message>, MemoryError> {
+    ) -> Result<Vec<VectorHit>, MemoryError> {
         let conn = self.connect().await?;
         let table = self.open_or_create_table(&conn).await?;
 
         let mut results = table
             .query()
+            .nearest_to(embedding)
+            .map_err(|e| MemoryError::Retrieval(e.to_string()))?
+            .only_if(format!("user_id = '{}'", user_id.replace('\'', "''")))
             .limit(top_k)
             .execute()
             .await
             .map_err(|e| MemoryError::Retrieval(e.to_string()))?;
 
-        let mut messages = Vec::new();
+        let mut hits = Vec::new();
         while let Some(batch) = results
             .next()
             .await
             .transpose()
             .map_err(|e| MemoryError::Retrieval(e.to_string()))?
         {
-            if let (Some(role_arr), Some(content_arr)) = (
-                batch.column_by_name("role"),
-                batch.column_by_name("content"),
-            ) {
-                let role_array = role_arr
-                    .as_any()
-                    .downcast_ref::<arrow_array::StringArray>()
-                    .unwrap();
-                let content_array = content_arr
-                    .as_any()
-                    .downcast_ref::<arrow_array::StringArray>()
-                    .unwrap();
-                for i in 0..batch.num_rows() {
-                    let role = match role_array.value(i) {
-                        "System" => MessageRole::System,
-                        "Assistant" => MessageRole::Assistant,
-                        "Tool" => MessageRole::Tool,
-                        _ => MessageRole::User,
-                    };
-                    messages.push(Message {
-                        role,
-                        content: content_array.value(i).to_string(),
-                    });
-                }
+            let content_array = batch
+                .column_by_name("content")
+                .and_then(|c| c.as_any().downcast_ref::<StringArray>())
+                .ok_or_else(|| MemoryError::Retrieval("missing content column".to_string()))?;
+            let importance_array = batch
+                .column_by_name("importance")
+                .and_then(|c| c.as_any().downcast_ref::<Float32Array>())
+                .ok_or_else(|| MemoryError::Retrieval("missing importance column".to_string()))?;
+            let created_at_array = batch
+                .column_by_name("created_at")
+                .and_then(|c| c.as_any().downcast_ref::<StringArray>())
+                .ok_or_else(|| MemoryError::Retrieval("missing created_at column".to_string()))?;
+            let distance_array = batch
+                .column_by_name("_distance")
+                .and_then(|c| c.as_any().downcast_ref::<Float32Array>())
+                .ok_or_else(|| MemoryError::Retrieval("missing _distance column".to_string()))?;
+
+            for i in 0..batch.num_rows() {
+                let created_at = DateTime::parse_from_rfc3339(created_at_array.value(i))
+                    .map_err(|e| MemoryError::Retrieval(e.to_string()))?
+                    .with_timezone(&chrono::Utc);
+                let distance = distance_array.value(i);
+
+                hits.push(VectorHit {
+                    content: content_array.value(i).to_string(),
+                    relevance: 1.0 / (1.0 + distance),
+                    importance: importance_array.value(i),
+                    created_at,
+                });
             }
         }
 
-        Ok(messages)
+        hits.sort_by(|a, b| b.relevance.total_cmp(&a.relevance));
+        hits.truncate(top_k);
+
+        Ok(hits)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentverse_memory::LongTermBackend;
+    use agentverse_memory::VectorRecord;
 
     #[tokio::test]
-    async fn test_health_check() {
-        let backend = LanceDBBackend::new("/tmp/test-lancedb-memory", "messages");
-        // Should not panic — creates/verifies the database
-        let result = backend.health_check().await;
-        assert!(result.is_ok());
+    async fn search_returns_nearest_and_is_user_scoped() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LanceDbVectorStore::new(dir.path().to_str().unwrap(), "mem", 3);
+        let now = chrono::Utc::now();
+        let rec = |user: &str, content: &str, emb: Vec<f32>| VectorRecord {
+            user_id: user.into(),
+            content: content.into(),
+            embedding: emb,
+            importance: 0.5,
+            created_at: now,
+        };
+        store
+            .store(rec("alice", "far", vec![10.0, 10.0, 10.0]))
+            .await
+            .unwrap();
+        store
+            .store(rec("alice", "near", vec![1.0, 0.0, 0.0]))
+            .await
+            .unwrap();
+        store
+            .store(rec("bob", "nearest-but-bob", vec![0.9, 0.0, 0.0]))
+            .await
+            .unwrap();
+        let hits = store.search("alice", &[1.0, 0.0, 0.0], 2).await.unwrap();
+        assert_eq!(hits[0].content, "near"); // old code returned insertion order
+        assert!(hits.iter().all(|h| h.content != "nearest-but-bob"));
     }
 
     #[tokio::test]
-    async fn test_store_and_search() {
-        let backend = LanceDBBackend::new("/tmp/test-lancedb-store-search", "messages");
+    async fn health_check_succeeds() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LanceDbVectorStore::new(dir.path().to_str().unwrap(), "mem", 3);
+        assert!(store.health_check().await.is_ok());
+    }
 
-        let result = backend
-            .store(
-                Message {
-                    role: MessageRole::User,
-                    content: "Hello, how are you?".to_string(),
-                },
-                vec![],
-            )
-            .await;
-        assert!(result.is_ok());
-
-        let results = backend.search(vec![], 10).await;
-        assert!(results.is_ok());
+    #[tokio::test]
+    async fn store_rejects_wrong_dimensions() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LanceDbVectorStore::new(dir.path().to_str().unwrap(), "mem", 3);
+        let rec = VectorRecord {
+            user_id: "alice".into(),
+            content: "bad".into(),
+            embedding: vec![1.0, 2.0],
+            importance: 0.5,
+            created_at: chrono::Utc::now(),
+        };
+        assert!(store.store(rec).await.is_err());
     }
 }
