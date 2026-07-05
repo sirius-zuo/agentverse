@@ -111,6 +111,9 @@ pub struct Agent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentverse::Config;
+    use agentverse_session::SqliteSessionMemory;
+    use agentverse_strategy::{build, StrategyKind};
 
     #[tokio::test]
     async fn agent_output_done_variant_carries_string() {
@@ -134,17 +137,44 @@ mod tests {
         assert!(matches!(r, PhaseAdvanceResult::Pending { approval_id } if approval_id == id));
     }
 
-    #[test]
-    fn agent_builder_accepts_custom_cleanup_config() {
-        // Compile-time/API-shape check: with_cleanup_config must exist and
-        // be chainable exactly like the other with_* methods. A full
-        // integration test that the worker actually uses this config lives
-        // in avs-agent/src/workers.rs's cleanup_worker_deletes_ended_sessions_past_retention.
+    #[tokio::test]
+    async fn agent_builder_accepts_custom_cleanup_config() {
+        let runner = Arc::new(
+            LlmRunner::from_config(Config {
+                provider: agentverse::ProviderConfig::openai(
+                    "test".to_string(),
+                    "sk-test".to_string(),
+                    Some("http://127.0.0.1:1/v1".to_string()),
+                ),
+                max_messages: 10,
+                tools: vec![],
+                prompts_dir: None,
+                system_prompt: None,
+            })
+            .unwrap(),
+        );
+        let tools = ToolRegistry::new();
+        let prompts = Arc::new(PromptRegistry::new());
+        let strategy = build(
+            StrategyKind::React,
+            Arc::clone(&runner),
+            Arc::clone(&prompts),
+            Arc::clone(&tools),
+            3,
+        );
+        let session_memory = Arc::new(SqliteSessionMemory::new("sqlite::memory:").await.unwrap());
         let config = crate::workers::CleanupConfig {
             message_retention: std::time::Duration::from_secs(3600),
             session_retention: std::time::Duration::from_secs(86400),
             poll_interval: std::time::Duration::from_secs(60),
         };
-        assert_eq!(config.message_retention.as_secs(), 3600);
+        // Proves with_cleanup_config exists, is chainable with the other
+        // with_* methods, and that build() succeeds when it's used — the
+        // real end-to-end proof that the worker actually HONORS this
+        // config lives in avs-agent/src/workers.rs's
+        // cleanup_worker_deletes_ended_sessions_past_retention.
+        let _agent = Agent::builder(runner, tools, prompts, session_memory, strategy)
+            .with_cleanup_config(config)
+            .build();
     }
 }
