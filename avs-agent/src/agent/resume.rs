@@ -190,73 +190,24 @@ impl Agent {
                 if pending.is_empty() {
                     "Checkpoint approved. Continue.".to_string()
                 } else {
-                    // Execute approved calls using execute_many_hitl so any further
-                    // dangerous calls in the batch are re-checked.
-                    if let Some(ref hitl_cfg) = self.hitl {
-                        let skill_ctx: Option<SkillContext> = skill_ctx_json
-                            .as_deref()
-                            .and_then(|j| serde_json::from_str(j).ok());
-                        let hook = std::sync::Arc::new(HitlContext::new(
-                            session_id,
-                            skill_ctx.as_ref().map(|c| c.skill_id.clone()),
-                            hitl_cfg.policy.clone(),
-                            std::sync::Arc::clone(&hitl_cfg.queue),
-                        ));
-                        let hook_arc: std::sync::Arc<dyn agentverse::hitl::HitlHook> = hook;
-                        match self
-                            .tools
-                            .execute_many_hitl(pending.clone(), &hook_arc)
-                            .await
-                        {
-                            Ok(results) => results
-                                .iter()
-                                .map(|r| {
-                                    let v = match &r.result {
-                                        Ok(v) => v.to_string(),
-                                        Err(e) => format!("Error: {e}"),
-                                    };
-                                    format!("Tool: {}\nResult: {}", r.name, v)
-                                })
-                                .collect::<Vec<_>>()
-                                .join("\n\n"),
-                            Err(agentverse_tools::HitlInterruptResult {
-                                approval_id,
-                                kind_json,
-                            }) => {
-                                // Another call in the batch needs approval.
-                                let skill_ctx_val: Option<SkillContext> = skill_ctx_json
-                                    .as_deref()
-                                    .and_then(|j| serde_json::from_str(j).ok());
-                                return self
-                                    .handle_tool_interrupt(
-                                        user_id,
-                                        session_id,
-                                        agentverse::hitl::HitlInterrupt {
-                                            approval_id,
-                                            kind_json,
-                                            history: history.clone(),
-                                            pending_calls: pending.clone(),
-                                            active_tool_names: active_tool_names.clone(),
-                                        },
-                                        &skill_ctx_val,
-                                    )
-                                    .await;
-                            }
-                        }
-                    } else {
-                        let results = self.tools.execute_many(pending).await;
-                        results
-                            .iter()
-                            .map(|r| {
-                                let v = match &r.result {
-                                    Ok(v) => v.to_string(),
-                                    Err(e) => format!("Error: {e}"),
-                                };
-                                format!("Tool: {}\nResult: {}", r.name, v)
-                            })
-                            .collect::<Vec<_>>()
-                            .join("\n\n")
-                    }
+                    // Execute directly: these calls already went through HITL and were
+                    // approved. Re-running them through execute_many_hitl would re-check
+                    // them against the same policy and immediately re-intercept them
+                    // (the hook has no notion of "already approved"), turning every
+                    // approval into an infinite interrupt loop. Modified/Rejected below
+                    // execute directly for the same reason.
+                    let results = self.tools.execute_many(pending).await;
+                    results
+                        .iter()
+                        .map(|r| {
+                            let v = match &r.result {
+                                Ok(v) => v.to_string(),
+                                Err(e) => format!("Error: {e}"),
+                            };
+                            format!("Tool: {}\nResult: {}", r.name, v)
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n\n")
                 }
             }
             ApprovalDecision::Modified { new_args } => {
