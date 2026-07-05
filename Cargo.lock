@@ -198,7 +198,6 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
- "tracing-subscriber",
  "uuid",
 ]
 
@@ -244,7 +243,6 @@ version = "0.1.0"
 dependencies = [
  "agentverse",
  "agentverse-guardrails",
- "agentverse-memory",
  "agentverse-tools",
  "async-trait",
  "reqwest",
@@ -262,7 +260,6 @@ dependencies = [
  "agentverse",
  "agentverse-guardrails",
  "agentverse-hitl",
- "agentverse-memory",
  "agentverse-tools",
  "async-trait",
  "httpmock",

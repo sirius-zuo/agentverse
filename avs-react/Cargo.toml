@@ -21,7 +21,6 @@ tokio = { workspace = true, features = ["rt", "macros"] }
 async-trait = { workspace = true }
 tempfile = "3"
 tracing-subscriber = { workspace = true }
-agentverse-memory = { path = "../avs-memory" }
 agentverse-tools = { path = "../avs-tools" }
 reqwest = { workspace = true }
 schemars = { version = "0.8", features = ["derive"] }

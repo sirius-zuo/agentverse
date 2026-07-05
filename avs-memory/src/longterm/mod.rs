@@ -43,7 +43,7 @@ pub struct ScoredMemory {
     pub created_at: DateTime<Utc>,
 }
 
-/// Layer 3 user-scoped long-term store. See also `LongTermBackend` for the lower-level embedding interface.
+/// Layer 3 user-scoped long-term store.
 #[async_trait]
 pub trait LongtermMemory: Send + Sync {
     async fn write(&self, user_id: &str, record: LongtermRecord) -> Result<(), MemoryError>;
