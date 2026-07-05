@@ -227,6 +227,16 @@ pub async fn run_conformance_suite<S: SessionMemory>(store: &S) {
             .is_none(),
         "session must be gone after delete_session"
     );
+    assert!(
+        store
+            .load_messages(to_delete.id)
+            .await
+            .expect("load_messages after delete")
+            .is_empty(),
+        "messages must be cascade-deleted along with their session (ON DELETE CASCADE) — \
+         this locks in the behavior the whole retention design depends on, since neither \
+         backend implementation deletes messages explicitly"
+    );
 
     // delete_ended_sessions_before: only non-active + past-cutoff sessions
     // are removed; active sessions and not-yet-past-cutoff sessions survive.
