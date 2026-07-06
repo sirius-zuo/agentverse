@@ -3,5 +3,5 @@ pub mod session;
 
 pub use longterm::{
     Embedder, EmbedderFactory, EmbedderRegistry, LongtermMemory, LongtermRecord, NoopVectorStore,
-    ScoredMemory, VectorHit, VectorRecord, VectorStore,
+    ScoreWeights, ScoredMemory, VectorHit, VectorLongtermMemory, VectorRecord, VectorStore,
 };
