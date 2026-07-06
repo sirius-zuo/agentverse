@@ -21,10 +21,11 @@ your binary
   │     │     ├── SkillRegistry — loaded from skills/system/ and skills/user/
   │     │     ├── SkillMode — Open (any skill) or Constrained (allowlist)
   │     │     └── SkillRouter — keyword-overlap routing on first invoke
-  │     ├── Memory layers
-  │     │     ├── Layer 1: CacheMemory   — in-process RAM buffer, TTL-evicted
-  │     │     ├── Layer 2: SessionMemory — durable per-user conversation transcript (SQLite/Postgres)
-  │     │     └── Layer 3: LongtermMemory — distilled cross-session knowledge (vector store, optional)
+  │     ├── Memory layers (avs-memory)
+  │     │     ├── Layer 1: WorkingMemory  — in-process RAM buffer, TTL-evicted (CacheMemory default)
+  │     │     ├── Layer 2: SessionMemory  — durable per-user conversation transcript (SQLite/Postgres)
+  │     │     └── Layer 3: LongtermMemory — distilled cross-session knowledge, optional
+  │     │           └── VectorLongtermMemory = Embedder (OpenAI-compatible/Gemini) + VectorStore (LanceDB dev / pgvector prod)
   │     └── HTTP server (avs-agent `http` feature, optional)
   └── agentverse_subagent::SubAgentExecutor (optional, for multi-agent pipelines)
         ├── run(&spec, ctx)              — single subagent, sequential
@@ -39,7 +40,7 @@ your binary
 - **Agent**: `agentverse-agent::Agent` is the single LLM access point. Composes `LlmRunner`, `StrategyKind`, `SessionManager`, memory layers, and optional skill routing.
 - **Strategies**: ReAct, Plan-and-Execute, Hierarchical planning. Selected at construction via `agentverse-strategy::build`. Strategies are pure `Vec<Message> → String` with no memory coupling.
 - **Skill system**: `agentverse-skill` provides file-based skill discovery, keyword-overlap routing, and per-session skill context. Skills are Markdown files (`SKILL.md`) that declare LLM instructions, tool allowlists, and metadata. Two load slots — `system/` and `user/` — support operator overrides without code changes.
-- **Three-layer memory**: Layer 1 `CacheMemory` (in-process, TTL), Layer 2 `SessionMemory` (durable transcript), Layer 3 `LongtermMemory` (distilled cross-session knowledge, opt-in).
+- **Three-layer memory**: all three tiers live in `agentverse-memory`. Layer 1 `WorkingMemory` (in-process, TTL; `CacheMemory` default, override via `with_working_memory`), Layer 2 `SessionMemory` (durable transcript), Layer 3 `LongtermMemory` (distilled cross-session knowledge, opt-in). Layer 3 ships a real implementation: `VectorLongtermMemory` composes a pluggable `Embedder` (OpenAI-compatible endpoint — including keyless local Ollama/llama.cpp — or Gemini) with a `VectorStore` backend (`LanceDbVectorStore` for dev, `PgVectorStore` for production) and scores retrievals by recency, importance, and relevance.
 - **Subagent runtime**: `agentverse-subagent` provides isolated, budget-limited worker agents (`SubAgentExecutor`). Each subagent runs its own ReAct loop with a scoped tool registry, a step/token/timeout budget, and returns a single text answer. Supports programmatic orchestration (`run`, `run_many`, `spawn`) and LLM-driven dispatch via the `spawn_subagent` tool.
 - **Multi-user sessions**: `Agent` routes through `SessionManager` for durable per-user conversation history with ownership enforcement.
 - **HTTP sidecar**: `Agent::builder(...).with_http_server().build()` spawns an HTTP server as a background task. The agent can run without it; the server cannot run without the agent.
@@ -216,7 +217,7 @@ agent:
 
 ## Multi-User Sessions
 
-`agentverse-agent` owns the top-level `Agent`. `agentverse-session` provides session data infrastructure only.
+`agentverse-agent` owns the top-level `Agent`. `agentverse-memory` provides the storage tiers; `agentverse-session` provides session lifecycle (`SessionManager`) and re-exports the storage types, so session consumers import everything from one place.
 
 ```text
 Agent::invoke(user_id, session_id, input)
@@ -232,7 +233,7 @@ Agent::invoke(user_id, session_id, input)
 
 Available session memory backends:
 
-- `SqliteSessionMemory` in `agentverse-session` (default)
+- `SqliteSessionMemory` in `agentverse-memory` (default; re-exported by `agentverse-session`)
 - `PostgresSessionMemory` in `agentverse-memory-pgvector`
 
 ### Retention and Data Deletion
@@ -472,7 +473,7 @@ let registry = Arc::new(PromptRegistry::new());
 | `avs-skill` | `agentverse-skill` | Skill system: `SKILL.md` parser, `SkillRegistry`, `SkillRouter`, `SkillMode`, `SkillConfig` |
 | `avs-hitl` | `agentverse-hitl` | Human-in-the-loop: `HitlPolicy`, `ApprovalQueue` trait (`InMemoryQueue`, `SqliteQueue`), `HitlContext`, `RequestCheckpointTool` |
 | `avs-strategy` | `agentverse-strategy` | Strategy factory (`build`, `StrategyKind`) and umbrella re-exports |
-| `avs-session` | `agentverse-session` | Session model, `SessionManager`, `SessionMemory` trait, `SqliteSessionMemory` |
+| `avs-session` | `agentverse-session` | Session lifecycle: `Session` model, `SessionManager`; re-exports the session-memory storage types (`SessionMemory`, `SqliteSessionMemory`, …) from `agentverse-memory` |
 | `avs-integration` | `agentverse-integration` | Agent-owned connector runtime for console, Slack, GitHub, WhatsApp |
 | `avs-react` | `agentverse-react` | ReAct strategy loop |
 | `avs-plan` | `agentverse-plan` | Plan-and-Execute and hierarchical strategies |

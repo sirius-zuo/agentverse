@@ -43,7 +43,7 @@ cargo test -p agentverse-tools
 
 Expected output: all tests passing, 0 failures. The exact count grows as the codebase does (531 passing as of Wave 3) — don't hardcode a number when checking this locally; a shrinking count across a change is the signal to look for, not a fixed target.
 
-Tests are pure-unit (no network) with two exceptions, both fully offline via mocking rather than live network calls: `avs-eval`'s judge-based regression tests replay recorded LLM responses via `httpmock` (see [DEVELOPMENT.md's Eval Harness section](DEVELOPMENT.md#eval-harness)), and `avs-memory-pgvector`'s Postgres conformance test requires `TEST_DATABASE_URL` to be set against a real instance or it silently skips (see [DEVELOPMENT.md's SessionMemory Conformance Suite section](DEVELOPMENT.md#sessionmemory-conformance-suite)). Neither makes a live LLM call in CI or in a default local run.
+Tests are pure-unit (no network) with a few exceptions, all fully offline via mocking or env-gating rather than live network calls: `avs-eval`'s judge-based regression tests and `avs-memory`'s embedder tests mock HTTP via `httpmock` (see [DEVELOPMENT.md's Eval Harness section](DEVELOPMENT.md#eval-harness)); `avs-memory-pgvector`'s Postgres tests (the `SessionMemory` conformance suite plus the `PgVectorStore` store/search test) require `TEST_DATABASE_URL` to be set against a real instance or they silently skip (see [DEVELOPMENT.md's SessionMemory Conformance Suite section](DEVELOPMENT.md#sessionmemory-conformance-suite)); and `avs-memory-lancedb`'s tests run unconditionally against temporary on-disk LanceDB databases (no network, temp-dir writes only). None makes a live LLM call in CI or in a default local run.
 
 ### Formatting and lint checks (required by CI)
 
@@ -61,7 +61,7 @@ CI also runs two structural fitness checks (`./scripts/check-file-sizes.sh`, `./
 
 See [DEVELOPMENT.md](DEVELOPMENT.md#architecture-overview) for the authoritative, maintained crate list and descriptions — this section previously drifted out of sync with the real workspace (it referenced an `avs-server` crate and a `rag-qa` example that no longer exist) and is kept intentionally short here to avoid a second copy going stale again.
 
-Crates relevant to this guide's build/test commands: `avs-core`, `avs-agent`, `avs-session`, `avs-tools`, `avs-react`, `avs-plan`, `avs-strategy`, `avs-logging`. Full workspace: 20 library crates + `examples/*` (see `Cargo.toml`'s `[workspace] members`).
+Crates relevant to this guide's build/test commands: `avs-core`, `avs-agent`, `avs-memory`, `avs-session`, `avs-tools`, `avs-react`, `avs-plan`, `avs-strategy`, `avs-logging`. Full workspace: 20 library crates + `examples/*` (see `Cargo.toml`'s `[workspace] members`).
 
 ---
 

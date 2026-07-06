@@ -35,7 +35,7 @@ AgentVerse/
 ├── avs-skill/             # Skill system: SKILL.md parser, SkillRegistry, SkillRouter, SkillMode, SkillConfig
 ├── avs-hitl/              # Human-in-the-loop: HitlPolicy, ApprovalQueue (InMemoryQueue, SqliteQueue), HitlContext, RequestCheckpointTool
 ├── avs-strategy/          # build() factory + StrategyKind enum; re-exports all strategies
-├── avs-session/           # Session model, SessionManager, SessionMemory trait, SqliteSessionMemory
+├── avs-session/           # Session lifecycle: Session model, SessionManager (storage types re-exported from avs-memory)
 ├── avs-subagent/          # Subagent runtime: SubAgentExecutor, SubAgentSpec, Budget, SubAgentHandle, SubAgentTool
 ├── avs-logging/           # avs_logging::init() (RUST_LOG / LOG_FORMAT)
 ├── avs-eval/              # Eval harness: deterministic scaffold + judge-based quality regression tests
@@ -86,8 +86,12 @@ AgentVerse/
 | **Config** | `agentverse` | Provider settings (model name, API key, base URL) |
 | **PromptRegistry** | `agentverse` | Template engine (Minijinja) + example storage |
 | **Tool** | `agentverse` | `Tool` trait with associated `type Args: JsonSchema + DeserializeOwned`; `ErasedTool` for object-safe registry dispatch |
-| **SessionMemory** | `agentverse-session` | Layer-2 durable conversation transcript; `SessionManager` wraps it with ownership checks |
-| **LongtermMemory** | `agentverse` | Layer-3 cross-session knowledge store; opt-in via `AgentBuilder::with_longterm_memory(store)`. No deletion capability exists on this trait anywhere in agentverse — that data's retention is explicitly out of scope, see [Retention and Data Deletion](#retention-and-data-deletion) |
+| **WorkingMemory** | `agentverse-memory` | Layer-1 in-process cache trait; `CacheMemory` (TTL-evicted, 300 s default) is the built-in impl, override via `AgentBuilder::with_working_memory(wm)` |
+| **SessionMemory** | `agentverse-memory` (re-exported by `agentverse-session`) | Layer-2 durable conversation transcript; `SessionManager` wraps it with ownership checks |
+| **LongtermMemory** | `agentverse-memory` | Layer-3 cross-session knowledge store; opt-in via `AgentBuilder::with_longterm_memory(store)`. No deletion capability exists on this trait anywhere in agentverse — that data's retention is explicitly out of scope, see [Retention and Data Deletion](#retention-and-data-deletion) |
+| **Embedder** / **EmbedderRegistry** | `agentverse-memory` | Text-to-vector providers behind a name-keyed factory registry (mirrors `ProviderRegistry`): `"openai"` (any OpenAI-compatible `/embeddings` endpoint; `api_key` optional when `base_url` is set, so local Ollama/llama.cpp works keyless) and `"gemini"` |
+| **VectorStore** | `agentverse-memory` | Embedding storage/ANN-search trait behind `LongtermMemory`; impls: `LanceDbVectorStore` (`agentverse-memory-lancedb`, dev) and `PgVectorStore` (`agentverse-memory-pgvector`, production). Both are user-scoped and use cosine distance (relevance = 1/(1+distance)) |
+| **VectorLongtermMemory** | `agentverse-memory` | The shipped `LongtermMemory` impl: `Embedder` + `VectorStore` + `ScoreWeights` (score = α·recency + β·importance + γ·relevance; defaults 0.25/0.25/0.5, 7-day recency half-life) |
 | **RunStrategy** | `agentverse` | Trait implemented by all strategies; pure `Vec<Message> → String`, no memory coupling |
 | **SubAgentExecutor** | `agentverse-subagent` | Orchestrates isolated worker agents; cloneable; built alongside (not inside) `Agent` |
 | **SubAgentSpec** / **Budget** | `agentverse-subagent` | Describes one worker: objective, system prompt, allowed tools, model override, step/token/timeout budget |
@@ -1282,17 +1286,32 @@ docker run -p 3000:3000 \
 
 Layer-3 `LongtermMemory` is opt-in. Call `.with_longterm_memory(store)` on `AgentBuilder`; omit the call to disable it entirely.
 
-```rust
-use agentverse::memory::LongtermMemory;
-use std::sync::Arc;
+The shipped implementation is `VectorLongtermMemory` (in `agentverse-memory`): a pluggable `Embedder` plus a `VectorStore` backend. Dev wiring — local Ollama embedder (keyless, OpenAI-compatible) with a file-based LanceDB store:
 
-// Any type implementing LongtermMemory works here
-let longterm: Arc<dyn LongtermMemory> = Arc::new(MyLongtermStore::new().await?);
+```rust
+use agentverse_memory::{EmbedderRegistry, VectorLongtermMemory};
+use agentverse_memory_lancedb::LanceDbVectorStore;
+use std::{collections::HashMap, sync::Arc};
+
+let embedder = EmbedderRegistry::with_builtins().build(
+    "openai",
+    &HashMap::from([
+        ("model_name".to_string(), "nomic-embed-text".to_string()),
+        ("base_url".to_string(), "http://localhost:11434/v1".to_string()), // Ollama, no api_key
+        ("dimensions".to_string(), "768".to_string()),
+    ]),
+)?;
+let store = Arc::new(LanceDbVectorStore::new("./data/lancedb", "memories", 768));
+let longterm = Arc::new(VectorLongtermMemory::new(embedder, store));
 
 let agent = Agent::builder(runner, tools, prompts, session_memory, strategy)
     .with_longterm_memory(longterm)
     .build();
 ```
+
+Production: same registry with `"openai"` + an API key (or `"gemini"`), and `agentverse_memory_pgvector::PgVectorStore` as the store (schema in `avs-memory-pgvector/src/migration.sql` — adjust the `vector(1536)` dimension to your embedder's). Retrieval scoring weights are tunable via `VectorLongtermMemory::with_weights(ScoreWeights { .. })`.
+
+Any custom type implementing `agentverse_memory::LongtermMemory` (`write`/`retrieve`) also works.
 
 On each `invoke` call the agent:
 1. Retrieves the top-k scored memories (`score = α·recency + β·importance + γ·relevance`) and injects them into the system prompt.
@@ -1476,7 +1495,10 @@ Strategy completed        iteration=3
 | `agentverse-skill` | `SkillRegistry`, `SkillRouter`, `SkillMode`, `SkillConfig`, `Skill`, `SkillContext`, `SkillError` |
 | `agentverse-hitl` | `HitlPolicy`, `ApprovalQueue`, `InMemoryQueue`, `SqliteQueue`, `HitlContext`, `ApprovalRequest`, `ApprovalDecision`, `ApprovalStatus`, `InterruptKind`, `RequestCheckpointTool`, `HitlError` |
 | `agentverse-strategy` | `build()`, `StrategyKind` |
-| `agentverse-session` | `SqliteSessionMemory`, `SessionMemory`, `SessionManager`, `SessionId` |
+| `agentverse-session` | `SessionManager`, `SessionId` (plus re-exports of the `agentverse-memory` session types below) |
+| `agentverse-memory` | `WorkingMemory`, `CacheMemory`; `SessionMemory`, `SqliteSessionMemory`, `Session`, `SessionId`, `InterruptedState`; `LongtermMemory`, `LongtermRecord`, `ScoredMemory`, `VectorLongtermMemory`, `ScoreWeights`, `Embedder`, `EmbedderRegistry`, `VectorStore`, `VectorRecord`, `VectorHit`, `NoopVectorStore` |
+| `agentverse-memory-lancedb` | `LanceDbVectorStore` |
+| `agentverse-memory-pgvector` | `PgVectorStore`, `PostgresSessionMemory` |
 | `agentverse-logging` | `init()` |
 | `agentverse-react` | `ReActStrategy` |
 | `agentverse-plan` | `PlanStrategy`, `HierarchicalStrategy` |
