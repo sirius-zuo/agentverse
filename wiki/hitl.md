@@ -225,9 +225,13 @@ intercepts it before the tool registry ever calls `execute`.
   into `avs-agent` as the typed `agentverse::hitl::HitlInterrupt` struct
   inside `StrategyOutcome::Interrupted`, not as a colon-delimited,
   base64-encoded string smuggled through `AgentError`.
-- **Context** — PR #20's original implementation (`HitlWire`/`HitlWireError`)
-  replaced three independent hand-rolled base64 encodings with one shared
-  codec, but that codec still overloaded the error channel to carry a
+- **Context** — PR #20's original implementation encoded the interrupt as a
+  hand-rolled base64 string carried through the error channel (its body
+  describes `ReActStrategy::run_hitl` encoding "history + pending calls into
+  [the] error message"). PR #24 (commit `5476582`) consolidated the three
+  independent hand-rolled base64 encodings across `avs-react`/`avs-agent`
+  into one shared, fail-loud `HitlWire`/`HitlWireError` codec in `avs-core` —
+  but that codec still overloaded the error channel to carry a
   successful-but-suspended result.
 - **Alternatives rejected** — keeping `HitlWire` as a shared codec on top of
   the error channel was rejected: PR #26's body describes it and the
