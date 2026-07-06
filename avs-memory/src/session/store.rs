@@ -1,4 +1,4 @@
-use crate::session::{Session, SessionId, SessionStatus};
+use super::types::{Session, SessionId, SessionStatus};
 use agentverse::memory::Message;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

@@ -1,10 +1,9 @@
-pub mod agent;
-pub mod noop;
-pub mod simple;
-pub mod traits;
+pub mod longterm;
+pub mod session;
+mod working;
 
-pub use agent::AgentMemory;
-pub use agentverse::memory::{LongtermMemory, LongtermRecord, ScoredMemory};
-pub use noop::{NoopBackend, NoopSummarizer};
-pub use simple::SimpleMemory;
-pub use traits::{Embedder, LongTermBackend, Summarizer};
+pub use longterm::{
+    Embedder, EmbedderFactory, EmbedderRegistry, LongtermMemory, LongtermRecord, NoopVectorStore,
+    ScoreWeights, ScoredMemory, VectorHit, VectorLongtermMemory, VectorRecord, VectorStore,
+};
+pub use working::{CacheMemory, WorkingMemory};

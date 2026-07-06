@@ -17,6 +17,7 @@ http = [
 [dependencies]
 agentverse-skill = { path = "../avs-skill" }
 agentverse = { path = "../avs-core" }
+agentverse-memory = { path = "../avs-memory" }
 agentverse-session = { path = "../avs-session" }
 agentverse-strategy = { path = "../avs-strategy" }
 agentverse-subagent  = { path = "../avs-subagent" }
@@ -40,7 +41,6 @@ agentverse-guardrails = { path = "../avs-guardrails", optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-agentverse-memory = { path = "../avs-memory" }
 agentverse-tools = { path = "../avs-tools" }
 agentverse-session = { path = "../avs-session" }
 agentverse-strategy = { path = "../avs-strategy" }

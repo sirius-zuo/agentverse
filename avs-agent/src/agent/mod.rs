@@ -1,16 +1,13 @@
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
-use agentverse::memory::{LongtermMemory, Message};
 use agentverse::{LlmRunner, PromptRegistry, RunStrategy};
 use agentverse_hitl::InterruptKind;
-use agentverse_session::{SessionId, SessionManager, SessionMemoryError};
+use agentverse_memory::{LongtermMemory, WorkingMemory};
+use agentverse_session::{SessionManager, SessionMemoryError};
 use agentverse_skill::{SkillConfig, SkillError};
 use agentverse_tools::ToolRegistry;
 use serde::{Deserialize, Serialize};
 use serde_json;
-use tokio::sync::Mutex;
 use uuid::Uuid;
 
 mod builder;
@@ -22,11 +19,6 @@ mod workers;
 
 pub use builder::AgentBuilder;
 pub use routing::parse_phase_transition;
-
-struct CacheMemory {
-    messages: Vec<Message>,
-    last_used: Instant,
-}
 
 /// Result of a skill phase transition parsed from an agent's output.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -100,8 +92,7 @@ pub struct Agent {
     prompts: Arc<PromptRegistry>,
     sessions: Arc<SessionManager>,
     strategy: Arc<dyn RunStrategy>,
-    cache_memory: Mutex<HashMap<(String, SessionId), CacheMemory>>,
-    buffer_ttl: Duration,
+    working_memory: Arc<dyn WorkingMemory>,
     longterm_memory: Option<Arc<dyn LongtermMemory>>,
     skills: Option<SkillConfig>,
     hitl: Option<HitlConfig>,

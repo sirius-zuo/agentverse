@@ -191,12 +191,16 @@ dependencies = [
  "agentverse",
  "async-trait",
  "chrono",
+ "httpmock",
+ "reqwest",
  "serde",
  "serde_json",
+ "sqlx",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
- "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
@@ -213,6 +217,7 @@ dependencies = [
  "lancedb",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "uuid",
 ]
@@ -240,7 +245,6 @@ version = "0.1.0"
 dependencies = [
  "agentverse",
  "agentverse-guardrails",
- "agentverse-memory",
  "agentverse-tools",
  "async-trait",
  "reqwest",
@@ -258,7 +262,6 @@ dependencies = [
  "agentverse",
  "agentverse-guardrails",
  "agentverse-hitl",
- "agentverse-memory",
  "agentverse-tools",
  "async-trait",
  "httpmock",
@@ -291,16 +294,9 @@ name = "agentverse-session"
 version = "0.1.0"
 dependencies = [
  "agentverse",
- "async-trait",
- "chrono",
- "serde",
- "serde_json",
- "sqlx",
+ "agentverse-memory",
  "tempfile",
- "thiserror 1.0.69",
  "tokio",
- "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -320,7 +316,6 @@ name = "agentverse-strategy"
 version = "0.1.0"
 dependencies = [
  "agentverse",
- "agentverse-memory",
  "agentverse-plan",
  "agentverse-react",
  "agentverse-tools",

@@ -39,3 +39,24 @@ To try the Extend pattern: add a new directory under `skills/user/`, write a `SK
 This is the baseline example — the simplest complete agent, built to show the routing-to-binding lifecycle in its most transparent form. Using `SkillMode::Open` makes routing visible: ask a math question and `math-helper` binds; ask about travel and `travel-advisor` binds. The Extend pattern (user/ tier) demonstrates the layered directory model: `system/` is the vendor layer, `user/` is the operator layer.
 
 In production you would replace `sqlite::memory:` with a persistent database path, add authentication to the REPL loop, and handle session recovery across restarts.
+
+## Optional: long-term memory (dev wiring)
+
+Local dev uses an OpenAI-compatible local embedder (e.g. Ollama) + LanceDB:
+
+```rust
+use agentverse_memory::{EmbedderRegistry, VectorLongtermMemory};
+use agentverse_memory_lancedb::LanceDbVectorStore;
+use std::{collections::HashMap, sync::Arc};
+
+let embedder = EmbedderRegistry::with_builtins().build("openai", &HashMap::from([
+    ("model_name".into(), "nomic-embed-text".into()),
+    ("base_url".into(), "http://localhost:11434/v1".into()), // Ollama, no api_key
+    ("dimensions".into(), "768".into()),
+]))?;
+let store = Arc::new(LanceDbVectorStore::new("./data/lancedb", "memories", 768));
+let longterm = Arc::new(VectorLongtermMemory::new(embedder, store));
+// Agent::builder(...).with_longterm_memory(longterm).build();
+```
+
+Production: swap `"openai"`+key (or `"gemini"`) and `agentverse_memory_pgvector::PgVectorStore`.

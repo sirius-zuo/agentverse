@@ -1,2 +1,2 @@
 mod backend;
-pub use backend::LanceDBBackend;
+pub use backend::LanceDbVectorStore;

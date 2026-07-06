@@ -1,6 +1,7 @@
 use agentverse::memory::{Message, MessageRole};
-use agentverse_session::session::{Session, SessionId, SessionStatus};
-use agentverse_session::store::{SessionMemory, SessionMemoryError};
+use agentverse_memory::session::{
+    Session, SessionId, SessionMemory, SessionMemoryError, SessionStatus,
+};
 use async_trait::async_trait;
 use sqlx::PgPool;
 

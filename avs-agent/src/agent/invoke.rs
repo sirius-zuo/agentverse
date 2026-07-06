@@ -1,5 +1,6 @@
-use super::{Agent, AgentError, AgentOutput, CacheMemory};
-use agentverse::memory::{LongtermRecord, Message, MessageRole};
+use super::{Agent, AgentError, AgentOutput};
+use agentverse::memory::{Message, MessageRole};
+use agentverse_memory::LongtermRecord;
 use agentverse_session::SessionId;
 use agentverse_skill::{RouteSkills, SkillContext, SkillRouter};
 use std::time::Instant;
@@ -99,29 +100,16 @@ impl Agent {
         user_id: &str,
         session_id: SessionId,
     ) -> Result<Vec<Message>, AgentError> {
-        let key = (user_id.to_string(), session_id);
-        {
-            let cache = self.cache_memory.lock().await;
-            if let Some(buf) = cache.get(&key) {
-                if buf.last_used.elapsed() <= self.buffer_ttl {
-                    agentverse::metrics::record_cache_access(agentverse::metrics::CacheResult::Hit);
-                    return Ok(buf.messages.clone());
-                }
-            }
+        if let Some(messages) = self.working_memory.load(user_id, session_id).await {
+            agentverse::metrics::record_cache_access(agentverse::metrics::CacheResult::Hit);
+            return Ok(messages);
         }
         agentverse::metrics::record_cache_access(agentverse::metrics::CacheResult::Miss);
-        // Miss or TTL expired: sweep expired entries, then rehydrate from Layer 2
+        // Miss or TTL expired: rehydrate from Layer 2 (session memory).
         let history = self.sessions.load_messages(session_id).await?;
-        let mut cache = self.cache_memory.lock().await;
-        let ttl = self.buffer_ttl;
-        cache.retain(|_, buf| buf.last_used.elapsed() <= ttl);
-        cache.insert(
-            key,
-            CacheMemory {
-                messages: history.clone(),
-                last_used: Instant::now(),
-            },
-        );
+        self.working_memory
+            .store(user_id, session_id, history.clone())
+            .await;
         Ok(history)
     }
 
@@ -132,23 +120,9 @@ impl Agent {
         user_msg: Message,
         assistant_msg: Message,
     ) {
-        let key = (user_id.to_string(), session_id);
-        let mut cache = self.cache_memory.lock().await;
-        if let Some(buf) = cache.get_mut(&key) {
-            buf.messages.push(user_msg);
-            buf.messages.push(assistant_msg);
-            buf.last_used = Instant::now();
-        } else {
-            // Key was TTL-evicted during the LLM call; insert a minimal buffer
-            // with just this turn so the next invoke avoids a cold DB read.
-            cache.insert(
-                key,
-                CacheMemory {
-                    messages: vec![user_msg, assistant_msg],
-                    last_used: Instant::now(),
-                },
-            );
-        }
+        self.working_memory
+            .append_turn(user_id, session_id, user_msg, assistant_msg)
+            .await;
     }
 
     /// Single-turn stateless invocation with no session, history, or skill context.
@@ -187,8 +161,7 @@ impl Agent {
 
         let (history, effective_input) = if let Some(ctx_str) = phase_ctx {
             // Phase transition: clear stale cache from the previous phase.
-            let cache_key = (user_id.to_string(), session_id);
-            self.cache_memory.lock().await.remove(&cache_key);
+            self.working_memory.evict(user_id, session_id).await;
 
             // Clear the stored context — subsequent invokes in this phase accumulate normally.
             self.sessions

@@ -1,5 +1,5 @@
-use crate::session::{Session, SessionId, SessionStatus};
-use crate::store::{SessionMemory, SessionMemoryError};
+use super::store::{SessionMemory, SessionMemoryError};
+use super::types::{Session, SessionId, SessionStatus};
 use agentverse::memory::{Message, MessageRole};
 use async_trait::async_trait;
 use sqlx::SqlitePool;
@@ -256,7 +256,7 @@ impl SessionMemory for SqliteSessionMemory {
     }
 
     async fn get_watermark(&self, session_id: SessionId) -> Result<i64, SessionMemoryError> {
-        crate::sqlite_maintenance::get_watermark(self, session_id).await
+        super::sqlite_maintenance::get_watermark(self, session_id).await
     }
 
     async fn advance_watermark(
@@ -264,18 +264,18 @@ impl SessionMemory for SqliteSessionMemory {
         session_id: SessionId,
         new_watermark: i64,
     ) -> Result<(), SessionMemoryError> {
-        crate::sqlite_maintenance::advance_watermark(self, session_id, new_watermark).await
+        super::sqlite_maintenance::advance_watermark(self, session_id, new_watermark).await
     }
 
     async fn load_messages_above_watermark(
         &self,
         session_id: SessionId,
     ) -> Result<Vec<(i64, Message)>, SessionMemoryError> {
-        crate::sqlite_maintenance::load_messages_above_watermark(self, session_id).await
+        super::sqlite_maintenance::load_messages_above_watermark(self, session_id).await
     }
 
     async fn list_sessions_needing_maintenance(&self) -> Result<Vec<Session>, SessionMemoryError> {
-        crate::sqlite_maintenance::list_sessions_needing_maintenance(self).await
+        super::sqlite_maintenance::list_sessions_needing_maintenance(self).await
     }
 
     async fn cleanup_expired_messages(
@@ -284,7 +284,7 @@ impl SessionMemory for SqliteSessionMemory {
         cutoff_ts: i64,
         watermark: i64,
     ) -> Result<u64, SessionMemoryError> {
-        crate::sqlite_maintenance::cleanup_expired_messages(self, session_id, cutoff_ts, watermark)
+        super::sqlite_maintenance::cleanup_expired_messages(self, session_id, cutoff_ts, watermark)
             .await
     }
 
@@ -292,11 +292,11 @@ impl SessionMemory for SqliteSessionMemory {
         &self,
         cutoff_ts: i64,
     ) -> Result<u64, SessionMemoryError> {
-        crate::sqlite_maintenance::delete_ended_sessions_before(self, cutoff_ts).await
+        super::sqlite_maintenance::delete_ended_sessions_before(self, cutoff_ts).await
     }
 
     async fn delete_session(&self, session_id: SessionId) -> Result<(), SessionMemoryError> {
-        crate::sqlite_maintenance::delete_session(self, session_id).await
+        super::sqlite_maintenance::delete_session(self, session_id).await
     }
 
     async fn set_skill_context(
@@ -701,8 +701,8 @@ mod watermark_tests {
 
 #[cfg(test)]
 mod interrupted_state_tests {
+    use super::super::store::InterruptedState;
     use super::*;
-    use crate::store::InterruptedState;
 
     #[tokio::test]
     async fn set_and_get_interrupted_state() {

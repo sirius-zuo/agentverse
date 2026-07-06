@@ -9,7 +9,6 @@ rust-version.workspace = true
 agentverse = { path = "../avs-core" }
 agentverse-react = { path = "../avs-react" }
 agentverse-plan = { path = "../avs-plan" }
-agentverse-memory = { path = "../avs-memory" }
 agentverse-tools = { path = "../avs-tools" }
 tokio = { workspace = true }
 

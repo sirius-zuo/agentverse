@@ -1,13 +1,11 @@
 use super::{Agent, HitlConfig};
-use agentverse::memory::LongtermMemory;
 use agentverse::{LlmRunner, PromptRegistry, RunStrategy};
+use agentverse_memory::{LongtermMemory, WorkingMemory};
 use agentverse_session::{SessionManager, SessionMemory};
 use agentverse_skill::SkillConfig;
 use agentverse_tools::ToolRegistry;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Mutex;
 
 /// Builds an `Agent`. Required arguments are constructor parameters;
 /// everything optional is a chainable `.with_*()` method.
@@ -26,6 +24,7 @@ pub struct AgentBuilder {
     strategy: Arc<dyn RunStrategy>,
     enable_http_server: bool,
     longterm_memory: Option<Arc<dyn LongtermMemory>>,
+    working_memory: Option<Arc<dyn WorkingMemory>>,
     skills: Option<SkillConfig>,
     hitl: Option<HitlConfig>,
     cleanup_config: Option<crate::workers::CleanupConfig>,
@@ -47,6 +46,7 @@ impl AgentBuilder {
             strategy,
             enable_http_server: false,
             longterm_memory: None,
+            working_memory: None,
             skills: None,
             hitl: None,
             cleanup_config: None,
@@ -60,6 +60,11 @@ impl AgentBuilder {
 
     pub fn with_longterm_memory(mut self, longterm_memory: Arc<dyn LongtermMemory>) -> Self {
         self.longterm_memory = Some(longterm_memory);
+        self
+    }
+
+    pub fn with_working_memory(mut self, wm: Arc<dyn WorkingMemory>) -> Self {
+        self.working_memory = Some(wm);
         self
     }
 
@@ -86,8 +91,11 @@ impl AgentBuilder {
             prompts: self.prompts,
             sessions: Arc::new(SessionManager::new(self.session_memory)),
             strategy: self.strategy,
-            cache_memory: Mutex::new(HashMap::new()),
-            buffer_ttl: Duration::from_secs(300),
+            working_memory: self.working_memory.unwrap_or_else(|| {
+                Arc::new(agentverse_memory::CacheMemory::new(Duration::from_secs(
+                    300,
+                )))
+            }),
             longterm_memory: self.longterm_memory,
             skills: self.skills,
             hitl: self.hitl,

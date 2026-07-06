@@ -24,8 +24,7 @@ impl Agent {
         self.sessions.assert_owner(user_id, session_id).await?;
         self.sessions.end_session(session_id).await?;
         // Layer-1 cascade: evict working buffer immediately on session delete
-        let key = (user_id.to_string(), session_id);
-        self.cache_memory.lock().await.remove(&key);
+        self.working_memory.evict(user_id, session_id).await;
         Ok(())
     }
 
@@ -50,9 +49,8 @@ impl Agent {
         let sessions = self.sessions.list_sessions(user_id).await?;
         for session in &sessions {
             self.sessions.delete_session(session.id).await?;
+            self.working_memory.evict(user_id, session.id).await;
         }
-        let mut cache = self.cache_memory.lock().await;
-        cache.retain(|(cached_user_id, _), _| cached_user_id != user_id);
         if !sessions.is_empty() {
             agentverse::metrics::record_session_deleted(
                 agentverse::metrics::SessionDeleteReason::UserRequest,
@@ -74,9 +72,10 @@ impl Agent {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{Agent, CacheMemory};
-    use agentverse::memory::{LongtermMemory, LongtermRecord, MemoryError, ScoredMemory};
+    use super::super::Agent;
+    use agentverse::memory::MemoryError;
     use agentverse::{Config, LlmRunner, PromptRegistry};
+    use agentverse_memory::{LongtermMemory, LongtermRecord, ScoredMemory};
     use agentverse_session::SqliteSessionMemory;
     use agentverse_strategy::{build, StrategyKind};
     use agentverse_tools::ToolRegistry;
@@ -162,21 +161,22 @@ mod tests {
 
         let session_id = agent.create_session("alice").await.unwrap();
 
-        // Populate L1 cache directly (no live LLM call needed) — CacheMemory
-        // and Agent.cache_memory are private fields defined in
+        // Populate L1 cache directly (no live LLM call needed) via the
+        // working_memory field, which is a private field on Agent defined in
         // avs-agent/src/agent/mod.rs; this test module is a child of that
         // module (via `mod sessions;`) so it has the same private-field
         // access `end_session` already uses in this same file.
-        agent.cache_memory.lock().await.insert(
-            ("alice".to_string(), session_id),
-            CacheMemory {
-                messages: vec![agentverse::memory::Message {
+        agent
+            .working_memory
+            .store(
+                "alice",
+                session_id,
+                vec![agentverse::memory::Message {
                     role: agentverse::memory::MessageRole::User,
                     content: "cached turn".to_string(),
                 }],
-                last_used: std::time::Instant::now(),
-            },
-        );
+            )
+            .await;
 
         agent.delete_all_user_data("alice").await.unwrap();
 
@@ -184,9 +184,12 @@ mod tests {
             agent.get_session("alice", session_id).await.is_err(),
             "session must be gone from L2 after delete_all_user_data"
         );
-        let cache = agent.cache_memory.lock().await;
         assert!(
-            !cache.keys().any(|(uid, _)| uid == "alice"),
+            agent
+                .working_memory
+                .load("alice", session_id)
+                .await
+                .is_none(),
             "no L1 cache entry for this user should remain"
         );
     }
