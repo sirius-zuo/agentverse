@@ -1,4 +1,4 @@
-use agentverse_memory::{Embedder, EmbedderRegistry};
+use agentverse_memory::EmbedderRegistry;
 use httpmock::prelude::*;
 use std::collections::HashMap;
 
