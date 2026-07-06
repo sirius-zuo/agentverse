@@ -481,8 +481,8 @@ let registry = Arc::new(PromptRegistry::new());
 | `avs-mcp` | `agentverse-mcp` | MCP client (stdio + Streamable HTTP), `McpServer`, `McpCatalogSource`, `McpLoader` |
 | `avs-subagent` | `agentverse-subagent` | Subagent runtime: `SubAgentExecutor`, `SubAgentSpec`, `Budget`, `SubAgentHandle`, `SubAgentTool` (`spawn_subagent`) |
 | `avs-memory` | `agentverse-memory` | Working (`CacheMemory`), session (`SqliteSessionMemory`), and long-term (`VectorLongtermMemory` via `Embedder`/`VectorStore`) memory tiers |
-| `avs-memory-lancedb` | `agentverse-memory-lancedb` | LanceDB long-term memory backend |
-| `avs-memory-pgvector` | `agentverse-memory-pgvector` | pgvector memory backend and Postgres session store |
+| `avs-memory-lancedb` | `agentverse-memory-lancedb` | LanceDB `VectorStore` implementation |
+| `avs-memory-pgvector` | `agentverse-memory-pgvector` | pgvector `VectorStore` implementation and Postgres session store |
 | `avs-guardrails` | `agentverse-guardrails` | Prompt, output, action, and rate-limit guardrails |
 | `avs-logging` | `agentverse-logging` | Tracing subscriber initialization |
 | `avs-eval` | `agentverse-eval` | Eval harness: deterministic scaffold tests (parser/router/templates) + judge-based quality regression tests, both fully offline |

@@ -14,7 +14,7 @@ pub struct VectorRecord {
 #[derive(Debug, Clone)]
 pub struct VectorHit {
     pub content: String,
-    pub relevance: f32, // similarity in [0,1]; backends compute 1/(1+distance)
+    pub relevance: f32, // similarity in [0,1]; backends compute 1/(1+distance), where distance is COSINE distance for both built-in backends
     pub importance: f32,
     pub created_at: DateTime<Utc>,
 }

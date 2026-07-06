@@ -48,8 +48,8 @@ AgentVerse/
 ├── avs-guardrails/        # Security: prompt injection, output filtering, rate limiting
 ├── avs-integration/       # IntegrationRuntime with Slack, console connectors
 ├── avs-memory/            # Working (CacheMemory), session (SqliteSessionMemory), and long-term (VectorLongtermMemory via Embedder/VectorStore) memory tiers
-├── avs-memory-lancedb/    # LanceDB Layer-3 LongtermMemory backend
-├── avs-memory-pgvector/   # pgvector Layer-3 LongtermMemory backend + PostgresSessionMemory
+├── avs-memory-lancedb/    # LanceDB VectorStore implementation
+├── avs-memory-pgvector/   # pgvector VectorStore implementation + PostgresSessionMemory
 └── examples/
     ├── hello-agent/        # Open-mode REPL; Extend pattern (system/ + user/ skills)
     ├── react-calculator/   # Multi-step ReAct with Calculator

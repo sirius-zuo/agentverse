@@ -134,6 +134,34 @@ async fn openai_duplicate_index_is_error() {
 }
 
 #[tokio::test]
+async fn gemini_count_mismatch_is_error() {
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method(POST).path_contains(":batchEmbedContents");
+        then.status(200).json_body(serde_json::json!({
+            "embeddings": []
+        }));
+    });
+    let reg = EmbedderRegistry::with_builtins();
+    let e = reg
+        .build(
+            "gemini",
+            &settings(&[
+                ("model_name", "text-embedding-004"),
+                ("api_key", "k"),
+                ("base_url", &server.url("")),
+                ("dimensions", "2"),
+            ]),
+        )
+        .unwrap();
+    let err = e.embed(&["a".into()]).await.unwrap_err();
+    assert!(
+        err.to_string().contains("expected 1 embeddings, got 0"),
+        "expected count-mismatch error, got: {err}"
+    );
+}
+
+#[tokio::test]
 async fn gemini_connection_error_does_not_leak_api_key() {
     let api_key = "super-secret-key";
     let reg = EmbedderRegistry::with_builtins();

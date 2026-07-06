@@ -141,6 +141,7 @@ impl VectorStore for LanceDbVectorStore {
             .query()
             .nearest_to(embedding)
             .map_err(|e| MemoryError::Retrieval(e.to_string()))?
+            .distance_type(lancedb::DistanceType::Cosine)
             .only_if(format!("user_id = '{}'", user_id.replace('\'', "''")))
             .limit(top_k)
             .execute()

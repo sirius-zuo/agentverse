@@ -57,11 +57,16 @@ impl VectorLongtermMemory {
 #[async_trait]
 impl LongtermMemory for VectorLongtermMemory {
     async fn write(&self, user_id: &str, record: LongtermRecord) -> Result<(), MemoryError> {
-        let mut embeddings = self
+        let embeddings = self
             .embedder
             .embed(std::slice::from_ref(&record.content))
             .await?;
-        let embedding = embeddings.remove(0);
+        let mut it = embeddings.into_iter();
+        let Some(embedding) = it.next() else {
+            return Err(MemoryError::Embedding(
+                "embedder returned no vectors".into(),
+            ));
+        };
         self.store
             .store(VectorRecord {
                 user_id: user_id.to_string(),
@@ -79,8 +84,13 @@ impl LongtermMemory for VectorLongtermMemory {
         query: &str,
         top_k: usize,
     ) -> Result<Vec<ScoredMemory>, MemoryError> {
-        let mut embeddings = self.embedder.embed(&[query.to_string()]).await?;
-        let embedding = embeddings.remove(0);
+        let embeddings = self.embedder.embed(&[query.to_string()]).await?;
+        let mut it = embeddings.into_iter();
+        let Some(embedding) = it.next() else {
+            return Err(MemoryError::Embedding(
+                "embedder returned no vectors".into(),
+            ));
+        };
         let hits = self.store.search(user_id, &embedding, top_k * 4).await?;
 
         let now = Utc::now();
@@ -101,7 +111,7 @@ impl LongtermMemory for VectorLongtermMemory {
             })
             .collect();
 
-        scored.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+        scored.sort_by(|a, b| b.score.total_cmp(&a.score));
         scored.truncate(top_k);
         Ok(scored)
     }

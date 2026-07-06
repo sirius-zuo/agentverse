@@ -70,6 +70,14 @@ impl Embedder for GeminiEmbedder {
         let parsed: BatchEmbedResponse = serde_json::from_str(&body)
             .map_err(|e| MemoryError::Embedding(format!("invalid response body: {e}")))?;
 
+        if parsed.embeddings.len() != texts.len() {
+            return Err(MemoryError::Embedding(format!(
+                "expected {} embeddings, got {}",
+                texts.len(),
+                parsed.embeddings.len()
+            )));
+        }
+
         for e in &parsed.embeddings {
             if e.values.len() != self.dimensions {
                 return Err(MemoryError::Embedding(format!(
