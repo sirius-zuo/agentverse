@@ -47,7 +47,7 @@ AgentVerse/
 ├── avs-mcp/               # MCP client for external tool servers
 ├── avs-guardrails/        # Security: prompt injection, output filtering, rate limiting
 ├── avs-integration/       # IntegrationRuntime with Slack, console connectors
-├── avs-memory/            # Layer-1 working buffer (SimpleMemory, AgentMemory) and LongTermBackend trait
+├── avs-memory/            # Working (CacheMemory), session (SqliteSessionMemory), and long-term (VectorLongtermMemory via Embedder/VectorStore) memory tiers
 ├── avs-memory-lancedb/    # LanceDB Layer-3 LongtermMemory backend
 ├── avs-memory-pgvector/   # pgvector Layer-3 LongtermMemory backend + PostgresSessionMemory
 └── examples/

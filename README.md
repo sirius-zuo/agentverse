@@ -480,7 +480,7 @@ let registry = Arc::new(PromptRegistry::new());
 | `avs-tools` | `agentverse-tools` | Built-in tools, `ToolRegistry` with BM25 search, `ActiveToolSet`, parallel dispatch |
 | `avs-mcp` | `agentverse-mcp` | MCP client (stdio + Streamable HTTP), `McpServer`, `McpCatalogSource`, `McpLoader` |
 | `avs-subagent` | `agentverse-subagent` | Subagent runtime: `SubAgentExecutor`, `SubAgentSpec`, `Budget`, `SubAgentHandle`, `SubAgentTool` (`spawn_subagent`) |
-| `avs-memory` | `agentverse-memory` | Layer-1 working buffer (`SimpleMemory`, `AgentMemory`) and `LongTermBackend` trait |
+| `avs-memory` | `agentverse-memory` | Working (`CacheMemory`), session (`SqliteSessionMemory`), and long-term (`VectorLongtermMemory` via `Embedder`/`VectorStore`) memory tiers |
 | `avs-memory-lancedb` | `agentverse-memory-lancedb` | LanceDB long-term memory backend |
 | `avs-memory-pgvector` | `agentverse-memory-pgvector` | pgvector memory backend and Postgres session store |
 | `avs-guardrails` | `agentverse-guardrails` | Prompt, output, action, and rate-limit guardrails |
