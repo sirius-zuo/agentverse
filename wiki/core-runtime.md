@@ -179,12 +179,12 @@ to build the `system` string and `Example`s they pass into a `GenerateRequest`.
 - **Consequences** — every `with_model` caller (`avs-subagent`'s `SubAgentExecutor`, this crate's own tests) must handle a `Result`; retry/backoff math is exercised directly by unit tests (`backoff_is_exponential_and_capped`, `rate_limit_backoff_is_4x`, `clamp_retry_after_ms_caps_at_60s`).
 - **Ref** — 2026-07-03, PR #24.
 
-### Server-enforced structured output per provider, Gemini excluded
-- **Decision** — `GenerateRequest` gains `response_format: Option<serde_json::Value>`; `LlmRunner::invoke_structured(messages, schema)` is added alongside `invoke`, both sharing `invoke_inner`; each provider encodes the schema in its own wire shape, except `GeminiProvider`, which does not consume `response_format` at all.
-- **Context** — strategies needed schema-constrained decoding (e.g. planning steps) without hand-rolling a different wire shape per provider at every call site.
-- **Alternatives rejected** — client-side JSON-schema validation with a re-prompt loop (adds latency and cost, doesn't guarantee compliance); wiring Gemini's structured-output support in the same change (Gemini exposes this through a different API shape, left out of scope).
-- **Consequences** — `invoke` and `invoke_structured` share one code path with no duplicated request-splitting logic; existing `GenerateRequest { .. }` struct literals across the workspace needed `..Default::default()` once the struct gained a field.
-- **Ref** — 2026-06-24, PR #23.
+### Server-enforced structured output, encoded per provider
+- **Decision** — `GenerateRequest` gains `response_format: Option<serde_json::Value>`; `LlmRunner::invoke_structured(messages, schema)` is added alongside `invoke`, both sharing `invoke_inner`; each provider maps the schema to its own wire shape at `build_request` time, rather than the runner normalizing a single format.
+- **Context** — strategies needed schema-constrained decoding (e.g. planning steps) without hand-rolling a different wire shape per provider at every call site. PR #23 introduced the field and the OpenAI-compatible encoding (`response_format: { type: "json_schema", json_schema: { name, schema } }`, the shape vLLM/llama.cpp constrained decoding expects); commit `e0720fb` followed with the Anthropic encoding (`output_config.format` with `type: "json_schema"`).
+- **Alternatives rejected** — a single shared wire encoding across providers: Anthropic's API takes `output_config.format`, not OpenAI's `response_format` field (per commit `e0720fb`'s message), so the encoding has to live inside each provider's `build_request`.
+- **Consequences** — `invoke` and `invoke_structured` share one code path with no duplicated request-splitting logic; existing `GenerateRequest { .. }` struct literals across the workspace needed `..Default::default()` once the struct gained a field. `GeminiProvider` does not consume `response_format` at all — `GeminiRequest` has no such field, so the schema is silently dropped for Gemini (DEVELOPMENT.md's structured-output table documents this as "Not supported — free text returned"). No PR or spec records a rationale for that gap; it is observed current state, not a documented scoping decision.
+- **Ref** — 2026-06-24, PR #23 and commit `e0720fb`.
 
 ### `GenerateRequest`/`GenerateResponse` replace flat prompt strings; caching stays provider-internal
 - **Decision** — `ModelProvider::build_request`/`parse_response` take/return structured `GenerateRequest` (`system`, `messages`, `tools`) and `GenerateResponse` (`content`, `usage`) instead of a flat `prompt: &str`; each provider applies its own caching strategy internally, invisible to callers.
