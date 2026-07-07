@@ -11,7 +11,7 @@ calls) and Type 2 "workflow HITL" (business-process gates a skill author
 declares — phase-boundary sign-off and named mid-skill checkpoints). It
 exists as its own crate, at the bottom of the dependency graph alongside
 `avs-session` and `avs-memory` (`scripts/check-layering.sh` places
-`agentverse-hitl` in layer 1), so that every consumer — `avs-agent`,
+`agentverse-hitl` in Layer 1), so that every consumer — `avs-agent`,
 `avs-guardrails`, `avs-tools` — can depend on the approval contract without
 `avs-hitl` depending back on any of them. `avs-hitl` does not execute or
 resume anything itself; it only decides *whether* a call needs approval and

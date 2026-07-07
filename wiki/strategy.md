@@ -17,10 +17,10 @@ rather than a hardcoded loop.
 ## Position in the System
 
 Per `scripts/check-layering.sh`, `avs-strategy`, `avs-react`, `avs-plan`, and
-`avs-router` all sit in the same layer (3), one below [Agent](agent.md)
-(`avs-agent`, layer 4) and above [Tools](tools.md) and
-[Guardrails](guardrails.md) (layer 2). All four consume [Core Runtime](core-runtime.md)
-(`avs-core`, layer 0) for `RunStrategy`, `LlmRunner`, `PromptRegistry`,
+`avs-router` all sit in the same Layer 3, one below [Agent](agent.md)
+(`avs-agent`, Layer 4) and above [Tools](tools.md) and
+[Guardrails](guardrails.md) (Layer 2). All four consume [Core Runtime](core-runtime.md)
+(`avs-core`, Layer 0) for `RunStrategy`, `LlmRunner`, `PromptRegistry`,
 `Message`, and `AgentError`. `avs-react` and `avs-plan` additionally consume
 [Tools](tools.md) (`ToolRegistry`, `ActiveToolSet`) to execute tool calls, and
 [Guardrails](guardrails.md) (`check_output`/`check_prompt`) to screen model

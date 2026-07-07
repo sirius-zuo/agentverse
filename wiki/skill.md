@@ -218,8 +218,8 @@ Newest first.
 - **Context** — the prior multi-agent-per-phase pattern (used by
   `doc-pipeline`'s three agents) fragmented Layer 2 session transcripts
   across phases, so Layer 3 long-term-memory distillation lost the causal
-  chain between phases; see
-  `docs/superpowers/specs/2026-06-12-single-agent-multi-phase-design.md`.
+  chain between phases; see the single-agent multi-phase design spec
+  (untracked).
 - **Alternatives rejected** — passing full conversation history at each
   transition was rejected for context bloat and "lost in the middle"; passing
   only the raw prior output (no summary) was rejected for losing the
@@ -241,8 +241,8 @@ Newest first.
   one-time first-invoke decision.
 - **Context** — the original skill system (PR #7) supported only explicit
   activation via `create_session_with_skill`; this closed the deferred
-  "automatic activation" gap from that spec's §9, per
-  `docs/superpowers/specs/2026-06-09-skill-discovery-and-routing-design.md`.
+  "automatic activation" gap from that spec's §9, per the skill discovery
+  and routing design spec (untracked).
 - **Alternatives rejected** — re-routing on every turn was rejected because
   the design spec treats skill binding as identity for a session ("skill
   binding is immutable for the session's lifetime... unchanged invariant from
@@ -264,9 +264,8 @@ Newest first.
   ignore that block.
 - **Context** — before this PR, agent specialization (instructions, tool
   exposure, context loading) was "spread across prompts, configuration, and
-  application code," per
-  `docs/superpowers/specs/2026-06-09-skill-system-design.md` §1; the goal was
-  a single, portable, operator-editable file.
+  application code," per the skill system design spec (untracked) §1; the
+  goal was a single, portable, operator-editable file.
 - **Alternatives rejected** — no rationale is recorded for rejecting
   alternative formats (e.g. a bespoke TOML/JSON schema); the spec adopts
   agentskills.io compatibility as a given starting premise rather than

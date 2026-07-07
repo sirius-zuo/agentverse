@@ -34,6 +34,10 @@ library graph consumes `avs-agent` back (it is Layer 4, the top); it is
 consumed only by the top-level `examples/*` binaries and by the two test-infra
 crates, [Eval and Test Infra](eval-and-test-infra.md) (`avs-eval`,
 `avs-test-utils`), which build real `Agent`s to exercise end-to-end behavior.
+`avs-agent`'s `Cargo.toml` also declares a real, non-dev dependency on
+[SubAgent](subagent.md) (`avs-subagent`), but nothing under `avs-agent/src`
+imports it today — the only reference is a test
+(`avs-agent/tests/agent_test.rs`) exercising `SubAgentExecutor::register_tool`.
 
 ## Architecture
 
@@ -346,3 +350,4 @@ strategy call in an `agentverse_hitl::HitlContext` and call
 - [HITL](hitl.md)
 - [HTTP Sidecar](http-sidecar.md)
 - [Eval and Test Infra](eval-and-test-infra.md)
+- [SubAgent](subagent.md)

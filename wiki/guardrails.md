@@ -18,7 +18,7 @@ into.
 
 ## Position in the System
 
-Per `scripts/check-layering.sh`, `agentverse-guardrails` sits in layer 2,
+Per `scripts/check-layering.sh`, `agentverse-guardrails` sits in Layer 2,
 alongside `agentverse-tools` and `agentverse-mcp`. Its `Cargo.toml` declares
 two dependencies: [Core Runtime](core-runtime.md) (`avs-core`, crate name
 `agentverse`) and [HITL](hitl.md) (`avs-hitl`, crate name `agentverse-hitl`,
@@ -27,7 +27,7 @@ for `ApprovalId`, `ApprovalQueue`, `ApprovalRequest`, `HitlPolicy`, and
 orchestration crates covered in [Strategy](strategy.md) — `avs-react`'s
 `CycleSkeleton` calls `check_output`, and `avs-plan`'s `planner` module and
 `avs-router`'s `StrategyRouter` both call `check_prompt` — and by
-[Agent](agent.md) (`avs-agent`, layer 4), which constructs one `RateLimiter`
+[Agent](agent.md) (`avs-agent`, Layer 4), which constructs one `RateLimiter`
 for its optional `http`-feature axum surface. `avs-subagent` reaches
 `check_output` only transitively, through `avs-react`'s
 `CycleSkeleton::check_output_guardrail`; it does not depend on

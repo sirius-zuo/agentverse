@@ -136,17 +136,17 @@ graph TD
 | [core-runtime.md](core-runtime.md) | `avs-core` | Foundational traits, config, and provider abstraction every other crate builds on. |
 | [agent.md](agent.md) | `avs-agent` | The composition root: `AgentBuilder` wires runner, strategy, memory, and skills into an `Agent`. |
 | [memory.md](memory.md) | `avs-memory`, `avs-memory-lancedb`, `avs-memory-pgvector` | Working, session, and long-term memory tiers plus their vector-store backends. |
-| [session.md](session.md) | `avs-session` | Session lifecycle, `SessionManager`, and message/session retention. |
+| [session.md](session.md) | `avs-session` | Session lifecycle, `SessionManager`, and per-session ownership enforcement (`assert_owner`). |
 | [skill.md](skill.md) | `avs-skill` | `SKILL.md` parsing, `SkillRegistry`, `SkillRouter`, and skill routing modes. |
 | [strategy.md](strategy.md) | `avs-strategy` | The `build()` factory and `StrategyKind` enum selecting a reasoning strategy. |
 | [subagent.md](subagent.md) | `avs-subagent` | `SubAgentExecutor`, `SubAgentSpec`, and budget-bounded multi-agent delegation. |
 | [hitl.md](hitl.md) | `avs-hitl` | Human-in-the-loop policies, approval queues, and checkpoint tooling. |
 | [tools.md](tools.md) | `avs-tools` | Built-in tools (Calculator, HttpClient, WebSearch, ShellTool, ...) and the `Tool` trait. |
-| [mcp.md](mcp.md) | `avs-mcp` | MCP client integration for external tool servers. |
-| [observability.md](observability.md) | `avs-logging` | Structured logging/tracing init and cross-cutting observability conventions. |
+| [mcp.md](mcp.md) | `avs-mcp` | MCP client (imports remote tools) and server (exposes a `ToolRegistry` as an MCP endpoint). |
+| [observability.md](observability.md) | `avs-logging`, `avs-core` (metrics) | Structured logging/tracing init, plus the `avs-core` OpenTelemetry metrics facade every other crate calls into. |
 | [eval-and-test-infra.md](eval-and-test-infra.md) | `avs-eval`, `avs-test-utils` | Deterministic + judge-based eval harness and shared test/conformance helpers. |
 | [guardrails.md](guardrails.md) | `avs-guardrails` | Prompt-injection defense, output filtering, and rate limiting. |
-| [integration.md](integration.md) | `avs-integration` | `IntegrationRuntime` and external connectors (Slack, console). |
+| [integration.md](integration.md) | `avs-integration` | `IntegrationRuntime` and external connectors (Slack, GitHub, console). |
 | [http-sidecar.md](http-sidecar.md) | `avs-agent` (`http` feature) | Optional HTTP sidecar server exposing an `Agent` over HTTP. |
 
 ## Maintenance Convention

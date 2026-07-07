@@ -248,3 +248,7 @@ to build the `system` string and `Example`s they pass into a `GenerateRequest`.
 - [Subagent](subagent.md)
 - [Guardrails](guardrails.md)
 - [Observability](observability.md)
+- [Memory](memory.md)
+- [Session](session.md)
+- [Tools](tools.md)
+- [MCP](mcp.md)
