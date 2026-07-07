@@ -680,6 +680,7 @@ cargo test --workspace
 ```
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for deeper implementation notes.
+See the [internal architecture wiki](wiki/README.md) for subsystem internals, runtime flows, and decision records, for developers of AgentVerse itself.
 
 ## Project Structure
 
