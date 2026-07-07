@@ -23,9 +23,14 @@ forcing an export pipeline on every consumer.
 `avs-logging` and `avs-core`'s `metrics` module are both Layer 0 — the
 workspace's foundation layer per `scripts/check-layering.sh` — so neither has
 an in-workspace dependency. `avs-logging` depends only on the external
-`tracing`/`tracing-subscriber` crates; the metrics facade depends only on the
-external `opentelemetry` API crate (never `opentelemetry_sdk` or
-`opentelemetry-otlp` outside dev-dependencies and one example).
+`tracing`/`tracing-subscriber` crates; the metrics facade's own code depends
+only on the external `opentelemetry` API crate, and `opentelemetry_sdk` is a
+dev-dependency only. `opentelemetry-otlp 0.15` is a separate story: it
+remains a default-on optional dependency of `avs-core` itself
+(`tracing = ["opentelemetry-otlp"]`, enabled by the crate's own
+`default = ["tracing"]`), unrelated to the metrics facade — it exists only to
+satisfy the dead `OtelTracer` scaffolding (see Implementation Notes), not
+because any `record_*` call site needs it.
 
 It is consumed by every layer above. Every binary (all `examples/*`
 crates) calls `agentverse_logging::init()` once at startup, before
@@ -146,19 +151,42 @@ outside this module — see Implementation Notes.
    [Core Runtime](core-runtime.md) for the retry/circuit-breaker/fallback
    logic itself).
 2. Each terminal outcome records metrics exactly once: an open circuit
-   records `record_circuit_open`; a fallback dispatch records
-   `record_llm_fallback` (the fallback's own `generate` call then
-   independently records its own outcome); a `429` with retries remaining
-   records `record_llm_retry(RateLimited)`; other retryable failures record
-   `record_llm_retry(Transport)`; a response-body read failure and a parse
-   failure each record `record_llm_call` with `error_type` set; and a
-   successful parse records all four `UsageStats` token counts plus
-   `llm_duration` with `error_type: None`.
+   records `record_circuit_open`; a fallback dispatch (on a non-success
+   status or on retries-exhausted) records `record_llm_fallback` instead of
+   `record_llm_call` (the fallback's own `generate` call then independently
+   records its own outcome); a `429` with retries remaining records
+   `record_llm_retry(RateLimited)`; other retryable failures record
+   `record_llm_retry(Transport)`; a response-body read failure, a non-429
+   non-success status with no fallback configured, a parse failure, and
+   retries-exhausted with no fallback configured each record `record_llm_call`
+   with `error_type` set (`"api_error"`, `"invalid_response"`, or
+   `"rate_limited"` depending on the path); and a successful parse records all
+   four `UsageStats` token counts plus `llm_duration` with `error_type: None`.
 3. The same call site emits `tracing::info!`/`debug!` independently of the
    facade — `"LLM call complete"` at `info` with token/`elapsed_ms` fields,
    and the full prompt/response bodies at `debug` — so one boundary produces
    two independent observability signals (an OTel metric and a structured
    log event) from the same code path, each read by a different backend.
+
+**Boundary instrumentation at memory/session lifecycle (cache hit/miss, session deletions, maintenance backlog):**
+1. `Agent::get_cache_memory` (`avs-agent/src/agent/invoke.rs`) records
+   `record_cache_access(CacheResult::Hit)` when `working_memory.load` returns
+   messages, and `record_cache_access(CacheResult::Miss)` on the fallthrough
+   path that rehydrates from session memory instead — see [Agent](agent.md)
+   for the surrounding invoke lifecycle.
+2. `Agent::delete_all_user_data` (`avs-agent/src/agent/sessions.rs`) records
+   `record_session_deleted(SessionDeleteReason::UserRequest, count)` once per
+   call, only when the deleted-session list is non-empty.
+3. `CleanupWorker::tick` (`avs-agent/src/workers.rs`) records
+   `record_session_deleted(SessionDeleteReason::EndedTtl, count)` after
+   `delete_ended_sessions_before` removes whole expired sessions, then
+   `record_maintenance_backlog(count)` for the sessions its own
+   `list_sessions_needing_maintenance` call still finds needing per-message
+   cleanup.
+4. `ConsolidationWorker::tick` (same file) independently calls
+   `record_maintenance_backlog(count)` after its own
+   `list_sessions_needing_maintenance` call — the two workers poll on
+   separate intervals, each reporting its own view of the backlog.
 
 **`avs-logging::init()` and structured event propagation:**
 1. A binary calls `avs_logging::init()` once, before constructing an agent.
@@ -199,14 +227,21 @@ Newest first.
 - **Decision** — `avs-core/src/metrics.rs` is the sole place instruments are
   created and named; consuming crates (`avs-tools`, `avs-hitl`, `avs-agent`)
   call `agentverse::metrics::record_*` helpers and never touch
-  `opentelemetry::metrics` types directly. `opentelemetry_sdk` and
-  `opentelemetry-otlp` are confined to dev-dependencies and
-  `examples/http-agent`'s own `Cargo.toml`.
-- **Context** — PR #25 states: "`opentelemetry` (API only, no-op unless a
-  provider is installed) is a runtime dependency of `avs-core` alone;
-  `opentelemetry_sdk` is dev-dependency-only everywhere; `opentelemetry-otlp`
-  is confined to the example," matching the no-op-until-installed model the
-  crate already used for `tracing`.
+  `opentelemetry::metrics` types directly. `opentelemetry_sdk` is confined to
+  dev-dependencies and `examples/http-agent`'s own `Cargo.toml`.
+  `opentelemetry-otlp` is not: `avs-core/Cargo.toml` still carries it as a
+  default-on optional dependency (`tracing = ["opentelemetry-otlp"]`,
+  `default = ["tracing"]`), left over from the pre-facade `OtelTracer` stub —
+  known debt this decision did not remove (see Implementation Notes).
+- **Context** — PR #25, describing what that PR itself added, states:
+  "`opentelemetry` (API only, no-op unless a provider is installed) is a
+  runtime dependency of `avs-core` alone; `opentelemetry_sdk` is
+  dev-dependency-only everywhere; `opentelemetry-otlp` is confined to the
+  example," matching the no-op-until-installed model the crate already used
+  for `tracing`. That description held for what PR #25 added but did not
+  account for the pre-existing `opentelemetry-otlp` optional dependency
+  already sitting in `avs-core/Cargo.toml`'s `tracing` feature, which PR #25
+  did not remove and which is still present today.
 - **Alternatives rejected** — none recorded; the design presents this as the
   intended shape rather than a choice among alternatives.
 - **Consequences** — adding a metric anywhere in the workspace never adds an
