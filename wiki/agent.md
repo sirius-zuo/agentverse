@@ -37,9 +37,10 @@ crates, [Eval and Test Infra](eval-and-test-infra.md) (`avs-eval`,
 `avs-agent`'s `Cargo.toml` also declares a real, non-dev dependency on
 [SubAgent](subagent.md) (`avs-subagent`); no code under `avs-agent/src`
 references `SubAgentExecutor`. The wiring happens in consumer code instead —
-`avs-agent/tests/agent_test.rs` and `examples/business-report` both build a
-real `Agent` and register `spawn_subagent` into its tool registry via
-`SubAgentExecutor::register_tool`.
+`avs-agent/tests/agent_test.rs` registers `spawn_subagent` into a standalone
+`ToolRegistry` via `SubAgentExecutor::register_tool`, and
+`examples/business-report` builds and invokes a real `Agent` with that tool
+wired into its registry.
 
 ## Architecture
 
