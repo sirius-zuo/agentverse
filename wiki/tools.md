@@ -381,3 +381,4 @@ Newest first.
 - [MCP](mcp.md)
 - [Skill](skill.md)
 - [Agent](agent.md)
+- [Observability](observability.md)

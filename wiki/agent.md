@@ -35,9 +35,11 @@ consumed only by the top-level `examples/*` binaries and by the two test-infra
 crates, [Eval and Test Infra](eval-and-test-infra.md) (`avs-eval`,
 `avs-test-utils`), which build real `Agent`s to exercise end-to-end behavior.
 `avs-agent`'s `Cargo.toml` also declares a real, non-dev dependency on
-[SubAgent](subagent.md) (`avs-subagent`), but nothing under `avs-agent/src`
-imports it today — the only reference is a test
-(`avs-agent/tests/agent_test.rs`) exercising `SubAgentExecutor::register_tool`.
+[SubAgent](subagent.md) (`avs-subagent`); no code under `avs-agent/src`
+references `SubAgentExecutor`. The wiring happens in consumer code instead —
+`avs-agent/tests/agent_test.rs` and `examples/business-report` both build a
+real `Agent` and register `spawn_subagent` into its tool registry via
+`SubAgentExecutor::register_tool`.
 
 ## Architecture
 
@@ -351,3 +353,6 @@ strategy call in an `agentverse_hitl::HitlContext` and call
 - [HTTP Sidecar](http-sidecar.md)
 - [Eval and Test Infra](eval-and-test-infra.md)
 - [SubAgent](subagent.md)
+- [Guardrails](guardrails.md)
+- [Integration](integration.md)
+- [Observability](observability.md)

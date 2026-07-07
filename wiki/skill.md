@@ -328,3 +328,5 @@ Newest first.
 - [Session](session.md)
 - [Strategy](strategy.md)
 - [Eval and Test Infra](eval-and-test-infra.md)
+- [Tools](tools.md)
+- [SubAgent](subagent.md)

@@ -387,3 +387,4 @@ background workers — see agent.md's worker-tick flow):
 - [Agent](agent.md)
 - [Session](session.md)
 - [Core Runtime](core-runtime.md)
+- [HITL](hitl.md)

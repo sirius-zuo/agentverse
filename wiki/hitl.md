@@ -365,3 +365,5 @@ intercepts it before the tool registry ever calls `execute`.
 - [Tools](tools.md)
 - [Guardrails](guardrails.md)
 - [Skill](skill.md)
+- [Eval and Test Infra](eval-and-test-infra.md)
+- [Observability](observability.md)

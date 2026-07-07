@@ -356,3 +356,6 @@ call answers the original request from all sub-goal results.
 - [Tools](tools.md)
 - [Guardrails](guardrails.md)
 - [HITL](hitl.md)
+- [Eval and Test Infra](eval-and-test-infra.md)
+- [Skill](skill.md)
+- [SubAgent](subagent.md)

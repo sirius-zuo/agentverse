@@ -259,3 +259,4 @@ Newest first.
 - [Strategy](strategy.md)
 - [Agent](agent.md)
 - [Core Runtime](core-runtime.md)
+- [HTTP Sidecar](http-sidecar.md)

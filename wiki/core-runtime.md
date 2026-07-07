@@ -252,3 +252,6 @@ to build the `system` string and `Example`s they pass into a `GenerateRequest`.
 - [Session](session.md)
 - [Tools](tools.md)
 - [MCP](mcp.md)
+- [Eval and Test Infra](eval-and-test-infra.md)
+- [HTTP Sidecar](http-sidecar.md)
+- [Integration](integration.md)

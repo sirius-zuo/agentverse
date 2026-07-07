@@ -218,3 +218,7 @@ before the storage code moved to `avs-memory` still compiles.
 - [Memory](memory.md)
 - [Agent](agent.md)
 - [Core Runtime](core-runtime.md)
+- [Eval and Test Infra](eval-and-test-infra.md)
+- [HITL](hitl.md)
+- [HTTP Sidecar](http-sidecar.md)
+- [Skill](skill.md)
