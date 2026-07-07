@@ -144,7 +144,7 @@ before the storage code moved to `avs-memory` still compiles.
   remain Layer 1); per PR #30's body, "every existing consumer compiles
   unchanged" because the re-exports and submodule aliases in `lib.rs`
   preserve every pre-existing `agentverse_session::*` import path.
-- **Ref** — 2026-07-06, PR #30.
+- **Ref** — 2026-07-05, PR #30.
 
 ### Background-maintenance visibility made status-independent
 - **Decision** — `SessionMemory::list_all_active_sessions()` (which scoped

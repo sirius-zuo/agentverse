@@ -3,11 +3,13 @@
 ## Purpose
 
 The strategy subsystem is where an assembled `Vec<Message>` becomes either a
-final answer or a HITL interrupt. `avs-react` (`ReActStrategy`), `avs-plan`
-(`PlanStrategy`, `HierarchicalStrategy`), and `avs-router` (`StrategyRouter`)
-each implement one orchestration algorithm — think-act-observe, plan-then-execute,
-and decompose-then-plan-per-subgoal — against the same `RunStrategy` trait
-defined in `avs-core`. `avs-strategy` is the umbrella crate: it re-exports all
+final answer or a HITL interrupt. `avs-react` (`ReActStrategy`) and `avs-plan`
+(`PlanStrategy`, `HierarchicalStrategy`) each implement one orchestration
+algorithm — think-act-observe, plan-then-execute, and
+decompose-then-plan-per-subgoal — against the same `RunStrategy` trait
+defined in `avs-core`; `avs-router` (`StrategyRouter`) does not implement
+`RunStrategy` itself, but instead selects a `StrategyName` for the caller to
+build. `avs-strategy` is the umbrella crate: it re-exports all
 three implementations and owns `build(StrategyKind, ...)`, the single factory
 `avs-agent` uses to construct a strategy. Splitting orchestration out of
 `avs-agent` keeps each algorithm independently testable and lets `Agent` treat

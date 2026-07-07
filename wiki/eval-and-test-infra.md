@@ -28,9 +28,10 @@ almost every layer beneath them rather than being consumed themselves.
 `AgentOutput`), [HITL](hitl.md) (`avs-hitl`, for `HitlConfig`,
 `HitlPolicy`, `InMemoryQueue`), [Session](session.md) (`avs-session`, for
 `SessionMemory`, `SqliteSessionMemory`), [Skill](skill.md) (`avs-skill`,
-for `SkillConfig`, `KeywordOverlapRouter`, `RouteSkills`), and
+for `SkillConfig`, `KeywordOverlapRouter`, `RouteSkills`),
 [Strategy](strategy.md) (`avs-strategy`/`avs-react`/`avs-plan`, for
-`ReActStrategy`, `PlanStrategy`, `build`/`StrategyKind`) to construct and
+`ReActStrategy`, `PlanStrategy`, `build`/`StrategyKind`), and
+[Tools](tools.md) (`avs-tools`, for `ToolRegistry`) to construct and
 drive the real production objects under test. `avs-test-utils` depends on
 the same core/agent/session/strategy/tools set, minus HITL and skill,
 since its `dead_endpoint_agent` helper builds only a bare ReAct agent.

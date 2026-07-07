@@ -138,7 +138,7 @@ graph TD
 | [memory.md](memory.md) | `avs-memory`, `avs-memory-lancedb`, `avs-memory-pgvector` | Working, session, and long-term memory tiers plus their vector-store backends. |
 | [session.md](session.md) | `avs-session` | Session lifecycle, `SessionManager`, and per-session ownership enforcement (`assert_owner`). |
 | [skill.md](skill.md) | `avs-skill` | `SKILL.md` parsing, `SkillRegistry`, `SkillRouter`, and skill routing modes. |
-| [strategy.md](strategy.md) | `avs-strategy` | The `build()` factory and `StrategyKind` enum selecting a reasoning strategy. |
+| [strategy.md](strategy.md) | `avs-strategy`, `avs-react`, `avs-plan`, `avs-router` | ReAct/Plan/Hierarchical `RunStrategy` implementations, `avs-strategy`'s `build()` factory that constructs one, and `avs-router`'s `StrategyRouter` that selects a strategy name. |
 | [subagent.md](subagent.md) | `avs-subagent` | `SubAgentExecutor`, `SubAgentSpec`, and budget-bounded multi-agent delegation. |
 | [hitl.md](hitl.md) | `avs-hitl` | Human-in-the-loop policies, approval queues, and checkpoint tooling. |
 | [tools.md](tools.md) | `avs-tools` | Built-in tools (Calculator, HttpClient, WebSearch, ShellTool, ...) and the `Tool` trait. |

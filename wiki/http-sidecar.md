@@ -223,8 +223,8 @@ Newest first.
 - **Consequences** — `HttpConfig::from_env`'s default host is `0.0.0.0`
   (non-loopback), so out of the box `spawn_server` panics unless an operator
   sets `API_KEY`, `ALLOW_INSECURE=true`, or binds explicitly to a loopback
-  `HOST`; PR #24 is titled a breaking change for exactly this reason ("HTTP
-  sidecar refuses unauthenticated non-loopback binds").
+  `HOST`; PR #24's Breaking-changes section lists exactly this: "HTTP
+  sidecar refuses unauthenticated non-loopback binds".
 - **Ref** — 2026-07-03, PR #24 (commit `9cb41d6`).
 
 ### `/v1`-prefixed routes with backward-compatible root aliases; per-user rate limiting; `/openapi.json`

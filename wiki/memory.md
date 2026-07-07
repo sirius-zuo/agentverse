@@ -246,7 +246,7 @@ background workers — see agent.md's worker-tick flow):
   entirely re-exports/module aliases; `avs-memory-pgvector`'s
   `PostgresSessionMemory` imports `SessionMemory` from `avs-memory` instead
   of `avs-session`.
-- **Ref** — 2026-07-06, PR #30.
+- **Ref** — 2026-07-05, PR #30.
 
 ### `LongtermMemory` is `write`/`retrieve`-only — no deletion capability
 - **Decision** — the `LongtermMemory` trait (and `VectorLongtermMemory`)
@@ -282,7 +282,7 @@ background workers — see agent.md's worker-tick flow):
 - **Consequences** — `VectorHit.relevance`'s doc comment states the
   cross-backend invariant explicitly; a third-party `VectorStore` using a
   different metric would need to renormalize into `[0,1]`.
-- **Ref** — 2026-07-06, PR #30.
+- **Ref** — 2026-07-05, PR #30.
 
 ### `Embedder` mirrors `ProviderRegistry`; local dev = keyless `base_url`
 - **Decision** — `EmbedderRegistry` (name→factory table, `register`/`build`)
@@ -298,7 +298,7 @@ background workers — see agent.md's worker-tick flow):
   (OpenAI-compatible `/embeddings`) and `"gemini"` (`batchEmbedContents`);
   both require `dimensions` as an explicit setting, validated against each
   response rather than queried from the provider.
-- **Ref** — 2026-07-06, PR #30.
+- **Ref** — 2026-07-05, PR #30.
 
 ### Dead `SimpleMemory`/`AgentMemory` tier deleted, not wired
 - **Decision** — the pre-existing `SimpleMemory`/`AgentMemory`/`Summarizer`/
@@ -317,7 +317,7 @@ background workers — see agent.md's worker-tick flow):
   single-text `Embedder` no longer exist anywhere in the workspace; the
   async, batch `Embedder` in `longterm/embedder.rs` is a new design, not a
   promotion of the deleted one.
-- **Ref** — 2026-07-06, PR #30.
+- **Ref** — 2026-07-05, PR #30.
 
 ### Three-layer memory model established; strategies made memory-agnostic
 - **Decision** — PR #4 introduced the L1 (`CacheMemory`)/L2
