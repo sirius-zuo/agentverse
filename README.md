@@ -1,6 +1,11 @@
+<p align="center">
+  <img src="assets/AgentVerse.jpg" alt="Rust Agent Framework AgentVerse" width="1280">
+</p>
+
+
 # AgentVerse
 
-AgentVerse is a production-grade Rust framework structured around strict layer separation: a provider-agnostic LLM runner at the base, reasoning strategies (ReAct, Plan, Hierarchical) as pure stateless transformers above it, a session layer that maintains per-user transcript isolation, and a skill layer that controls what behavior and toolset each session activates — all composed through a single `Agent` type that enforces the boundaries between them.
+AgentVerse is a production-grade Rust agent framework structured around strict layer separation: a provider-agnostic LLM runner at the base, reasoning strategies (ReAct, Plan, Hierarchical) as pure stateless transformers above it, a session layer that maintains per-user transcript isolation, and a skill layer that controls what behavior and toolset each session activates — all composed through a single `Agent` type that enforces the boundaries between them.
 
 What makes it different: **behavior is operator-driven, not code-driven.** Drop a `SKILL.md` file into `skills/system/` or `skills/user/` and the agent rewrites its own system prompt, restricts its active toolset, and adjusts its routing threshold — at runtime, without a redeploy. A keyword-overlap router scores incoming messages against skill summaries and binds the best match for the session's lifetime; explicit binding (`create_session_with_skill`) bypasses routing entirely for agents with a single fixed purpose.
 
