@@ -284,12 +284,6 @@ Newest first.
   and wraps it in `Value::String`; a server returning image/resource
   content blocks, multiple content blocks, or non-text-only results has no
   representation past that first text block. Known debt.
-- `avs-mcp/src/tools.rs` still contains a pre-rewrite `McpToolAdapter` that
-  implements the old `AsyncTool` trait directly (predating `Tool`/
-  `ErasedTool`). It was not touched by the PR #5 rewrite that added
-  `adapter.rs`, is not declared as `mod tools;` in `lib.rs`, and has no
-  references anywhere in the crate — it is dead source left in the tree.
-  Known debt.
 - `McpLoader::load` has no call site in the workspace: no example, test,
   or `AgentConfig` field currently wires an `agent.toml`'s
   `[[mcp_servers]]` array into it. Every current example
