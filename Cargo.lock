@@ -120,6 +120,7 @@ name = "agentverse-hitl"
 version = "0.1.0"
 dependencies = [
  "agentverse",
+ "agentverse-skill",
  "async-trait",
  "chrono",
  "opentelemetry 0.32.0",
