@@ -143,7 +143,6 @@ dependencies = [
 name = "agentverse-integration"
 version = "0.1.0"
 dependencies = [
- "agentverse",
  "async-trait",
  "axum 0.7.9",
  "bytes",

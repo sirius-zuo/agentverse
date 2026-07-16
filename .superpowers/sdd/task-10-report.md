@@ -7,9 +7,8 @@ incubator rather than an `avs-agent` core runtime path.
 
 ## Changes
 
-- Removed the unused normal `agentverse` (`avs-core`) dependency from
-  `avs-integration/Cargo.toml`; retained the existing dev-dependency used by
-  integration tests.
+- Removed the unused normal and dev `agentverse` (`avs-core`) dependencies
+  from `avs-integration/Cargo.toml`.
 - Added crate-level documentation explaining that `IntegrationRuntime` is
   maintained by the integration tests and `example-slack-hr-assistant`, not
   as a core runtime integration.
@@ -57,3 +56,12 @@ and excluded from this task's commit.
 
 None. `WhatsAppConnector` remains intentionally non-production and is now
 explicitly marked as such for consumers.
+
+## Review Fix
+
+Removed the also-unused `agentverse` dev-dependency and narrowed the WhatsApp
+compatibility test allowances from the whole test target to the deprecated
+import and four intentional compatibility tests. Removing that dev-dependency
+also exposed an accidental Tokio feature-unification dependency, so
+`avs-integration` now directly requests the `io-std` feature used by
+`ConsoleConnector`.

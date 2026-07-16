@@ -57,3 +57,9 @@ Final verification:
 
 None for Task 9. Local listener tests require elevated local socket access in
 this execution environment.
+
+## Review Fix
+
+Corrected `wiki/mcp.md` to say no non-example runtime crate depends on
+`agentverse-mcp`; `examples/mcp-demo` is itself a workspace member. `git diff
+--check` passed and the documentation fix was committed as `1ee517c`.

@@ -1,16 +1,17 @@
-#![allow(deprecated)]
-
+#[allow(deprecated)]
 use agentverse_integration::whatsapp::WhatsAppConnector;
 use agentverse_integration::{Connector, ConnectorError, Event, InputConnector, OutputConnector};
 use std::collections::HashMap;
 
 #[test]
+#[allow(deprecated)]
 fn whatsapp_connector_name() {
     let c = WhatsAppConnector::new("api_key", "phone_number_id");
     assert_eq!(c.name(), "whatsapp");
 }
 
 #[test]
+#[allow(deprecated)]
 fn whatsapp_connector_implements_input_and_output() {
     fn assert_input<T: InputConnector>() {}
     fn assert_output<T: OutputConnector>() {}
@@ -19,6 +20,7 @@ fn whatsapp_connector_implements_input_and_output() {
 }
 
 #[tokio::test]
+#[allow(deprecated)]
 async fn whatsapp_receive_returns_typed_not_implemented_error() {
     let connector = WhatsAppConnector::new("api_key", "phone_number_id");
 
@@ -31,6 +33,7 @@ async fn whatsapp_receive_returns_typed_not_implemented_error() {
 }
 
 #[tokio::test]
+#[allow(deprecated)]
 async fn whatsapp_send_returns_typed_not_implemented_error() {
     let connector = WhatsAppConnector::new("api_key", "phone_number_id");
     let event = Event {
