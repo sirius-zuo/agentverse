@@ -29,8 +29,9 @@ loop. It depends on nothing from `avs-skill` or `avs-agent`.
 `AgentBuilder::with_subagent_executor(Arc<SubAgentExecutor>)`. The application
 still constructs the executor alongside the agent, then passes it to the
 builder; `build` registers one root-depth `spawn_subagent` tool into the
-builder's `ToolRegistry` before constructing `Agent`. The registered
-`SubAgentTool` owns the executor `Arc`, so `Agent` does not. The lower-level
+builder's `ToolRegistry` before constructing `Agent` when that name is absent.
+An existing registration wins. The registered `SubAgentTool` owns the executor
+`Arc`, so `Agent` does not. The lower-level
 `SubAgentExecutor::register_tool` path remains supported when callers manage
 registry setup independently, as in `examples/business-report/src/main.rs`.
 `scripts/check-layering.sh` places `agentverse-subagent` in Layer 3 (peer to
@@ -196,10 +197,11 @@ own `Skill`/`SkillRegistry` types.
 **LLM-driven dispatch via `spawn_subagent`:**
 1. An application can use the high-level builder path:
    `AgentBuilder::with_subagent_executor(executor)`. During `build`, it calls
-   `SubAgentExecutor::register_tool` once for the builder's registry. Callers
-   that manage a registry independently can instead call that lower-level
-   method directly; both paths construct a root-depth `SubAgentTool` under
-   `SPAWN_SUBAGENT_TOOL_NAME`.
+   `SubAgentExecutor::register_tool` once only if the builder's registry does
+   not already contain `SPAWN_SUBAGENT_TOOL_NAME`; the existing registration
+   wins. Callers that manage a registry independently can instead call that
+   lower-level method directly; both paths construct a root-depth
+   `SubAgentTool`.
 2. The parent's ReAct loop calls it like any other tool: `Action:
    spawn_subagent` with a `SubAgentArgs` JSON body (`name`, `objective`,
    optional `system_prompt`/`model`/`max_steps`/`max_tokens`/`timeout_secs`,
@@ -261,8 +263,10 @@ Newest first.
 - **Decision** — SubAgent execution is a new, independent crate
   (`avs-subagent`) providing `SubAgentExecutor`. Applications can pass an
   already-built executor to `AgentBuilder::with_subagent_executor`, which
-  registers the tool bridge before it constructs `Agent`, or call
-  `SubAgentExecutor::register_tool` directly for lower-level registry setup.
+  registers the tool bridge before it constructs `Agent` when no bridge is
+  already present, or call `SubAgentExecutor::register_tool` directly for
+  lower-level registry setup. At the builder boundary, the first registration
+  wins.
   Isolation is enforced by giving each run a scoped `ToolRegistry`
   (`filter_by_names`, which always excludes `spawn_subagent`) and a fresh
   message buffer built from `spec.objective` + `ctx.resources`, with no access

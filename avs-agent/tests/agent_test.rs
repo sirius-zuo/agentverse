@@ -193,6 +193,28 @@ impl Tool for WireTransferTool {
     }
 }
 
+#[derive(Deserialize, JsonSchema)]
+struct ExistingSpawnSubagentArgs;
+
+struct ExistingSpawnSubagentTool;
+
+#[async_trait]
+impl Tool for ExistingSpawnSubagentTool {
+    type Args = ExistingSpawnSubagentArgs;
+
+    fn name(&self) -> &str {
+        "spawn_subagent"
+    }
+
+    fn description(&self) -> &str {
+        "existing spawn subagent implementation"
+    }
+
+    async fn execute(&self, _args: Self::Args) -> ToolResult {
+        Ok(serde_json::json!({ "source": "existing" }))
+    }
+}
+
 struct WireTransferStrategy {
     tools: Arc<ToolRegistry>,
 }
@@ -498,6 +520,132 @@ async fn agent_builder_with_subagent_executor_registers_spawn_subagent_tool() {
     .build();
 
     assert!(tools.has_tool("spawn_subagent"));
+}
+
+#[tokio::test]
+async fn agent_builder_after_lower_level_registration_has_one_spawn_subagent_search_result() {
+    use agentverse::ConnectionManager;
+    use agentverse_subagent::SubAgentExecutor;
+
+    let tools = ToolRegistry::new();
+    let cm = Arc::new(ConnectionManager::anthropic(
+        "http://127.0.0.1:1",
+        "claude-sonnet-4-6",
+        "test-key",
+    ));
+    let executor = Arc::new(SubAgentExecutor::new(
+        Arc::clone(&cm),
+        Arc::clone(&tools),
+        Arc::new(PromptRegistry::new()),
+    ));
+    SubAgentExecutor::register_tool(&executor, &tools);
+
+    let strategy = Arc::new(WireTransferStrategy {
+        tools: Arc::clone(&tools),
+    });
+    let _agent = Agent::builder(
+        Arc::new(LlmRunner::new(Arc::clone(&cm))),
+        Arc::clone(&tools),
+        Arc::new(PromptRegistry::new()),
+        Arc::new(FakeStore::default()),
+        strategy,
+    )
+    .with_subagent_executor(executor)
+    .build();
+
+    let results = tools.search("spawn_subagent", 10);
+    assert_eq!(
+        results
+            .iter()
+            .filter(|tool| tool.name == "spawn_subagent")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn agent_builder_does_not_overwrite_pre_registered_spawn_subagent_tool() {
+    use agentverse::ConnectionManager;
+    use agentverse_subagent::SubAgentExecutor;
+
+    let tools = ToolRegistry::new();
+    tools.register(ExistingSpawnSubagentTool);
+    let cm = Arc::new(ConnectionManager::anthropic(
+        "http://127.0.0.1:1",
+        "claude-sonnet-4-6",
+        "test-key",
+    ));
+    let executor = Arc::new(SubAgentExecutor::new(
+        Arc::clone(&cm),
+        Arc::clone(&tools),
+        Arc::new(PromptRegistry::new()),
+    ));
+
+    let strategy = Arc::new(WireTransferStrategy {
+        tools: Arc::clone(&tools),
+    });
+    let _agent = Agent::builder(
+        Arc::new(LlmRunner::new(Arc::clone(&cm))),
+        Arc::clone(&tools),
+        Arc::new(PromptRegistry::new()),
+        Arc::new(FakeStore::default()),
+        strategy,
+    )
+    .with_subagent_executor(executor)
+    .build();
+
+    let results = tools.search("spawn_subagent", 10);
+    let spawn_results = results
+        .iter()
+        .filter(|tool| tool.name == "spawn_subagent")
+        .collect::<Vec<_>>();
+    assert_eq!(spawn_results.len(), 1);
+    assert_eq!(
+        spawn_results[0].description,
+        "existing spawn subagent implementation"
+    );
+}
+
+#[tokio::test]
+async fn multiple_agent_builders_share_one_spawn_subagent_search_result() {
+    use agentverse::ConnectionManager;
+    use agentverse_subagent::SubAgentExecutor;
+
+    let tools = ToolRegistry::new();
+    let cm = Arc::new(ConnectionManager::anthropic(
+        "http://127.0.0.1:1",
+        "claude-sonnet-4-6",
+        "test-key",
+    ));
+    let executor = Arc::new(SubAgentExecutor::new(
+        Arc::clone(&cm),
+        Arc::clone(&tools),
+        Arc::new(PromptRegistry::new()),
+    ));
+
+    for _ in 0..2 {
+        let strategy = Arc::new(WireTransferStrategy {
+            tools: Arc::clone(&tools),
+        });
+        let _agent = Agent::builder(
+            Arc::new(LlmRunner::new(Arc::clone(&cm))),
+            Arc::clone(&tools),
+            Arc::new(PromptRegistry::new()),
+            Arc::new(FakeStore::default()),
+            strategy,
+        )
+        .with_subagent_executor(Arc::clone(&executor))
+        .build();
+    }
+
+    let results = tools.search("spawn_subagent", 10);
+    assert_eq!(
+        results
+            .iter()
+            .filter(|tool| tool.name == "spawn_subagent")
+            .count(),
+        1
+    );
 }
 
 #[test]
