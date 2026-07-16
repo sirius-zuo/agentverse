@@ -112,7 +112,9 @@ directly). `CycleSkeleton` holds the three resources every ReAct iteration
 needs (`Arc<LlmRunner>`, `Arc<PromptRegistry>`, `Arc<ToolRegistry>`) plus
 `max_iterations`, and exposes helpers (`execute_tool`, `execute_many`,
 `build_tools_str_active`, `check_output_guardrail`) that `ReActStrategy::run_with_active_tools`
-and `run_hitl` call from their loops. `parse_response` (`avs-react/src/parse.rs`)
+and `run_hitl` call from their loops. A shared ReAct helper also resolves the
+active names through `ToolRegistry::tool_definitions_for` and selects the
+appropriate `LlmRunner` entry point. `parse_response` (`avs-react/src/parse.rs`)
 turns raw model text into a `CycleAction` (`Continue`, `ToolCall`, `ToolCalls`,
 `Done`, `Error`) that the loop matches on. `PlanStrategy` and
 `HierarchicalStrategy` share `planner::generate_plan`/`decompose_request`
@@ -154,23 +156,28 @@ the workspace currently does that wiring.
    plus few-shot examples from `PromptRegistry::get_examples("react_examples")`)
    before the first non-system message, but only if a `react.j2` template is
    registered (`PromptRegistry::has_react_template`).
-2. Each iteration: `LlmRunner::invoke(buf.clone())` gets a raw text response;
-   `check_output_guardrail` screens it; `parse_response` turns it into a
-   `CycleAction`.
-3. `CycleAction::Continue` appends the thought and a nudge message telling
+2. Each iteration resolves `active_tool_names` through
+   `ToolRegistry::tool_definitions_for`. A non-empty result is sent through
+   `LlmRunner::invoke_with_tools`; an empty result uses `LlmRunner::invoke`,
+   preserving `GenerateRequest.tools: None` instead of `Some([])`.
+3. The response path remains text-only: `check_output_guardrail` screens the
+   content and `parse_response` turns the existing
+   `Thought:`/`Action:`/`Action Input:`/`Answer:` format into a `CycleAction`.
+4. `CycleAction::Continue` appends the thought and a nudge message telling
    the model to call a tool or answer; if a `Continue` follows another
    `Continue`, the saved thought is returned as the answer (nudge fallback)
    instead of looping forever.
-4. `CycleAction::ToolCall`/`ToolCalls` execute one tool (`CycleSkeleton::execute_tool`)
+5. `CycleAction::ToolCall`/`ToolCalls` execute one tool (`CycleSkeleton::execute_tool`)
    or many concurrently (`CycleSkeleton::execute_many`) and append the
    result(s) as a `User`-role observation message.
-5. `CycleAction::Done` returns `StrategyOutcome::Done(answer)`;
+6. `CycleAction::Done` returns `StrategyOutcome::Done(answer)`;
    `CycleAction::Error` (empty model output) returns `AgentError::Model`.
-6. The loop errors with `ModelError::Timeout` once `iteration` reaches
+7. The loop errors with `ModelError::Timeout` once `iteration` reaches
    `max_iterations`.
 
-**ReAct loop with HITL (`ReActStrategy::run_hitl`):** identical to the plain
-loop except tool dispatch goes through `ToolRegistry::execute_many_hitl(calls, &hook)`
+**ReAct loop with HITL (`ReActStrategy::run_hitl`):** uses the same active-tool
+request helper and text response parser as the plain loop, but tool dispatch
+goes through `ToolRegistry::execute_many_hitl(calls, &hook)`
 instead of `execute_tool`/`execute_many`. A history snapshot is taken
 *before* the assistant's tool-call message is pushed, so a suspended
 `HitlInterrupt.history` never contains a dangling tool call with no
@@ -306,19 +313,15 @@ call answers the original request from all sub-goal results.
 
 ## Implementation Notes
 
-- **Native tool-calling plumbing exists but is unused by every strategy
-  today (known gap).** `avs-core::model::GenerateRequest` has a
-  `tools: Option<Vec<ToolDefinition>>` field explicitly commented "for native
-  tool calling," but `LlmRunner::invoke`/`invoke_structured` (the only entry
-  points any strategy calls) always construct `GenerateRequest { tools: None, .. }`.
-  `ReActStrategy` gets tool awareness into the model by rendering
-  `ErasedTool::schema()` output as prose into the `react.j2` preamble
-  (`CycleSkeleton::build_tools_str_active`) and parsing the reply as
-  `Thought:`/`Action:`/`Action Input:`/`Answer:` text (`parse::parse_response`),
-  not by sending structured tool definitions and reading a native
-  tool-call response. No PR or spec records a rationale for leaving `tools`
-  unpopulated; it is observed current state, not a documented scoping
-  decision.
+- **ReAct has request-side native tool definitions, not full native tool
+  calling.** Its normal and HITL loops send non-empty active registry
+  definitions through `LlmRunner::invoke_with_tools`, while empty or
+  all-unknown active sets use `invoke` and retain `tools: None`. The existing
+  prose schemas from `CycleSkeleton::build_tools_str_active` remain as a text
+  fallback, and replies still go through `parse_response`; native tool-call
+  response parsing is explicitly deferred. `PlanStrategy` and
+  `HierarchicalStrategy` still call `LlmRunner::invoke` and do not send native
+  definitions.
 - `CycleAction::ToolCalls` (plural) lets one model turn request several
   tools at once; `CycleSkeleton::execute_many` runs them concurrently and the
   observations are joined back into a single `User` message in call order —

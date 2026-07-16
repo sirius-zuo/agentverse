@@ -155,8 +155,13 @@ to build the `system` string and `Example`s they pass into a `GenerateRequest`.
 3. Each provider serializes the tool definitions into its own wire format;
    `ConnectionManager::generate` sends that request through its normal retry,
    circuit-breaker, and fallback path.
-4. The returned response remains text-only today. No strategy consumes native
-   tool calls or dispatches their results until the follow-on work in Tasks 4-5.
+4. ReAct's normal and HITL loops use this entry point when their active tool
+   names resolve to at least one registry definition. They fall back to
+   `invoke` when no definitions resolve, preserving `tools: None` rather than
+   sending `Some([])`.
+5. The returned response remains text-only today. ReAct still uses its
+   `Thought:`/`Action:`/`Action Input:`/`Answer:` parser; parsing native
+   tool-call response payloads and dispatching them remains deferred.
 
 **Retry, circuit breaker, and fallback inside `generate`:**
 1. Before building the request, `generate` takes the circuit breaker lock; if

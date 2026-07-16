@@ -66,6 +66,22 @@ impl ReActStrategy {
         }
         buf
     }
+
+    async fn invoke_with_active_tools(
+        &self,
+        messages: Vec<Message>,
+        active_tool_names: &[String],
+    ) -> Result<agentverse::GenerateResponse, AgentError> {
+        let definitions = self.skeleton.tools.tool_definitions_for(active_tool_names);
+        if definitions.is_empty() {
+            self.skeleton.runner.invoke(messages).await
+        } else {
+            self.skeleton
+                .runner
+                .invoke_with_tools(messages, definitions)
+                .await
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -100,7 +116,9 @@ impl agentverse::RunStrategy for ReActStrategy {
             }
             iteration += 1;
 
-            let response = self.skeleton.runner.invoke(buf.clone()).await?;
+            let response = self
+                .invoke_with_active_tools(buf.clone(), active_tool_names)
+                .await?;
             self.skeleton.check_output_guardrail(&response.content)?;
 
             let action = parse_response(&response.content);
@@ -202,7 +220,9 @@ impl agentverse::RunStrategy for ReActStrategy {
             }
             iteration += 1;
 
-            let response = self.skeleton.runner.invoke(buf.clone()).await?;
+            let response = self
+                .invoke_with_active_tools(buf.clone(), active_tool_names)
+                .await?;
             self.skeleton.check_output_guardrail(&response.content)?;
             let action = parse_response(&response.content);
 

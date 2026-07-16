@@ -162,9 +162,11 @@ additionally always excludes `SPAWN_SUBAGENT_TOOL_NAME`, which is how
 `tool_definitions_for(names)` walks the requested names in caller-provided
 order, ignores unknown names, and structurally maps each selected
 `ErasedTool::schema()` object's `name`, `description`, and `input_schema` into
-an `avs-core` `ToolDefinition`. The registry can therefore produce native
-definitions for an active tool set; ReAct still consumes `tool_summaries_for`
-as its text fallback, with native-definition consumption pending Task 5.
+an `avs-core` `ToolDefinition`. ReAct's normal and HITL request paths pass
+these definitions to `LlmRunner::invoke_with_tools` when at least one active
+name resolves. `tool_summaries_for` remains available to text-only callers,
+and ReAct retains its existing `build_tools_str_active` prose fallback and
+text response parser; native tool-call response parsing is deferred.
 
 `ActiveToolSet` (`active.rs`) is a plain `HashSet<String>` wrapper independent
 of `ToolRegistry`'s own storage: `schemas(&registry)` calls
@@ -217,8 +219,12 @@ page-text fetch via `scraper`) — are each a single `struct` plus a
    into a schema filter).
 2. `ActiveToolSet::schemas(&registry)` computes the registry's full
    `schema()` list and filters it to names present in the set; only those
-   schemas are rendered into the prompt.
-3. This is a prompt-shaping filter only: `ToolRegistry::execute`/
+   schemas are rendered into the text prompt. ReAct also calls
+   `tool_definitions_for(active_tool_names)` for the provider request.
+3. When at least one requested name resolves, ReAct sends the definitions via
+   `LlmRunner::invoke_with_tools`. An empty or all-unknown set uses
+   `LlmRunner::invoke`, so `GenerateRequest.tools` remains `None`.
+4. This is a prompt-shaping filter only: `ToolRegistry::execute`/
    `execute_many` accept any registered tool name regardless of whether it is
    in the caller's `ActiveToolSet`. Restricting what the LLM can actually
    *do* — as opposed to what it is shown — is `filter_by_names`'s job

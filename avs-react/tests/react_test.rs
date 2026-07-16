@@ -1,12 +1,15 @@
 //! Tests for the agentverse-react crate.
 
-use agentverse::{Config, LlmRunner, PromptConfig, PromptRegistry, RunStrategy, Tool, ToolResult};
+use agentverse::{
+    Config, ConnectionManager, GenerateRequest, GenerateResponse, LlmRunner, ModelError,
+    ModelProvider, PromptConfig, PromptRegistry, RunStrategy, Tool, ToolResult,
+};
 use agentverse_react::{parse::parse_response, CycleAction, CycleSkeleton, ReActStrategy};
 use agentverse_tools::ToolRegistry;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 // ─── Mock tool ────────────────────────────────────────────────────────────────
 
@@ -236,6 +239,132 @@ async fn test_cycle_skeleton_execute_tool_not_found() {
 }
 
 // ─── ReActStrategy tests ──────────────────────────────────────────────────────
+
+struct RecordingProvider {
+    request: Arc<Mutex<Option<GenerateRequest>>>,
+}
+
+impl ModelProvider for RecordingProvider {
+    fn name(&self) -> &str {
+        "recording"
+    }
+
+    fn build_request(
+        &self,
+        _model: &str,
+        request: GenerateRequest,
+    ) -> Result<serde_json::Value, ModelError> {
+        *self.request.lock().unwrap() = Some(request);
+        Err(ModelError::InvalidResponse(
+            "stop after recording".to_string(),
+        ))
+    }
+
+    fn parse_response(&self, _body: &str) -> Result<GenerateResponse, ModelError> {
+        Err(ModelError::InvalidResponse("not used".to_string()))
+    }
+
+    fn request_headers(&self, _api_key: &str) -> reqwest::header::HeaderMap {
+        reqwest::header::HeaderMap::new()
+    }
+
+    fn endpoint_path(&self, _model: &str) -> String {
+        "/recording".to_string()
+    }
+}
+
+fn recording_strategy() -> (ReActStrategy, Arc<Mutex<Option<GenerateRequest>>>) {
+    let request = Arc::new(Mutex::new(None));
+    let runner = Arc::new(LlmRunner::new(Arc::new(ConnectionManager::new(
+        RecordingProvider {
+            request: Arc::clone(&request),
+        },
+        "http://unused",
+        "key",
+        "model",
+    ))));
+    let tools = ToolRegistry::new();
+    tools.register(MockTool::new("echo", "Echo tool"));
+
+    (
+        ReActStrategy::new(runner, Arc::new(PromptRegistry::new()), tools, 1),
+        request,
+    )
+}
+
+fn user_message() -> Vec<agentverse::Message> {
+    vec![agentverse::Message {
+        role: agentverse::MessageRole::User,
+        content: "hello".to_string(),
+    }]
+}
+
+#[tokio::test]
+async fn run_with_active_tools_forwards_non_empty_definitions() {
+    let (strategy, request) = recording_strategy();
+
+    let result = strategy
+        .run_with_active_tools(user_message(), &["echo".to_string()])
+        .await;
+
+    assert!(result.is_err(), "recording provider stops the model call");
+    let request = request.lock().unwrap().take().unwrap();
+    let definitions = request.tools.expect("active tool definitions must be sent");
+    assert_eq!(definitions.len(), 1);
+    assert_eq!(definitions[0].name, "echo");
+    assert_eq!(definitions[0].description, "Echo tool");
+}
+
+#[tokio::test]
+async fn run_with_empty_or_unknown_active_tools_sends_none() {
+    for active_tool_names in [Vec::new(), vec!["missing".to_string()]] {
+        let (strategy, request) = recording_strategy();
+
+        let result = strategy
+            .run_with_active_tools(user_message(), &active_tool_names)
+            .await;
+
+        assert!(result.is_err(), "recording provider stops the model call");
+        let request = request.lock().unwrap().take().unwrap();
+        assert!(
+            request.tools.is_none(),
+            "empty resolved definitions must remain None"
+        );
+    }
+}
+
+#[tokio::test]
+async fn run_hitl_forwards_non_empty_active_tool_definitions() {
+    use agentverse::hitl::{ApprovalId, HitlHook};
+
+    struct AllowAllHook;
+
+    #[async_trait::async_trait]
+    impl HitlHook for AllowAllHook {
+        async fn check_tool(
+            &self,
+            _tool_name: &str,
+            _args: &serde_json::Value,
+        ) -> Option<(ApprovalId, String)> {
+            None
+        }
+    }
+
+    let (strategy, request) = recording_strategy();
+    let result = strategy
+        .run_hitl(
+            user_message(),
+            &["echo".to_string()],
+            Arc::new(AllowAllHook),
+        )
+        .await;
+
+    assert!(result.is_err(), "recording provider stops the model call");
+    let request = request.lock().unwrap().take().unwrap();
+    let definitions = request.tools.expect("active tool definitions must be sent");
+    assert_eq!(definitions.len(), 1);
+    assert_eq!(definitions[0].name, "echo");
+}
 
 #[tokio::test]
 async fn react_run_returns_error_on_bad_port() {
