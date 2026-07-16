@@ -41,7 +41,7 @@ crates, [Eval and Test Infra](eval-and-test-infra.md) (`avs-eval`,
 `avs-agent`'s `Cargo.toml` also declares a real, non-dev dependency on
 [SubAgent](subagent.md) (`avs-subagent`). Callers can pass an already-built
 `Arc<SubAgentExecutor>` to `AgentBuilder::with_subagent_executor`; during
-`build`, the builder registers `spawn_subagent` into its supplied
+`build`, the builder atomically registers `spawn_subagent` into its supplied
 `ToolRegistry` before constructing the `Agent` if that name is absent. An
 existing registration wins. The registered `SubAgentTool` owns the executor's
 `Arc`, so `Agent` does not retain another copy. Direct
@@ -132,10 +132,11 @@ routes the effective request and constructs the selected strategy from the
 agent's existing runner, prompt registry, and tool registry, using the
 documented `DEFAULT_ROUTED_STRATEGY_MAX_ITERATIONS` value of 10.
 Supplying `.with_subagent_executor(executor)` registers one root-depth
-`spawn_subagent` tool into the builder's shared registry during `build` only
-when that name is absent. An existing registration wins, and omitting the
-executor leaves registry construction unchanged. The resulting tool owns the
-executor `Arc`, so the `Agent` itself has no executor field.
+`spawn_subagent` tool into the builder's shared registry during `build` through
+an atomic insert-if-absent operation. An existing registration wins, including
+when builders race over one registry, and omitting the executor leaves registry
+construction unchanged. The resulting tool owns the executor `Arc`, so the
+`Agent` itself has no executor field.
 `AgentBuilder::build` wraps the assembled `Agent` in an `Arc`, calls
 `spawn_background_workers` on it, and — only with the `http`
 feature and `.with_http_server()` — spawns the axum server from

@@ -64,6 +64,24 @@ impl ToolRegistry {
         self.register_with_options(tool, ToolOptions::default());
     }
 
+    /// Register a tool only when its name is absent, returning whether it was inserted.
+    /// The tool map and search document are updated once under the same map write lock.
+    pub fn register_if_absent<T: agentverse::Tool + 'static>(&self, tool: T) -> bool {
+        let name = tool.name().to_string();
+        let text = format!("{} {}", tool.name(), tool.description());
+        let erased: Arc<dyn ErasedTool> = Arc::new(tool);
+        let mut tools = self.tools.write().unwrap();
+
+        match tools.entry(name.clone()) {
+            std::collections::hash_map::Entry::Occupied(_) => false,
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                self.index.write().unwrap().insert(&name, &text);
+                entry.insert((erased, ToolOptions::default()));
+                true
+            }
+        }
+    }
+
     /// Register a tool with explicit category and execution mode.
     pub fn register_with_options<T: agentverse::Tool + 'static>(&self, tool: T, opts: ToolOptions) {
         let name = tool.name().to_string();

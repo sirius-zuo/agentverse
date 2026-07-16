@@ -128,3 +128,64 @@ Result: passed all five builder and lower-level `spawn_subagent` tests.
 No findings. The behavior change is confined to `AgentBuilder`; the tests
 prove first-registration-wins and one searchable document, and
 `ToolRegistry` itself is unchanged.
+
+## Final Review Follow-Up: Atomic Concurrent Registration
+
+### Finding
+
+The builder's `has_tool` check followed by `register_tool` was idempotent only
+for sequential builds. Concurrent builders could both observe
+`spawn_subagent` as absent, then each append a search document through the
+ordinary replacement registration path.
+
+### RED
+
+Added deterministic synchronized registration tests with 16 worker threads:
+
+- `register_if_absent_is_atomic_under_concurrency` specifies the atomic
+  `ToolRegistry` API and asserts one successful insertion, one active tool,
+  and one searchable document.
+- `concurrent_subagent_registration_if_absent_has_one_active_and_searchable_tool`
+  exercises the exact `SubAgentExecutor` path used by `AgentBuilder` with the
+  same active-tool and search-document assertions.
+- `register_keeps_replacement_semantics` protects the existing ordinary
+  `register` replacement contract.
+
+RED commands:
+
+```text
+cargo test -p agentverse-tools register_if_absent_is_atomic_under_concurrency -- --nocapture
+cargo test -p agentverse-agent concurrent_subagent_registration_if_absent_has_one_active_and_searchable_tool -- --nocapture
+```
+
+The first command failed with `E0599` because
+`ToolRegistry::register_if_absent` did not exist. The second failed with
+`E0599` because `SubAgentExecutor::register_tool_if_absent` did not exist.
+
+### GREEN
+
+`ToolRegistry::register_if_absent` now uses the tool map's entry API while
+holding its write lock across the vacant-entry decision and first BM25
+document insertion. Exactly one concurrent caller inserts the active tool and
+search document. `SubAgentExecutor::register_tool_if_absent` is the narrow
+wrapper used by `AgentBuilder`; ordinary `ToolRegistry::register` and
+`SubAgentExecutor::register_tool` remain replacement operations.
+
+### Final Verification
+
+- `cargo test -p agentverse-tools register -- --nocapture`: passed (6 focused
+  tests across registry/tool integration suites).
+- `cargo test -p agentverse-agent subagent -- --nocapture`: passed (6 tests).
+- `cargo test -p agentverse-subagent -- --nocapture`: passed (22 tests).
+- `cargo fmt --all --check`: passed after applying the formatter's signature
+  layout.
+- `scripts/check-layering.sh`: passed.
+- `cargo clippy --all -- -D warnings`: passed.
+- `git diff --check ed8291e`: passed during self-review.
+
+### Final Self-Review
+
+No findings. The index read guard in `ToolRegistry::search` is released before
+the tool map is read, so the new map-write-to-index-write critical section has
+no inverse lock-order peer. The atomic API is limited to default-option typed
+tools, and existing replacement methods are unchanged.

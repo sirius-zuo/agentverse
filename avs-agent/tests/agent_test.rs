@@ -649,6 +649,61 @@ async fn multiple_agent_builders_share_one_spawn_subagent_search_result() {
 }
 
 #[test]
+fn concurrent_subagent_registration_if_absent_has_one_active_and_searchable_tool() {
+    use agentverse::ConnectionManager;
+    use agentverse_subagent::SubAgentExecutor;
+    use std::sync::Barrier;
+    use std::thread;
+
+    const WORKERS: usize = 16;
+    let tools = ToolRegistry::new();
+    let executor = Arc::new(SubAgentExecutor::new(
+        Arc::new(ConnectionManager::anthropic(
+            "http://127.0.0.1:1",
+            "claude-sonnet-4-6",
+            "test-key",
+        )),
+        Arc::clone(&tools),
+        Arc::new(PromptRegistry::new()),
+    ));
+    let barrier = Arc::new(Barrier::new(WORKERS));
+    let handles = (0..WORKERS)
+        .map(|_| {
+            let tools = Arc::clone(&tools);
+            let executor = Arc::clone(&executor);
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                SubAgentExecutor::register_tool_if_absent(&executor, &tools)
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let inserted = handles
+        .into_iter()
+        .map(|handle| handle.join().unwrap())
+        .filter(|inserted| *inserted)
+        .count();
+    assert_eq!(inserted, 1);
+    assert_eq!(
+        tools
+            .tool_names()
+            .iter()
+            .filter(|name| name.as_str() == "spawn_subagent")
+            .count(),
+        1
+    );
+    assert_eq!(
+        tools
+            .search("spawn_subagent", 10)
+            .iter()
+            .filter(|tool| tool.name == "spawn_subagent")
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn subagent_executor_register_tool_registers_spawn_subagent_tool() {
     use agentverse::ConnectionManager;
     use agentverse_subagent::SubAgentExecutor;

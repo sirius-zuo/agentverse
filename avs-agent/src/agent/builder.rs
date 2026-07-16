@@ -6,7 +6,7 @@ use agentverse_router::StrategyRouter;
 use agentverse_session::{SessionManager, SessionMemory};
 use agentverse_skill::SkillConfig;
 use agentverse_subagent::SubAgentExecutor;
-use agentverse_tools::{ToolRegistry, SPAWN_SUBAGENT_TOOL_NAME};
+use agentverse_tools::ToolRegistry;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -121,9 +121,7 @@ impl AgentBuilder {
             }),
         };
         if let Some(executor) = &self.subagent_executor {
-            if !self.tools.has_tool(SPAWN_SUBAGENT_TOOL_NAME) {
-                SubAgentExecutor::register_tool(executor, &self.tools);
-            }
+            SubAgentExecutor::register_tool_if_absent(executor, &self.tools);
         }
         let session_memory_for_workers = Arc::clone(&self.session_memory);
         let agent = Arc::new(Agent {
