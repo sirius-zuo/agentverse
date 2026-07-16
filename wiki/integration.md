@@ -2,26 +2,27 @@
 
 ## Purpose
 
-`avs-integration` (crate `agentverse-integration`) is the platform I/O
-layer: it normalizes inbound messages from external systems (Slack,
-GitHub, WhatsApp, or a local console) into a single `Event` type, and
-routes agent responses back out to one or more of those same platforms.
-It exists as its own crate so an agent binary can swap or combine
-platforms — Slack in, Slack and GitHub out — by editing a TOML config
-file, without any platform-specific code inside the agent or strategy
-layers. The crate owns connection lifecycle and wire-format translation
-only; it has no knowledge of `RunStrategy`, tools, or memory — the caller
-supplies a plain `async` handler closure that maps one `Event` to another.
+`avs-integration` (crate `agentverse-integration`) is an **incubator** for
+platform I/O: it normalizes inbound messages from Slack, GitHub, or a local
+console into a single `Event` type, and routes agent responses back out to
+those platforms. `IntegrationRuntime` is maintained by the integration
+tests and the `example-slack-hr-assistant` example; it is not an
+`avs-agent` core runtime path or a second supported runtime integration.
+The crate owns connection lifecycle and wire-format translation only; it
+has no knowledge of `RunStrategy`, tools, or memory — the caller supplies a
+plain `async` handler closure that maps one `Event` to another.
+
+`WhatsAppConnector` remains available for source compatibility, but it is
+deprecated as a non-production stub. Its input and output methods return
+`ConnectorError::Connection("WhatsAppConnector is not yet implemented")`.
 
 ## Position in the System
 
 `agentverse-integration` sits in Layer 1 per `scripts/check-layering.sh`,
 alongside `agentverse-hitl`, `agentverse-session`, and `agentverse-memory`.
-Its `Cargo.toml` declares a dependency on [Core Runtime](core-runtime.md)
-(`avs-core`, crate `agentverse`), but no file under `avs-integration/src`
-references the `agentverse::` namespace (`grep -rn "agentverse::"
-avs-integration/src` finds nothing) — the dependency is currently unused
-by the crate's own code.
+It has no normal dependency on [Core Runtime](core-runtime.md) (`avs-core`,
+crate `agentverse`); integration wiring remains outside the core agent
+runtime.
 
 No workspace crate depends on `agentverse-integration`: it does not appear
 as a dependency of [Agent](agent.md) (`avs-agent`) or any other layered
@@ -113,9 +114,10 @@ spawns an `axum::Router` with a single webhook route
 (`/slack/events`, `/github/events`) that verifies an HMAC-SHA256 signature
 (`verify_slack_signature`, `verify_github_signature`) before pushing a
 parsed `Event` onto the channel; `receive` reads from that channel.
-`WhatsAppConnector` implements both traits but every method returns
-`ConnectorError::Connection("WhatsAppConnector is not yet implemented")` —
-it is a stub with no working I/O.
+`WhatsAppConnector` implements both traits but is deprecated as a
+non-production stub. Every input and output operation returns
+`ConnectorError::Connection("WhatsAppConnector is not yet implemented")`;
+it has no working I/O.
 
 ## Runtime Flows
 
@@ -241,24 +243,19 @@ Newest first.
 
 ## Implementation Notes
 
-- Known debt: `WhatsAppConnector` is a stub. Every `InputConnector`/
-  `OutputConnector` method returns `ConnectorError::Connection` with a
-  "not yet implemented" message; it is exercised only by its own crate's
-  tests (`avs-integration/tests/whatsapp_test.rs`) and is never constructed
-  outside `avs-integration` except through `IntegrationConfig`'s
-  `[connector.whatsapp]` section, which nothing in the workspace populates
-  today.
-- Known debt / unwired: no crate outside `avs-integration` itself depends
+- Incubator boundary: no crate outside `avs-integration` itself depends
   on `agentverse-integration` (`grep -rl agentverse-integration
   --include=Cargo.toml .` finds only its own `Cargo.toml` and
   `examples/slack-hr-assistant/Cargo.toml`). `avs-agent`'s `Agent` has no
   method or field referencing `IntegrationRuntime`, `Connector`, or `Event`
   — the two are combined only in the example's `main`, by hand, via a
   closure. There is no reusable "wire an `Agent` to an `IntegrationRuntime`"
-  helper anywhere in the workspace.
-- `avs-integration/Cargo.toml` depends on `agentverse` (`avs-core`), but no
-  source file under `avs-integration/src` references the `agentverse::`
-  namespace — the dependency is currently unused by the crate's own code.
+  helper anywhere in the workspace. `IntegrationRuntime` is therefore
+  maintained as an example-backed incubator rather than a core runtime path.
+- WhatsApp compatibility: `WhatsAppConnector` is deprecated with the note
+  `stub connector; not production-ready`. It retains its public constructor
+  and connector trait implementations, but both I/O operations return the
+  explicit typed `ConnectorError::Connection` not-implemented error.
 - `IntegrationRuntime::run`'s output fan-out is best-effort by design: a
   failed `OutputConnector::send` is logged via `tracing::warn!` and does
   not stop delivery to the remaining outputs, and does not stop the loop.

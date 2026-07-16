@@ -5,7 +5,6 @@ license.workspace = true
 edition.workspace = true
 
 [dependencies]
-agentverse = { path = "../avs-core" }
 async-trait.workspace = true
 axum.workspace = true
 serde.workspace = true
