@@ -8,7 +8,8 @@ search, shell execution, and meta-discovery over the tool set itself — is
 implemented and exposed through one registry. It turns `avs-core`'s
 `Tool`/`ErasedTool` trait pair into a concrete runtime: `ToolRegistry` is the
 single place a `Tool` implementation becomes callable by name and describable
-to an LLM as a JSON schema, with async dispatch (single and parallel), BM25
+to an LLM as a JSON schema or native `ToolDefinition`, with async dispatch
+(single and parallel), BM25
 keyword search for on-demand discovery via `FindToolsTool`, per-invocation
 schema filtering via `ActiveToolSet`, and (with `avs-hitl`) approval
 interception before a risky call executes. It sits in Layer 2 alongside
@@ -68,6 +69,7 @@ classDiagram
         +execute_many_hitl(calls, hook) Result
         +spawn_tool(ToolCall) ToolHandle
         +schema() Vec~Value~
+        +tool_definitions_for(names) Vec~ToolDefinition~
         +search(query, limit) Vec~ToolInfo~
         +filter_category(category) Arc~ToolRegistry~
         +filter_by_names(names) Arc~ToolRegistry~
@@ -157,6 +159,12 @@ before executing anything if any call in the batch needs approval.
 sharing the same `Arc<dyn ErasedTool>` instances — `filter_by_names`
 additionally always excludes `SPAWN_SUBAGENT_TOOL_NAME`, which is how
 `avs-subagent` guarantees a SubAgent can never spawn a nested SubAgent.
+`tool_definitions_for(names)` walks the requested names in caller-provided
+order, ignores unknown names, and structurally maps each selected
+`ErasedTool::schema()` object's `name`, `description`, and `input_schema` into
+an `avs-core` `ToolDefinition`. The registry can therefore produce native
+definitions for an active tool set; ReAct still consumes `tool_summaries_for`
+as its text fallback, with native-definition consumption pending Task 5.
 
 `ActiveToolSet` (`active.rs`) is a plain `HashSet<String>` wrapper independent
 of `ToolRegistry`'s own storage: `schemas(&registry)` calls

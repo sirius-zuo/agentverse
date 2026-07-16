@@ -224,6 +224,23 @@ impl ToolRegistry {
             .collect()
     }
 
+    /// Return native tool definitions for the requested registered tools.
+    pub fn tool_definitions_for(&self, names: &[String]) -> Vec<agentverse::ToolDefinition> {
+        let tools = self.tools.read().unwrap();
+        names
+            .iter()
+            .filter_map(|name| {
+                let (tool, _) = tools.get(name)?;
+                let schema = tool.schema();
+                Some(agentverse::ToolDefinition {
+                    name: schema.get("name")?.as_str()?.to_string(),
+                    description: schema.get("description")?.as_str()?.to_string(),
+                    parameters: schema.get("input_schema")?.clone(),
+                })
+            })
+            .collect()
+    }
+
     /// BM25 keyword search over tool names and descriptions.
     pub fn search(&self, query: &str, limit: usize) -> Vec<ToolInfo> {
         let hits = self.index.read().unwrap().search(query, limit);
@@ -400,6 +417,54 @@ mod tests {
             reg.tool_summaries_for(&["ghost".to_string()]),
             "none (reasoning only)"
         );
+    }
+
+    #[test]
+    fn tool_definitions_for_ignores_unknown_names_and_preserves_order() {
+        use crate::calculator::Calculator;
+        use crate::datetime::DateTimeTool;
+
+        let reg = ToolRegistry::new();
+        reg.register(Calculator);
+        reg.register(DateTimeTool);
+
+        let names = vec![
+            "datetime".to_string(),
+            "ghost".to_string(),
+            "calculator".to_string(),
+        ];
+        let definitions = reg.tool_definitions_for(&names);
+
+        assert_eq!(
+            definitions
+                .iter()
+                .map(|definition| definition.name.as_str())
+                .collect::<Vec<_>>(),
+            ["datetime", "calculator"]
+        );
+    }
+
+    #[test]
+    fn tool_definitions_for_maps_schema_fields() {
+        use crate::calculator::Calculator;
+
+        let reg = ToolRegistry::new();
+        reg.register(Calculator);
+
+        let definitions = reg.tool_definitions_for(&["calculator".to_string()]);
+        let definition = definitions.first().unwrap();
+        let schema = reg
+            .schema()
+            .into_iter()
+            .find(|schema| schema["name"] == "calculator")
+            .unwrap();
+
+        assert_eq!(definition.name, schema["name"].as_str().unwrap());
+        assert_eq!(
+            definition.description,
+            schema["description"].as_str().unwrap()
+        );
+        assert_eq!(definition.parameters, schema["input_schema"]);
     }
 
     #[test]
