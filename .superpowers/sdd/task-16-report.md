@@ -17,7 +17,7 @@ changed.
 | `./scripts/check-layering.sh` | 0 | `No layer-direction violations found.` |
 | `cargo fmt --all --check` | 0 | No formatting changes required. |
 | `cargo clippy --all -- -D warnings` | 0 | Completed with no warnings. |
-| `cargo test --workspace` | 101 | Four `connection_manager_test` cases could not start `httpmock`: this sandbox rejects `127.0.0.1:0` listener binding with `Operation not permitted (os error 1)`. This is an environment restriction, not a code-test failure; the controller must rerun where local test-server binding is allowed. |
+| `cargo test --workspace` | 0 | Controller rerun with local loopback binding permitted completed the full workspace suite, including all four `connection_manager_test` cases. |
 | `cargo check --workspace --all-features` | 0 | All workspace crates and examples compiled with all features. |
 
 ## Focused Regression Evidence
@@ -34,7 +34,8 @@ states that native response-side tool parsing is intentionally deferred; the
 follow-up wires request-side tool definitions while retaining the established
 text-response parser.
 
-## Concern
+## Environment Note
 
-`cargo test --workspace` needs a controller rerun outside this sandbox to
-exercise the `httpmock` cases that bind a local TCP listener.
+The worker's sandboxed run exited 101 because it could not bind
+`127.0.0.1:0`. The controller reran the same command with loopback binding
+permitted; it exited 0 with no test failures.

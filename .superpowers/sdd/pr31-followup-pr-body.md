@@ -37,6 +37,5 @@ The corresponding internal-wiki source anchors were reconciled in `c1f32b0`.
 - `cargo fmt --all --check` (exit 0)
 - `cargo clippy --all -- -D warnings` (exit 0)
 - `cargo check --workspace --all-features` (exit 0)
-- `cargo test --workspace` reached the `httpmock` tests but exits 101 in this
-  sandbox because local `127.0.0.1:0` listener binding is prohibited. Rerun
-  that command in a controller environment that permits local test servers.
+- `cargo test --workspace` (exit 0, including loopback-backed `httpmock`
+  integration tests)
