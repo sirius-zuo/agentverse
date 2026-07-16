@@ -9,7 +9,8 @@ use crate::error::McpError;
 pub struct McpLoader;
 
 impl McpLoader {
-    /// Connect to each configured MCP server and populate the registry.
+    /// The supported configuration-driven entry point for loading MCP tools.
+    /// Connects to each configured MCP server and populates the registry.
     /// Returns the total number of tools registered across all servers.
     pub async fn load(
         registry: &Arc<ToolRegistry>,
