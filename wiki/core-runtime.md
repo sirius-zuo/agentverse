@@ -15,6 +15,11 @@ on none of them. Its job is to make one LLM call reliably and return a
 structured response — everything above it (strategy loops, memory, tools) is
 built in terms of the types it exports.
 
+Its maintained observability surface is `metrics`, which provides the shared
+OpenTelemetry `record_*` facade; workspace logging is provided separately by
+`avs-logging`. The former `avs-core` tracing scaffold and its legacy feature
+are removed rather than retained as an inactive API.
+
 ## Position in the System
 
 `avs-core` consumes no other workspace crate — it is the dependency-free
@@ -238,6 +243,9 @@ to build the `system` string and `Example`s they pass into a `GenerateRequest`.
   construction (defaulting `disable_thinking` to `true`) to keep ReAct-style
   structured-text output reliable against reasoning-capable OpenAI-compatible
   backends; it is not re-read per request.
+- Metrics remain the core crate's maintained observability path. It creates
+  OTel instruments only through `avs-core/src/metrics.rs`; binaries install
+  exporters, while `avs-logging` owns `tracing` subscriber initialization.
 - Known follow-ups explicitly deferred out of scope (per PR #24's body):
   parsing `Retry-After` in HTTP-date form (only integer-seconds is handled
   today) and `--all-targets` on the CI clippy job. Per PR #27: registering a
