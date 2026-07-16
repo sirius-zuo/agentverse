@@ -278,17 +278,14 @@ impl ToolRegistry {
         new_reg
     }
 
-    /// Return a new registry containing only tools whose names appear in `names`.
-    /// `spawn_subagent` is always excluded regardless of `names` — SubAgents cannot
-    /// spawn sub-SubAgents.
-    pub fn filter_by_names(&self, names: &[String]) -> Arc<ToolRegistry> {
+    fn copy_named_tools(&self, names: &[String], exclude_subagent_spawner: bool) -> Arc<Self> {
         let new_reg = Arc::new(ToolRegistry {
             tools: RwLock::new(HashMap::new()),
             index: RwLock::new(BM25Index::new()),
         });
         let tools = self.tools.read().unwrap();
         for name in names {
-            if name == SPAWN_SUBAGENT_TOOL_NAME {
+            if exclude_subagent_spawner && name == SPAWN_SUBAGENT_TOOL_NAME {
                 continue;
             }
             if let Some((tool, opts)) = tools.get(name) {
@@ -302,6 +299,19 @@ impl ToolRegistry {
             }
         }
         new_reg
+    }
+
+    /// Return a new registry containing exactly the registered tools named in `names`.
+    /// An empty list returns an empty registry.
+    pub fn restricted_to_names(&self, names: &[String]) -> Arc<Self> {
+        self.copy_named_tools(names, false)
+    }
+
+    /// Return a new registry containing only tools whose names appear in `names`.
+    /// `spawn_subagent` is always excluded regardless of `names` — SubAgents cannot
+    /// spawn sub-SubAgents.
+    pub fn filter_by_names(&self, names: &[String]) -> Arc<ToolRegistry> {
+        self.copy_named_tools(names, true)
     }
 
     pub fn has_tool(&self, name: &str) -> bool {

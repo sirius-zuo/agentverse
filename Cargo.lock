@@ -287,6 +287,7 @@ dependencies = [
  "agentverse",
  "agentverse-guardrails",
  "async-trait",
+ "httpmock",
  "serde",
  "serde_json",
  "tokio",

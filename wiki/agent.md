@@ -182,10 +182,12 @@ strategy call in an `agentverse_hitl::HitlContext` and call
    context, L2 history, the new user message).
 7. If a `StrategyRouter` is configured, it routes `effective_input` and the
    selected `StrategyName` is converted to `StrategyKind`; a fresh strategy is
-   built for this invocation from the agent's runner/prompts/tools. Without a
-   router, the supplied fixed `Arc<dyn RunStrategy>` is used unchanged. The
-   assembled messages and already-filtered `active_tool_names` are then passed
-   to `strategy.run_hitl` (if HITL is configured) or
+   built for this invocation from the agent's runner/prompts and a registry
+   restricted to `active_tool_names`. An empty active set produces an empty
+   execution registry, so a model cannot call a hidden registered tool by
+   naming it directly. Without a router, the supplied fixed
+   `Arc<dyn RunStrategy>` is used unchanged. The assembled messages and
+   `active_tool_names` are then passed to `strategy.run_hitl` (if HITL is configured) or
    `strategy.run_with_active_tools`.
 8. On `StrategyOutcome::Interrupted`, control passes to `handle_tool_interrupt`
    (persists `InterruptedState`, marks the session `Interrupted`, returns
@@ -212,10 +214,11 @@ rather than allowing un-intercepted tools to run.
    the transition via `sessions.apply_phase_transition`; `Rejected` returns a
    `Done` message without changing the session's skill.
 4. Any other variant (`PendingToolCall`, `PendingCheckpoint`) routes to
-   `resume_tool_call_or_checkpoint`: pending tool calls are executed directly
-   via `self.tools.execute_many` (approved/modified) or answered with a
-   rejection observation, the result is appended to history, and the
-   augmented history is re-submitted to `strategy.run_hitl`/
+   `resume_tool_call_or_checkpoint`: approved/modified pending calls execute
+   directly without re-triggering the HITL hook, but router-enabled sessions
+   use the same active-name restricted registry while fixed-strategy sessions
+   retain the full supplied registry. Rejections become observations. The
+   result is appended to history, and the augmented history is re-submitted to `strategy.run_hitl`/
    `run_with_active_tools` — which may itself interrupt again, recursing back
    into `handle_tool_interrupt`. For router-enabled HITL sessions, resume
    constructs a fresh ReAct strategy (the only routed strategy allowed to

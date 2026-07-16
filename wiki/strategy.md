@@ -223,12 +223,15 @@ call answers the original request from all sub-goal results.
    user's request; the lower-cased, trimmed response is matched against
    `"react"`/`"plan_and_execute"`/`"plan-and-execute"`/`"hierarchical"`.
 4. An unrecognized response returns `AgentError::Model(ModelError::InvalidResponse)`
-   rather than defaulting to a strategy — routing is fail-closed.
+   rather than defaulting to a strategy. A recognized name that is absent from
+   the router's configured `available_strategies` returns the same error;
+   model output cannot expand that allowlist.
 5. `Agent::invoke` converts the result to `StrategyKind` and calls `build()`
    with `DEFAULT_ROUTED_STRATEGY_MAX_ITERATIONS` (10). This happens on every
    routed invocation; the strategy object is not cached across sessions or
-   turns, while active tool filtering continues through the same
-   `run_with_active_tools`/`run_hitl` arguments.
+   turns. Construction receives a `ToolRegistry` restricted exactly to
+   `active_tool_names`, including a truly empty registry for an empty set, and
+   the same names continue through `run_with_active_tools`/`run_hitl`.
 6. With configured HITL, only routed ReAct is allowed. Plan-and-Execute and
    Hierarchical do not override `run_hitl`, so `Agent` returns
    `RoutedStrategyDoesNotSupportHitl` before executing either one rather than

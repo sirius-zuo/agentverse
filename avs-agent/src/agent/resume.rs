@@ -184,6 +184,11 @@ impl Agent {
 
         let history: Vec<agentverse::memory::Message> = serde_json::from_str(&history_json)?;
         let pending: Vec<agentverse::ToolCall> = serde_json::from_str(&pending_calls_json)?;
+        let execution_tools = if self.strategy_router.is_some() {
+            self.tools.restricted_to_names(&active_tool_names)
+        } else {
+            std::sync::Arc::clone(&self.tools)
+        };
 
         let observation = match &decision {
             ApprovalDecision::Approved => {
@@ -196,7 +201,7 @@ impl Agent {
                     // (the hook has no notion of "already approved"), turning every
                     // approval into an infinite interrupt loop. Modified/Rejected below
                     // execute directly for the same reason.
-                    let results = self.tools.execute_many(pending).await;
+                    let results = execution_tools.execute_many(pending).await;
                     results
                         .iter()
                         .map(|r| {
@@ -216,7 +221,7 @@ impl Agent {
                         name: first.name.clone(),
                         args: new_args.clone(),
                     };
-                    let results = self.tools.execute_many(vec![modified]).await;
+                    let results = execution_tools.execute_many(vec![modified]).await;
                     results
                         .iter()
                         .map(|r| {
@@ -256,7 +261,7 @@ impl Agent {
         let skill_ctx: Option<SkillContext> = skill_ctx_json
             .as_deref()
             .and_then(|j| serde_json::from_str(j).ok());
-        let strategy = self.strategy_for_resume();
+        let strategy = self.strategy_for_resume(&active_tool_names);
 
         let run_result = if let Some(ref hitl_cfg) = self.hitl {
             let hook = std::sync::Arc::new(HitlContext::new(

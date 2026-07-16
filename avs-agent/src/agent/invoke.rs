@@ -20,21 +20,28 @@ fn strategy_kind(name: &StrategyName) -> StrategyKind {
 }
 
 impl Agent {
-    fn build_routed_strategy(&self, kind: StrategyKind) -> Arc<dyn agentverse::RunStrategy> {
+    fn build_routed_strategy(
+        &self,
+        kind: StrategyKind,
+        active_tool_names: &[String],
+    ) -> Arc<dyn agentverse::RunStrategy> {
         agentverse_strategy::build(
             kind,
             Arc::clone(&self.runner),
             Arc::clone(&self.prompts),
-            Arc::clone(&self.tools),
+            self.tools.restricted_to_names(active_tool_names),
             DEFAULT_ROUTED_STRATEGY_MAX_ITERATIONS,
         )
     }
 
     /// Routed HITL invocations can only select ReAct, so resume must continue
     /// with a fresh ReAct strategy instead of falling back to the fixed one.
-    pub(super) fn strategy_for_resume(&self) -> Arc<dyn agentverse::RunStrategy> {
+    pub(super) fn strategy_for_resume(
+        &self,
+        active_tool_names: &[String],
+    ) -> Arc<dyn agentverse::RunStrategy> {
         if self.strategy_router.is_some() {
-            self.build_routed_strategy(StrategyKind::React)
+            self.build_routed_strategy(StrategyKind::React, active_tool_names)
         } else {
             Arc::clone(&self.strategy)
         }
@@ -43,6 +50,7 @@ impl Agent {
     async fn strategy_for_invoke(
         &self,
         request: &str,
+        active_tool_names: &[String],
     ) -> Result<Arc<dyn agentverse::RunStrategy>, AgentError> {
         let Some(router) = &self.strategy_router else {
             return Ok(Arc::clone(&self.strategy));
@@ -53,7 +61,7 @@ impl Agent {
             return Err(AgentError::RoutedStrategyDoesNotSupportHitl { strategy: selected });
         }
 
-        Ok(self.build_routed_strategy(strategy_kind(&selected)))
+        Ok(self.build_routed_strategy(strategy_kind(&selected), active_tool_names))
     }
 
     pub(super) fn assemble_system(
@@ -332,7 +340,9 @@ impl Agent {
         );
         // Extract active skill_id for HitlContext per-skill gate lookup.
         let active_skill_id = skill_ctx.as_ref().map(|ctx| ctx.skill_id.clone());
-        let strategy = self.strategy_for_invoke(&effective_input).await?;
+        let strategy = self
+            .strategy_for_invoke(&effective_input, &active_tool_names)
+            .await?;
 
         let run_result = if let Some(ref hitl_cfg) = self.hitl {
             let hook = std::sync::Arc::new(agentverse_hitl::HitlContext::new(
