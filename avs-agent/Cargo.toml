@@ -10,7 +10,6 @@ http = [
     "dep:axum",
     "dep:tower",
     "dep:tower-http",
-    "dep:reqwest",
     "dep:agentverse-guardrails",
 ]
 
@@ -37,7 +36,6 @@ uuid = { workspace = true }
 axum = { workspace = true, optional = true }
 tower = { workspace = true, optional = true }
 tower-http = { workspace = true, optional = true }
-reqwest = { workspace = true, optional = true }
 agentverse-guardrails = { path = "../avs-guardrails", optional = true }
 
 [dev-dependencies]

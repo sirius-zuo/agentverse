@@ -51,7 +51,6 @@ dependencies = [
  "axum",
  "chrono",
  "httpmock",
- "reqwest",
  "schemars 0.8.22",
  "serde",
  "serde_json",
