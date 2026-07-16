@@ -1,11 +1,61 @@
 use super::{Agent, AgentError, AgentOutput};
 use agentverse::memory::{Message, MessageRole};
 use agentverse_memory::LongtermRecord;
+use agentverse_router::StrategyName;
 use agentverse_session::SessionId;
 use agentverse_skill::{RouteSkills, SkillContext, SkillRouter};
+use agentverse_strategy::StrategyKind;
+use std::sync::Arc;
 use std::time::Instant;
 
+/// Maximum loop iterations for strategies constructed by the optional router.
+const DEFAULT_ROUTED_STRATEGY_MAX_ITERATIONS: usize = 10;
+
+fn strategy_kind(name: &StrategyName) -> StrategyKind {
+    match name {
+        StrategyName::ReAct => StrategyKind::React,
+        StrategyName::PlanAndExecute => StrategyKind::Plan,
+        StrategyName::Hierarchical => StrategyKind::Hierarchical,
+    }
+}
+
 impl Agent {
+    fn build_routed_strategy(&self, kind: StrategyKind) -> Arc<dyn agentverse::RunStrategy> {
+        agentverse_strategy::build(
+            kind,
+            Arc::clone(&self.runner),
+            Arc::clone(&self.prompts),
+            Arc::clone(&self.tools),
+            DEFAULT_ROUTED_STRATEGY_MAX_ITERATIONS,
+        )
+    }
+
+    /// Routed HITL invocations can only select ReAct, so resume must continue
+    /// with a fresh ReAct strategy instead of falling back to the fixed one.
+    pub(super) fn strategy_for_resume(&self) -> Arc<dyn agentverse::RunStrategy> {
+        if self.strategy_router.is_some() {
+            self.build_routed_strategy(StrategyKind::React)
+        } else {
+            Arc::clone(&self.strategy)
+        }
+    }
+
+    async fn strategy_for_invoke(
+        &self,
+        request: &str,
+    ) -> Result<Arc<dyn agentverse::RunStrategy>, AgentError> {
+        let Some(router) = &self.strategy_router else {
+            return Ok(Arc::clone(&self.strategy));
+        };
+
+        let selected = router.route(request).await?;
+        if self.hitl.is_some() && selected != StrategyName::ReAct {
+            return Err(AgentError::RoutedStrategyDoesNotSupportHitl { strategy: selected });
+        }
+
+        Ok(self.build_routed_strategy(strategy_kind(&selected)))
+    }
+
     pub(super) fn assemble_system(
         &self,
         skill_ctx: Option<&SkillContext>,
@@ -282,6 +332,7 @@ impl Agent {
         );
         // Extract active skill_id for HitlContext per-skill gate lookup.
         let active_skill_id = skill_ctx.as_ref().map(|ctx| ctx.skill_id.clone());
+        let strategy = self.strategy_for_invoke(&effective_input).await?;
 
         let run_result = if let Some(ref hitl_cfg) = self.hitl {
             let hook = std::sync::Arc::new(agentverse_hitl::HitlContext::new(
@@ -290,11 +341,9 @@ impl Agent {
                 hitl_cfg.policy.clone(),
                 std::sync::Arc::clone(&hitl_cfg.queue),
             ));
-            self.strategy
-                .run_hitl(messages, &active_tool_names, hook)
-                .await
+            strategy.run_hitl(messages, &active_tool_names, hook).await
         } else {
-            self.strategy
+            strategy
                 .run_with_active_tools(messages, &active_tool_names)
                 .await
         };

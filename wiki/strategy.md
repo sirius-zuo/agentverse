@@ -14,7 +14,9 @@ three implementations and owns `build(StrategyKind, ...)`, the single factory
 `avs-agent` uses to construct a strategy. Splitting orchestration out of
 `avs-agent` keeps each algorithm independently testable and lets `Agent` treat
 "how the model reasons and calls tools" as a pluggable `Arc<dyn RunStrategy>`
-rather than a hardcoded loop.
+rather than a hardcoded loop. Strategy routing is explicit and opt-in:
+without `AgentBuilder::with_strategy_router`, the caller-supplied fixed
+strategy remains the execution path.
 
 ## Position in the System
 
@@ -31,11 +33,12 @@ output and rendered prompts. `avs-router` consumes only `avs-core` and
 not depend on `avs-react`/`avs-plan`/`avs-strategy` and holds no reference to
 any strategy instance; it produces a `StrategyName`, not a constructed
 strategy. [Agent](agent.md) is the sole consumer of `avs-strategy::build()`:
-it holds the returned `Arc<dyn RunStrategy>` and calls `run`/
+it accepts a fixed `Arc<dyn RunStrategy>` and calls `run`/
 `run_with_active_tools`/`run_hitl` on it from `Agent::invoke`/
-`invoke_stateless`. No crate in the workspace currently constructs a
-`StrategyRouter` outside `avs-router`'s own tests — it is not wired into
-`Agent`'s strategy-selection path.
+`invoke_stateless`. When configured through
+`AgentBuilder::with_strategy_router`, session-aware `invoke` instead calls
+`StrategyRouter::route` and uses `build()` to construct the selected strategy
+for that invocation. `invoke_stateless` remains on the fixed strategy.
 
 ## Architecture
 
@@ -126,9 +129,9 @@ single construction path: `avs-agent` matches no strategy type by name
 anywhere else in the workspace. `StrategyRouter` (`avs-router/src/router.rs`)
 is a separate, self-contained mechanism: it asks the LLM to pick a
 `StrategyName` given a request and a `strategy_description`, but returns only
-the name — the caller would still have to call `avs-strategy::build()` with
-the corresponding `StrategyKind` to get a runnable strategy, and nothing in
-the workspace currently does that wiring.
+the name. `avs-agent` owns the non-cyclic conversion to `StrategyKind` and,
+when routing is explicitly configured, builds the corresponding runnable
+strategy from its existing runner, prompts, and tools for each invocation.
 
 ## Runtime Flows
 
@@ -148,7 +151,9 @@ the workspace currently does that wiring.
    there is no session to persist the suspended state into.
 4. On resume, `Agent` reconstructs the message buffer from the persisted
    `HitlInterrupt.history` and calls `run_hitl` again with the same
-   `active_tool_names`.
+   `active_tool_names`. A router-enabled HITL session reconstructs ReAct for
+   this continuation; without a router, resume keeps using the supplied fixed
+   strategy.
 
 **ReAct loop (`ReActStrategy::run_with_active_tools`, `avs-react/src/react.rs`):**
 1. `prepare_buffer_with_active` inserts a one-time ReAct preamble (tool
@@ -219,6 +224,15 @@ call answers the original request from all sub-goal results.
    `"react"`/`"plan_and_execute"`/`"plan-and-execute"`/`"hierarchical"`.
 4. An unrecognized response returns `AgentError::Model(ModelError::InvalidResponse)`
    rather than defaulting to a strategy — routing is fail-closed.
+5. `Agent::invoke` converts the result to `StrategyKind` and calls `build()`
+   with `DEFAULT_ROUTED_STRATEGY_MAX_ITERATIONS` (10). This happens on every
+   routed invocation; the strategy object is not cached across sessions or
+   turns, while active tool filtering continues through the same
+   `run_with_active_tools`/`run_hitl` arguments.
+6. With configured HITL, only routed ReAct is allowed. Plan-and-Execute and
+   Hierarchical do not override `run_hitl`, so `Agent` returns
+   `RoutedStrategyDoesNotSupportHitl` before executing either one rather than
+   silently discarding the interception hook.
 
 ## Key Decisions
 
@@ -305,9 +319,9 @@ call answers the original request from all sub-goal results.
 - **Consequences** — adding a fourth strategy means adding a `StrategyKind`
   variant and a `build()` match arm in one place; the current `StrategyKind`
   enum (`React`, `Plan`, `Hierarchical`) has no `Router` variant, unlike the
-  spec's four-variant proposal — `StrategyRouter` is not one of the things
-  `build()` can construct, and nothing currently calls `StrategyRouter::route`
-  and then `build()`s the result.
+  spec's four-variant proposal. `StrategyRouter` is not itself something
+  `build()` constructs; it selects the kind that `Agent::invoke` asks the
+  factory to build when routing is enabled.
 - **Ref** — 2026-05-25, commit `f8a32f5` (same commit that simplified `build()`'s
   signature down to its current parameters).
 
@@ -335,12 +349,12 @@ call answers the original request from all sub-goal results.
 - `PlanStrategy`/`HierarchicalStrategy` drop any `PlanStep` whose `id`
   exceeds `max_iterations` silently (`break`, not an error) — a plan with
   more steps than the iteration budget just executes a truncated prefix.
-- `avs-router`'s `StrategyRouter` is fully functional and unit-tested in
-  isolation but is not reachable from any binary in the workspace — no
-  example and no `avs-agent` code path constructs one or calls `route()`.
-  Treat it as available-but-unwired rather than dead code: it has no
-  callers to keep in sync with, but also delivers no runtime behavior until
-  something composes it with `avs-strategy::build()`.
+- `avs-router`'s `StrategyRouter` is opt-in through
+  `AgentBuilder::with_strategy_router`; no router means the required fixed
+  strategy behaves exactly as before. Routed strategies are built per
+  session-aware invocation with a max-iteration default of 10. There is no
+  dedicated router wiki page; this page and [Agent](agent.md) document the
+  composition boundary.
 
 ## Source Anchors
 

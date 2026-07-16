@@ -2,6 +2,7 @@ use super::{Agent, HitlConfig};
 use agentverse::{LlmRunner, PromptRegistry, RunStrategy};
 use agentverse_hitl::{HitlPolicy, InMemoryQueue};
 use agentverse_memory::{LongtermMemory, WorkingMemory};
+use agentverse_router::StrategyRouter;
 use agentverse_session::{SessionManager, SessionMemory};
 use agentverse_skill::SkillConfig;
 use agentverse_tools::ToolRegistry;
@@ -23,6 +24,7 @@ pub struct AgentBuilder {
     prompts: Arc<PromptRegistry>,
     session_memory: Arc<dyn SessionMemory>,
     strategy: Arc<dyn RunStrategy>,
+    strategy_router: Option<StrategyRouter>,
     enable_http_server: bool,
     longterm_memory: Option<Arc<dyn LongtermMemory>>,
     working_memory: Option<Arc<dyn WorkingMemory>>,
@@ -45,6 +47,7 @@ impl AgentBuilder {
             prompts,
             session_memory,
             strategy,
+            strategy_router: None,
             enable_http_server: false,
             longterm_memory: None,
             working_memory: None,
@@ -79,6 +82,13 @@ impl AgentBuilder {
         self
     }
 
+    /// Route each session-aware invocation to a freshly constructed strategy.
+    /// Without this option, the supplied fixed strategy remains in use.
+    pub fn with_strategy_router(mut self, router: StrategyRouter) -> Self {
+        self.strategy_router = Some(router);
+        self
+    }
+
     pub fn with_cleanup_config(mut self, config: crate::workers::CleanupConfig) -> Self {
         self.cleanup_config = Some(config);
         self
@@ -107,6 +117,7 @@ impl AgentBuilder {
             prompts: self.prompts,
             sessions: Arc::new(SessionManager::new(self.session_memory)),
             strategy: self.strategy,
+            strategy_router: self.strategy_router,
             working_memory: self.working_memory.unwrap_or_else(|| {
                 Arc::new(agentverse_memory::CacheMemory::new(Duration::from_secs(
                     300,

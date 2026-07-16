@@ -256,6 +256,7 @@ impl Agent {
         let skill_ctx: Option<SkillContext> = skill_ctx_json
             .as_deref()
             .and_then(|j| serde_json::from_str(j).ok());
+        let strategy = self.strategy_for_resume();
 
         let run_result = if let Some(ref hitl_cfg) = self.hitl {
             let hook = std::sync::Arc::new(HitlContext::new(
@@ -264,11 +265,9 @@ impl Agent {
                 hitl_cfg.policy.clone(),
                 std::sync::Arc::clone(&hitl_cfg.queue),
             ));
-            self.strategy
-                .run_hitl(augmented, &active_tool_names, hook)
-                .await
+            strategy.run_hitl(augmented, &active_tool_names, hook).await
         } else {
-            self.strategy
+            strategy
                 .run_with_active_tools(augmented, &active_tool_names)
                 .await
         };

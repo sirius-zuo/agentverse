@@ -20,6 +20,7 @@ agentverse = { path = "../avs-core" }
 agentverse-memory = { path = "../avs-memory" }
 agentverse-session = { path = "../avs-session" }
 agentverse-strategy = { path = "../avs-strategy" }
+agentverse-router = { path = "../avs-router" }
 agentverse-subagent  = { path = "../avs-subagent" }
 agentverse-tools = { path = "../avs-tools" }
 agentverse-hitl = { path = "../avs-hitl" }
@@ -47,3 +48,4 @@ agentverse-strategy = { path = "../avs-strategy" }
 tempfile = "3"
 async-trait = { workspace = true }
 schemars = { workspace = true }
+httpmock = { workspace = true }

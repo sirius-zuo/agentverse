@@ -27,8 +27,12 @@ tiers in [Memory](memory.md) (`WorkingMemory`, `CacheMemory`,
 (`SkillConfig`, `SkillContext`, `SkillRouter`, `SkillRegistry`), and
 [Tools](tools.md) (`ToolRegistry`). A strategy implementation (produced by
 [Strategy](strategy.md)'s `build(StrategyKind, ...)`) is handed in as
-`Arc<dyn RunStrategy>` rather than constructed here. With the optional `http`
-feature, it also consumes `avs-guardrails` (`RateLimiter`) to expose an axum
+`Arc<dyn RunStrategy>` and remains the default. `avs-agent` also consumes
+`avs-router`: callers can opt session-aware invocations into dynamic selection
+with `AgentBuilder::with_strategy_router(StrategyRouter)`, in which case the
+agent converts the selected name and calls `avs-strategy::build()` per
+invocation. With the optional `http` feature, it also consumes
+`avs-guardrails` (`RateLimiter`) to expose an axum
 HTTP surface — see [HTTP Sidecar](http-sidecar.md). Nothing in the workspace's
 library graph consumes `avs-agent` back (it is Layer 4, the top); it is
 consumed only by the top-level `examples/*` binaries and by the two test-infra
@@ -52,6 +56,7 @@ classDiagram
         -prompts Arc~PromptRegistry~
         -sessions Arc~SessionManager~
         -strategy Arc~dyn RunStrategy~
+        -strategy_router Option~StrategyRouter~
         -working_memory Arc~dyn WorkingMemory~
         -longterm_memory Option~Arc~dyn LongtermMemory~~
         -skills Option~SkillConfig~
@@ -72,11 +77,13 @@ classDiagram
         +with_working_memory(Arc~dyn WorkingMemory~) AgentBuilder
         +with_skills(SkillConfig) AgentBuilder
         +with_hitl(HitlConfig) AgentBuilder
+        +with_strategy_router(StrategyRouter) AgentBuilder
         +with_cleanup_config(CleanupConfig) AgentBuilder
         +build() Arc~Agent~
     }
     AgentBuilder --> Agent : build()
     Agent ..> RunStrategy : Arc~dyn~
+    Agent --> StrategyRouter : optional
     Agent ..> WorkingMemory : Arc~dyn~
     Agent ..> LongtermMemory : Arc~dyn~ optional
     Agent --> SessionManager
@@ -114,8 +121,14 @@ are private, so construction only happens through `AgentBuilder`
 (`avs-agent/src/agent/builder.rs`) — there is no `Agent::new`. `AgentBuilder`
 takes five required constructor arguments (`runner`, `tools`, `prompts`,
 `session_memory`, `strategy`) and exposes optional `.with_*()` chain methods
-for everything else; `AgentBuilder::build` wraps the assembled `Agent` in an
-`Arc`, calls `spawn_background_workers` on it, and — only with the `http`
+for everything else. The required strategy remains the exact execution path
+when no router is supplied, including for `invoke_stateless`. Supplying
+`.with_strategy_router(router)` affects session-aware `invoke` only: each call
+routes the effective request and constructs the selected strategy from the
+agent's existing runner, prompt registry, and tool registry, using the
+documented `DEFAULT_ROUTED_STRATEGY_MAX_ITERATIONS` value of 10.
+`AgentBuilder::build` wraps the assembled `Agent` in an `Arc`, calls
+`spawn_background_workers` on it, and — only with the `http`
 feature and `.with_http_server()` — spawns the axum server from
 `avs-agent/src/http/mod.rs`. The crate's behavior is decomposed across small
 modules under `avs-agent/src/agent/`: `sessions.rs` (session lifecycle:
@@ -167,8 +180,13 @@ strategy call in an `agentverse_hitl::HitlContext` and call
 6. `assemble_system`/`assemble_messages_with_context` build the full message
    list (skill instructions or skill summaries, base `system` template, L3
    context, L2 history, the new user message).
-7. The assembled messages are passed to `strategy.run_hitl` (if HITL is
-   configured) or `strategy.run_with_active_tools`.
+7. If a `StrategyRouter` is configured, it routes `effective_input` and the
+   selected `StrategyName` is converted to `StrategyKind`; a fresh strategy is
+   built for this invocation from the agent's runner/prompts/tools. Without a
+   router, the supplied fixed `Arc<dyn RunStrategy>` is used unchanged. The
+   assembled messages and already-filtered `active_tool_names` are then passed
+   to `strategy.run_hitl` (if HITL is configured) or
+   `strategy.run_with_active_tools`.
 8. On `StrategyOutcome::Interrupted`, control passes to `handle_tool_interrupt`
    (persists `InterruptedState`, marks the session `Interrupted`, returns
    `AgentOutput::Interrupted`). On `Done(text)`: `sessions.append_turn`
@@ -177,6 +195,12 @@ strategy call in an `agentverse_hitl::HitlContext` and call
    `tokio::spawn` (fire-and-forget; does not block the response).
 9. `agentverse::metrics::record_invoke_duration` is recorded on every exit
    path (`Done`, `Interrupted`, `Error`).
+
+Dynamic routing with configured HITL is deliberately restricted to ReAct.
+Plan-and-Execute and Hierarchical inherit `RunStrategy::run_hitl`'s default,
+which ignores the interception hook, so selecting either returns
+`AgentError::RoutedStrategyDoesNotSupportHitl` before strategy execution
+rather than allowing un-intercepted tools to run.
 
 **`resume(user_id, session_id, approval_id, decision)` after HITL:**
 1. `assert_owner` check, then `get_interrupted_state` is loaded and
@@ -193,7 +217,9 @@ strategy call in an `agentverse_hitl::HitlContext` and call
    rejection observation, the result is appended to history, and the
    augmented history is re-submitted to `strategy.run_hitl`/
    `run_with_active_tools` — which may itself interrupt again, recursing back
-   into `handle_tool_interrupt`.
+   into `handle_tool_interrupt`. For router-enabled HITL sessions, resume
+   constructs a fresh ReAct strategy (the only routed strategy allowed to
+   interrupt); fixed-strategy agents continue with their supplied strategy.
 
 **Background worker ticks (`Consolidation`/`Cleanup`/`HitlSweep`):**
 1. `AgentBuilder::build` calls `spawn_background_workers`, which spawns each
