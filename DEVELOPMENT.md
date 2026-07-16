@@ -72,7 +72,7 @@ AgentVerse/
 | Concept | Crate | Description |
 |---------|-------|-------------|
 | **Agent** | `agentverse-agent` | Single LLM access point — composes `LlmRunner`, strategy, `SessionManager`, memory layers, and optional `SkillConfig`. Constructed only via `AgentBuilder`; there is no direct constructor. |
-| **AgentBuilder** | `agentverse-agent` | `Agent::builder(runner, tools, prompts, session_memory, strategy)` returns this; chain `.with_http_server()`, `.with_longterm_memory(...)`, `.with_skills(...)`, `.with_hitl(...)`, `.with_cleanup_config(...)`, then `.build() -> Arc<Agent>` |
+| **AgentBuilder** | `agentverse-agent` | `Agent::builder(runner, tools, prompts, session_memory, strategy)` returns this; chain `.with_http_server()`, `.with_longterm_memory(...)`, `.with_skills(...)`, `.with_hitl(...)`, `.with_subagent_executor(...)`, `.with_cleanup_config(...)`, then `.build() -> Arc<Agent>` |
 | **SkillConfig** | `agentverse-agent` | Wraps `SkillRegistry`, `SkillMode`, routing threshold, and precomputed caches; constructed via `SkillConfig::load` |
 | **SkillMode** | `agentverse-agent` | `Open` (all skills eligible) or `Constrained(ids)` (allowlist); also re-exported from `agentverse-skill` |
 | **SkillRouter** | `agentverse-skill` | Keyword-overlap scorer; binds a skill to a session on first invoke above threshold |
@@ -93,7 +93,7 @@ AgentVerse/
 | **VectorStore** | `agentverse-memory` | Embedding storage/ANN-search trait behind `LongtermMemory`; impls: `LanceDbVectorStore` (`agentverse-memory-lancedb`, dev) and `PgVectorStore` (`agentverse-memory-pgvector`, production). Both are user-scoped and use cosine distance (relevance = 1/(1+distance)) |
 | **VectorLongtermMemory** | `agentverse-memory` | The shipped `LongtermMemory` impl: `Embedder` + `VectorStore` + `ScoreWeights` (score = α·recency + β·importance + γ·relevance; defaults 0.25/0.25/0.5, 7-day recency half-life) |
 | **RunStrategy** | `agentverse` | Trait implemented by all strategies; pure `Vec<Message> → String`, no memory coupling |
-| **SubAgentExecutor** | `agentverse-subagent` | Orchestrates isolated worker agents; cloneable; built alongside (not inside) `Agent` |
+| **SubAgentExecutor** | `agentverse-subagent` | Orchestrates isolated worker agents; built alongside `Agent`, then passed to `AgentBuilder::with_subagent_executor(...)` for automatic `spawn_subagent` registration or registered directly with `register_tool` |
 | **SubAgentSpec** / **Budget** | `agentverse-subagent` | Describes one worker: objective, system prompt, allowed tools, model override, step/token/timeout budget |
 | **SubAgentHandle** | `agentverse-subagent` | Returned by `executor.spawn()`; call `await_result().await` to get the result in input order |
 | **ResourceContent** | `agentverse-subagent` | Named artifact (`label`, `content`) injected into a subagent's prompt via `SubAgentContext.resources` |

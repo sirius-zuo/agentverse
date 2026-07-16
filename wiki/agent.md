@@ -39,12 +39,13 @@ consumed only by the top-level `examples/*` binaries and by the two test-infra
 crates, [Eval and Test Infra](eval-and-test-infra.md) (`avs-eval`,
 `avs-test-utils`), which build real `Agent`s to exercise end-to-end behavior.
 `avs-agent`'s `Cargo.toml` also declares a real, non-dev dependency on
-[SubAgent](subagent.md) (`avs-subagent`); no code under `avs-agent/src`
-references `SubAgentExecutor`. The wiring happens in consumer code instead —
-`avs-agent/tests/agent_test.rs` registers `spawn_subagent` into a standalone
-`ToolRegistry` via `SubAgentExecutor::register_tool`, and
-`examples/business-report` builds and invokes a real `Agent` with that tool
-wired into its registry.
+[SubAgent](subagent.md) (`avs-subagent`). Callers can pass an already-built
+`Arc<SubAgentExecutor>` to `AgentBuilder::with_subagent_executor`; during
+`build`, the builder registers `spawn_subagent` into its supplied
+`ToolRegistry` before constructing the `Agent`. The registered `SubAgentTool`
+owns the executor's `Arc`, so `Agent` does not retain another copy. Direct
+`SubAgentExecutor::register_tool` calls remain supported for lower-level
+registry setup, including the `examples/business-report` pattern.
 
 ## Architecture
 
@@ -78,10 +79,12 @@ classDiagram
         +with_skills(SkillConfig) AgentBuilder
         +with_hitl(HitlConfig) AgentBuilder
         +with_strategy_router(StrategyRouter) AgentBuilder
+        +with_subagent_executor(Arc~SubAgentExecutor~) AgentBuilder
         +with_cleanup_config(CleanupConfig) AgentBuilder
         +build() Arc~Agent~
     }
     AgentBuilder --> Agent : build()
+    AgentBuilder ..> SubAgentExecutor : registers SubAgentTool during build()
     Agent ..> RunStrategy : Arc~dyn~
     Agent --> StrategyRouter : optional
     Agent ..> WorkingMemory : Arc~dyn~
@@ -127,6 +130,10 @@ when no router is supplied, including for `invoke_stateless`. Supplying
 routes the effective request and constructs the selected strategy from the
 agent's existing runner, prompt registry, and tool registry, using the
 documented `DEFAULT_ROUTED_STRATEGY_MAX_ITERATIONS` value of 10.
+Supplying `.with_subagent_executor(executor)` registers one root-depth
+`spawn_subagent` tool into the builder's shared registry during `build`;
+omitting it leaves registry construction unchanged. The resulting tool owns
+the executor `Arc`, so the `Agent` itself has no executor field.
 `AgentBuilder::build` wraps the assembled `Agent` in an `Arc`, calls
 `spawn_background_workers` on it, and — only with the `http`
 feature and `.with_http_server()` — spawns the axum server from

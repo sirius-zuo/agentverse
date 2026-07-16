@@ -5,6 +5,7 @@ use agentverse_memory::{LongtermMemory, WorkingMemory};
 use agentverse_router::StrategyRouter;
 use agentverse_session::{SessionManager, SessionMemory};
 use agentverse_skill::SkillConfig;
+use agentverse_subagent::SubAgentExecutor;
 use agentverse_tools::ToolRegistry;
 use std::sync::Arc;
 use std::time::Duration;
@@ -25,6 +26,7 @@ pub struct AgentBuilder {
     session_memory: Arc<dyn SessionMemory>,
     strategy: Arc<dyn RunStrategy>,
     strategy_router: Option<StrategyRouter>,
+    subagent_executor: Option<Arc<SubAgentExecutor>>,
     enable_http_server: bool,
     longterm_memory: Option<Arc<dyn LongtermMemory>>,
     working_memory: Option<Arc<dyn WorkingMemory>>,
@@ -48,6 +50,7 @@ impl AgentBuilder {
             session_memory,
             strategy,
             strategy_router: None,
+            subagent_executor: None,
             enable_http_server: false,
             longterm_memory: None,
             working_memory: None,
@@ -89,6 +92,11 @@ impl AgentBuilder {
         self
     }
 
+    pub fn with_subagent_executor(mut self, executor: Arc<SubAgentExecutor>) -> Self {
+        self.subagent_executor = Some(executor);
+        self
+    }
+
     pub fn with_cleanup_config(mut self, config: crate::workers::CleanupConfig) -> Self {
         self.cleanup_config = Some(config);
         self
@@ -110,6 +118,9 @@ impl AgentBuilder {
                 })
             }),
         };
+        if let Some(executor) = &self.subagent_executor {
+            SubAgentExecutor::register_tool(executor, &self.tools);
+        }
         let session_memory_for_workers = Arc::clone(&self.session_memory);
         let agent = Arc::new(Agent {
             runner: self.runner,

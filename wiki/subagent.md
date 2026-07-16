@@ -25,24 +25,18 @@ into the parent's context or its `RunStrategy`.
 loop. It depends on nothing from `avs-skill` or `avs-agent`.
 
 `avs-agent` carries a real, non-dev `Cargo.toml` dependency on
-`agentverse-subagent`, but nothing under `avs-agent/src` imports it — the
-only reference in that crate is a test
-(`avs-agent/tests/agent_test.rs`) proving that
-`SubAgentExecutor::register_tool` can register `spawn_subagent` into a
-`ToolRegistry` that an `Agent` also holds. There is no `Agent` builder method
-that constructs or owns a `SubAgentExecutor`. In practice the executor is
-built *alongside* the agent by the application, sharing the same
-`ConnectionManager`/`ToolRegistry`/`PromptRegistry` construction step —
-`examples/business-report/src/main.rs` is the reference pattern: it builds a
-`SubAgentExecutor` over a `ToolRegistry` of domain tools, calls
-`SubAgentExecutor::register_tool` to add `spawn_subagent` to a *separate*,
-smaller registry the top-level `Agent` receives, and never gives the
-`SubAgentExecutor` itself to `Agent`. `scripts/check-layering.sh` places
-`agentverse-subagent` in Layer 3 (peer to `agentverse-react`,
-`agentverse-plan`, `agentverse-router`, `agentverse-strategy`) and
-`agentverse-agent` alone in Layer 4, so the dependency direction is
-permitted, but nothing in the workspace's *runtime* call graph routes through
-`avs-agent` to reach this crate.
+`agentverse-subagent` and exposes a high-level integration point:
+`AgentBuilder::with_subagent_executor(Arc<SubAgentExecutor>)`. The application
+still constructs the executor alongside the agent, then passes it to the
+builder; `build` registers one root-depth `spawn_subagent` tool into the
+builder's `ToolRegistry` before constructing `Agent`. The registered
+`SubAgentTool` owns the executor `Arc`, so `Agent` does not. The lower-level
+`SubAgentExecutor::register_tool` path remains supported when callers manage
+registry setup independently, as in `examples/business-report/src/main.rs`.
+`scripts/check-layering.sh` places `agentverse-subagent` in Layer 3 (peer to
+`agentverse-react`, `agentverse-plan`, `agentverse-router`,
+`agentverse-strategy`) and `agentverse-agent` alone in Layer 4, so this
+dependency direction is permitted.
 
 ## Architecture
 
@@ -200,10 +194,12 @@ own `Skill`/`SkillRegistry` types.
    doesn't run to completion unobserved.
 
 **LLM-driven dispatch via `spawn_subagent`:**
-1. An application registers the bridge once, at setup:
-   `SubAgentExecutor::register_tool(&executor, &registry)` constructs a
-   `SubAgentTool` at `current_depth = 0` and registers it into `registry`
-   under `SPAWN_SUBAGENT_TOOL_NAME`.
+1. An application can use the high-level builder path:
+   `AgentBuilder::with_subagent_executor(executor)`. During `build`, it calls
+   `SubAgentExecutor::register_tool` once for the builder's registry. Callers
+   that manage a registry independently can instead call that lower-level
+   method directly; both paths construct a root-depth `SubAgentTool` under
+   `SPAWN_SUBAGENT_TOOL_NAME`.
 2. The parent's ReAct loop calls it like any other tool: `Action:
    spawn_subagent` with a `SubAgentArgs` JSON body (`name`, `objective`,
    optional `system_prompt`/`model`/`max_steps`/`max_tokens`/`timeout_secs`,
@@ -261,16 +257,17 @@ Newest first.
   behavior to describe.
 - **Ref** — 2026-06-11, PR #12.
 
-### SubAgent runtime added as a peer crate, not an `Agent` capability
+### SubAgent runtime remains independent with builder and direct integration paths
 - **Decision** — SubAgent execution is a new, independent crate
-  (`avs-subagent`) providing `SubAgentExecutor`, wired into an application's
-  tool registry via `SubAgentExecutor::register_tool` rather than through any
-  change to `Agent`'s own construction or `invoke` path. Isolation is
-  enforced by giving each run a scoped `ToolRegistry` (`filter_by_names`,
-  which always excludes `spawn_subagent`) and a fresh message buffer built
-  from `spec.objective` + `ctx.resources`, with no access to the parent's
-  session or memory. Budgets (`max_steps`, `max_tokens`, `timeout`) are
-  enforced every iteration before the next LLM call.
+  (`avs-subagent`) providing `SubAgentExecutor`. Applications can pass an
+  already-built executor to `AgentBuilder::with_subagent_executor`, which
+  registers the tool bridge before it constructs `Agent`, or call
+  `SubAgentExecutor::register_tool` directly for lower-level registry setup.
+  Isolation is enforced by giving each run a scoped `ToolRegistry`
+  (`filter_by_names`, which always excludes `spawn_subagent`) and a fresh
+  message buffer built from `spec.objective` + `ctx.resources`, with no access
+  to the parent's session or memory. Budgets (`max_steps`, `max_tokens`,
+  `timeout`) are enforced every iteration before the next LLM call.
 - **Context** — the subagent-runtime design spec (untracked) frames this as
   adding "temporary, task-specialized workers" without introducing
   multi-agent coordination, modeled on "Claude Code's proven subagent model
@@ -283,14 +280,13 @@ Newest first.
   auto-retrieval, typed result variants, cross-SubAgent aggregation
   strategies, and depth > 1 nesting to a v2 that had not shipped as of this
   page.
-- **Consequences** — `Agent` itself needed zero code changes (confirmed:
-  `avs-agent/src/` has no reference to `agentverse-subagent` despite the
-  crate declaring it as a normal, non-dev dependency); the only integration
-  point is the tool bridge, and the depth limit is enforced twice —
-  structurally (SubAgentTool is never in a scoped registry) and defensively
+- **Consequences** — the builder owns the integration timing but does not
+  retain the executor: the registered tool owns its `Arc`. Direct registration
+  remains available, and the depth limit is enforced twice — structurally
+  (SubAgentTool is never in a scoped registry) and defensively
   (`ctx.depth >= max_depth` check in `run`) — so a bug in either mechanism
   alone cannot enable recursive spawning.
-- **Ref** — 2026-06-11, PR #11.
+- **Ref** — 2026-06-11, PR #11; 2026-07-16, Task 14.
 
 ## Implementation Notes
 

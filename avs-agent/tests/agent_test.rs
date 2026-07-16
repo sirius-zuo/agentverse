@@ -464,13 +464,46 @@ async fn append_turn_contract_preserves_user_then_assistant_order() {
     assert_eq!(messages[1].content, "hi");
 }
 
-#[test]
-fn agent_with_subagent_executor_registers_spawn_subagent_tool() {
+#[tokio::test]
+async fn agent_builder_with_subagent_executor_registers_spawn_subagent_tool() {
     use agentverse::ConnectionManager;
-    use agentverse::PromptRegistry;
     use agentverse_subagent::SubAgentExecutor;
-    use agentverse_tools::ToolRegistry;
-    use std::sync::Arc;
+
+    let tools = ToolRegistry::new();
+    assert!(!tools.has_tool("spawn_subagent"));
+
+    let cm = Arc::new(ConnectionManager::anthropic(
+        "http://127.0.0.1:1",
+        "claude-sonnet-4-6",
+        "test-key",
+    ));
+    let executor = Arc::new(SubAgentExecutor::new(
+        Arc::clone(&cm),
+        Arc::clone(&tools),
+        Arc::new(PromptRegistry::new()),
+    ));
+
+    let runner = Arc::new(LlmRunner::new(Arc::clone(&cm)));
+    let strategy = Arc::new(WireTransferStrategy {
+        tools: Arc::clone(&tools),
+    });
+    let _agent = Agent::builder(
+        runner,
+        Arc::clone(&tools),
+        Arc::new(PromptRegistry::new()),
+        Arc::new(FakeStore::default()),
+        strategy,
+    )
+    .with_subagent_executor(executor)
+    .build();
+
+    assert!(tools.has_tool("spawn_subagent"));
+}
+
+#[test]
+fn subagent_executor_register_tool_registers_spawn_subagent_tool() {
+    use agentverse::ConnectionManager;
+    use agentverse_subagent::SubAgentExecutor;
 
     let tools = ToolRegistry::new();
     assert!(!tools.has_tool("spawn_subagent"));
