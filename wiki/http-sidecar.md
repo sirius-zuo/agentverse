@@ -270,6 +270,9 @@ Newest first.
 
 ## Implementation Notes
 
+- Commit `6420a3f` removes the unused outbound Aether client and its optional
+  `reqwest` dependency while retaining and directly testing the inbound
+  legacy and `/v1` Aether-compatible routes.
 - Layer order in `build_router` matters: `Extension(rate_limiter)` is applied
   first, then `CorsLayer::permissive()`, then
   `middleware::from_fn(auth::auth_middleware)` — the last `.layer()` call

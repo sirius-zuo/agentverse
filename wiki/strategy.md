@@ -330,6 +330,10 @@ call answers the original request from all sub-goal results.
 
 ## Implementation Notes
 
+- PR #31 verification follow-ups wire request-side native definitions into
+  both ReAct loops (`9b3e717`, `c06a94f`, `75cc734`) and make dynamic routing
+  opt-in, allow-listed, tool-scoped, resume-stable, and fail-closed under
+  unsupported HITL strategies (`9cbb02f`, `92fbf2a`).
 - **ReAct has request-side native tool definitions, not full native tool
   calling.** Its normal and HITL loops send non-empty active registry
   definitions through `LlmRunner::invoke_with_tools`, while empty or

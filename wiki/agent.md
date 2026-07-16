@@ -346,6 +346,10 @@ rather than allowing un-intercepted tools to run.
 
 ## Implementation Notes
 
+- PR #31 verification follow-ups close the composition gaps for trusted HITL
+  policy (`68140ed`), opt-in bounded strategy routing (`9cbb02f`, `92fbf2a`),
+  removal of the dead outbound Aether client (`6420a3f`), and atomic
+  first-registration-wins SubAgent tooling (`37511b6`, `ed8291e`, `913f419`).
 - `invoke`'s skill-routing block takes the skill registry's read lock twice
   (once to route, once to compile context) rather than once, so that no lock
   guard is held across an `.await` point — this keeps a concurrent

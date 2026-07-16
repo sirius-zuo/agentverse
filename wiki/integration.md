@@ -243,6 +243,10 @@ Newest first.
 
 ## Implementation Notes
 
+- Commits `21bbea5` and `9f8049d` make the current ownership explicit: the
+  crate is an example-backed incubator, WhatsApp is a deprecated typed-error
+  stub, and the crate no longer relies on an unused or feature-unifying
+  dependency on `avs-core`.
 - Incubator boundary: no crate outside `avs-integration` itself depends
   on `agentverse-integration` (`grep -rl agentverse-integration
   --include=Cargo.toml .` finds only its own `Cargo.toml` and

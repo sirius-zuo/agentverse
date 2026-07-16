@@ -215,6 +215,9 @@ Newest first.
 
 ## Implementation Notes
 
+- Commit `dfb634b` resolves the framework-wiring ambiguity by deprecating
+  `ActionGuard` and proving the supported `Agent::invoke` + `HitlContext` +
+  `ToolRegistry::execute_many_hitl` path with an agent-level blocklist test.
 - `ActionGuard` is deprecated and is not called from the invoke path. It is
   retained for existing direct callers, while runtime tool approval uses
   `avs-hitl`'s `HitlContext` (the `HitlHook` implementation) and

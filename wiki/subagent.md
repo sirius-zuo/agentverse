@@ -291,10 +291,14 @@ Newest first.
   (SubAgentTool is never in a scoped registry) and defensively
   (`ctx.depth >= max_depth` check in `run`) — so a bug in either mechanism
   alone cannot enable recursive spawning.
-- **Ref** — 2026-06-11, PR #11; 2026-07-16, Task 14.
+- **Ref** — 2026-06-11, PR #11; 2026-07-16, commits `37511b6`, `ed8291e`,
+  `913f419`.
 
 ## Implementation Notes
 
+- The builder integration landed in `37511b6`; `ed8291e` established
+  first-registration-wins semantics, and `913f419` made the registry update
+  atomic for builders sharing one registry concurrently.
 - `max_depth` is fixed at `1` inside `SubAgentExecutor::new` — there is no
   constructor parameter or builder method to change it. Nesting beyond one
   level is a v2, not-yet-implemented capability per the subagent-runtime

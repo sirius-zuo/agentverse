@@ -282,11 +282,15 @@ Newest first.
 
 ## Implementation Notes
 
+- The undeclared pre-rewrite adapter was removed in `603c612`; the maintained
+  config-driven loader path and its in-process integration coverage landed in
+  `baf68ff`, with its example-backed ownership clarified in `1ee517c`.
 - `McpClient::call_tool` reads only the first text content block out of a
   `tools/call` response (`content.iter().find_map(|c| c["text"].as_str())`)
   and wraps it in `Value::String`; a server returning image/resource
   content blocks, multiple content blocks, or non-text-only results has no
-  representation past that first text block. Known debt.
+  representation past that first text block. This is intentional deferred
+  debt; the loader wiring follow-up did not change response-content modeling.
 - `examples/mcp-demo` is the maintained configuration-driven loading path:
   it constructs `McpServerConfig` for its local endpoint and calls
   `McpLoader::load`. Lower-level `McpClient`, `McpTransport`, and

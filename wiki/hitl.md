@@ -302,6 +302,10 @@ persisting any resulting interrupt for resume.
 
 ## Implementation Notes
 
+- PR #31 verification follow-ups now build automatic policy only from the
+  trusted system-skill snapshot (`ad73450`, `68140ed`), deprecate the legacy
+  `ActionGuard` path in favor of `HitlContext` (`dfb634b`), and name the
+  actual approval reaper in the queue contract (`e313f37`).
 - `HitlContext::check_tool`'s sentinel-ID fallback on queue-submit failure is
   a deliberate fail-closed choice: the tool is blocked either way, and the
   operator learns about the queue outage only indirectly, the next time

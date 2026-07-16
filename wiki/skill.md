@@ -286,6 +286,9 @@ Newest first.
 
 ## Implementation Notes
 
+- Commit `68140ed` closes the policy-trust gap: `SkillConfig` preserves the
+  original system-slot snapshot separately from the user-shadowable runtime
+  registry, and `AgentBuilder` uses only that snapshot for automatic HITL.
 - `tools: []` (present but empty) restricts a skill to zero tools; only the
   *absence* of a skill (`skill_ctx == None`) grants every registered tool.
   This distinction is load-bearing in `avs-agent`'s tool-intersection logic

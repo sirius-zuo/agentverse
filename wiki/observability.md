@@ -286,6 +286,10 @@ Newest first.
 
 ## Implementation Notes
 
+- Commit `54baf3c` removes the unused legacy `avs-core::tracing` facade and
+  its obsolete OpenTelemetry dependency family. The active
+  `agentverse::metrics` facade and `avs-logging` initialization remain the
+  maintained observability paths described above.
 - The metrics facade has no in-lib unit tests. `avs-core/tests/metrics_facade_test.rs`
   asserts every instrument from a single `#[test]` function in its own
   integration-test binary, because OTel's global meter provider is
