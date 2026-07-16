@@ -29,9 +29,9 @@ It depends on nothing else in the workspace; it sits at the same
 architectural layer as `avs-tools` and `avs-guardrails` per
 `scripts/check-layering.sh`.
 
-No workspace crate currently depends on `agentverse-mcp` — `avs-agent`,
-`avs-react`, `avs-strategy`, and the rest of the reasoning stack are
-unaware MCP exists. The runtime-owned maintained call path is
+No non-example runtime crate currently depends on `agentverse-mcp` —
+`avs-agent`, `avs-react`, `avs-strategy`, and the rest of the reasoning stack
+are unaware MCP exists. The runtime-owned maintained call path is
 `examples/mcp-demo`: it constructs `McpServerConfig` and calls
 `McpLoader::load` to populate its client registry. `McpClient`,
 `McpTransport`, and `McpCatalogSource` remain public for advanced callers
