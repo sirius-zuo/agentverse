@@ -14,12 +14,21 @@ impl SkillRegistry {
     /// Load skills from `<skills_dir>/system/` then `<skills_dir>/user/`.
     /// User skills shadow system skills with the same `name`.
     pub fn load(skills_dir: &Path) -> Result<Self, SkillError> {
+        Self::load_with_trusted_system_skills(skills_dir).map(|(registry, _)| registry)
+    }
+
+    pub(crate) fn load_with_trusted_system_skills(
+        skills_dir: &Path,
+    ) -> Result<(Self, Vec<Skill>), SkillError> {
         let mut skills: HashMap<SkillId, (Skill, PathBuf)> = HashMap::new();
 
         let system_dir = skills_dir.join("system");
         if system_dir.exists() {
             load_dir(&system_dir, &mut skills)?;
         }
+        let mut trusted_system_skills: Vec<Skill> =
+            skills.values().map(|(skill, _)| skill.clone()).collect();
+        trusted_system_skills.sort_by(|a, b| a.id.cmp(&b.id));
 
         // User skills loaded second — they overwrite system skills with same name.
         let user_dir = skills_dir.join("user");
@@ -27,7 +36,7 @@ impl SkillRegistry {
             load_dir(&user_dir, &mut skills)?;
         }
 
-        Ok(Self { skills })
+        Ok((Self { skills }, trusted_system_skills))
     }
 
     pub fn get(&self, id: &str) -> Option<&Skill> {

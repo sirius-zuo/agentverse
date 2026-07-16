@@ -10,6 +10,7 @@ use crate::types::Skill;
 
 pub struct SkillConfig {
     pub registry: Arc<RwLock<SkillRegistry>>,
+    trusted_system_skills: Vec<Skill>,
     pub mode: SkillMode,
     pub dir: PathBuf,
     /// Override routing threshold. None = use default per mode.
@@ -22,7 +23,8 @@ pub struct SkillConfig {
 
 impl SkillConfig {
     pub fn load(dir: impl AsRef<std::path::Path>, mode: SkillMode) -> Result<Self, SkillError> {
-        let registry = SkillRegistry::load(dir.as_ref())?;
+        let (registry, trusted_system_skills) =
+            SkillRegistry::load_with_trusted_system_skills(dir.as_ref())?;
         let (summaries, ids) = {
             let candidates = registry.eligible(&mode);
             let s = format_skill_summaries(&candidates);
@@ -32,6 +34,7 @@ impl SkillConfig {
         };
         Ok(Self {
             registry: Arc::new(RwLock::new(registry)),
+            trusted_system_skills,
             mode,
             dir: dir.as_ref().to_path_buf(),
             routing_threshold: None,
@@ -43,6 +46,11 @@ impl SkillConfig {
     pub fn with_threshold(mut self, threshold: f32) -> Self {
         self.routing_threshold = Some(threshold);
         self
+    }
+
+    /// Original system-slot skills captured before same-ID user shadowing.
+    pub fn trusted_system_skills(&self) -> &[Skill] {
+        &self.trusted_system_skills
     }
 
     /// Expose precomputed summaries string for agent prompt assembly.

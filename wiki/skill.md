@@ -122,10 +122,13 @@ eligibility to a named allow-list — consumed by `SkillRegistry::eligible` and
 by `KeywordOverlapRouter::for_mode` to pick a default threshold.
 `SkillConfig` (`config.rs`) is the object `avs-agent` actually holds: it
 wraps the registry in `Arc<RwLock<SkillRegistry>>` for atomic hot-reload,
-carries the `SkillMode` and an optional threshold override, and precomputes
-two caches behind `std::sync::Mutex` — a formatted `## Available Skills`
-summaries block (`format_skill_summaries`) and a sorted list of eligible
-ids — rebuilt via `rebuild_caches` whenever the registry is reloaded.
+carries the `SkillMode` and an optional threshold override, retains a sorted
+snapshot of original system-slot skills captured before user shadowing, and
+precomputes two caches behind `std::sync::Mutex` — a formatted `## Available
+Skills` summaries block (`format_skill_summaries`) and a sorted list of
+eligible ids — rebuilt via `rebuild_caches` whenever the registry is reloaded.
+The trusted snapshot is exposed synchronously for construction-time HITL
+policy assembly and is not replaced by runtime hot-reload.
 Routing is expressed as the `RouteSkills` trait (`router.rs`) so an
 application can substitute its own scorer; `KeywordOverlapRouter` is the
 built-in implementation, an explicit-name-match-then-keyword-overlap scorer.
@@ -135,19 +138,23 @@ built-in implementation, an explicit-name-match-then-keyword-overlap scorer.
 ## Runtime Flows
 
 **Registry load (`system/` + `user/` slots):**
-1. `SkillRegistry::load(skills_dir)` calls the internal `load_dir` helper
-   first on `skills_dir.join("system")`, then on `skills_dir.join("user")`.
+1. `SkillRegistry::load(skills_dir)` delegates to the internal trusted-load
+   path, which calls `load_dir` first on `skills_dir.join("system")`, then on
+   `skills_dir.join("user")`.
 2. For each subdirectory with a `SKILL.md`, `parser::parse_skill_file` builds
    a `Skill`, then `collect_supporting_files` recursively reads every other
    file in the package directory into `Skill.documents`.
-3. Skills are inserted into the map keyed by `id` (the frontmatter `name`);
+3. After the system slot is loaded, its skills are cloned into a sorted trusted
+   snapshot. Runtime skills are inserted into the map keyed by `id` (the
+   frontmatter `name`);
    because `user/` is loaded second, a user skill with the same `id` as a
    system skill overwrites it in the map — this is the entire shadowing
    mechanism, there is no separate merge step.
-4. `SkillConfig::load` wraps the resulting registry in `Arc<RwLock<>>` and
-   computes `eligible(&mode)` once to build the initial `summaries()` string
-   and sorted `ids` cache that `avs-agent`'s discovery-phase system prompt
-   assembly reads (see [Agent](agent.md)'s `assemble_system`).
+4. `SkillConfig::load` stores the trusted snapshot outside the registry lock,
+   wraps the runtime registry in `Arc<RwLock<>>`, and computes
+   `eligible(&mode)` once to build the initial `summaries()` string and sorted
+   `ids` cache that `avs-agent`'s discovery-phase system prompt assembly reads
+   (see [Agent](agent.md)'s `assemble_system`).
 
 **Keyword-overlap routing, bound for session lifetime:**
 1. `avs-agent`'s `invoke` (not this crate) checks the session's stored skill
@@ -294,9 +301,11 @@ Newest first.
   explicitly) — accepted for forward-compatibility with the SKILL.md schema,
   not currently read anywhere.
 - `hitl_tools`, `phase_gate`, and `checkpoints` are meaningful only for
-  system skills; a user-slot skill can set them, but the `HitlPolicy` builder
-  in `avs-hitl` ignores user-skill values for these fields (see
-  [HITL](hitl.md)).
+  system skills. A user-slot skill can set them and they remain present on its
+  parsed runtime `Skill`, but `AgentBuilder` assembles automatic HITL policy
+  only from `SkillConfig::trusted_system_skills()`. A same-ID user skill can
+  shadow runtime content without erasing the original system gates, and a
+  user-only declaration cannot activate automatic HITL (see [HITL](hitl.md)).
 - `split_frontmatter`'s delimiter rules are stricter than a naive `---` scan:
   the opening delimiter must be `---` alone on the first line, and a `---`
   appearing inside the body as a Markdown horizontal rule does not terminate

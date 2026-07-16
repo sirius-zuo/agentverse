@@ -1,9 +1,21 @@
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use agentverse::memory::{Message, MessageRole};
-use agentverse_session::{Session, SessionId, SessionMemory, SessionMemoryError, SessionStatus};
+use agentverse::{
+    AgentError as CoreAgentError, Config, HitlHook, LlmRunner, PromptRegistry, RunStrategy,
+    StrategyOutcome, Tool, ToolCall, ToolResult,
+};
+use agentverse_agent::{Agent, AgentOutput, SkillConfig, SkillMode};
+use agentverse_session::{
+    Session, SessionId, SessionMemory, SessionMemoryError, SessionStatus, SqliteSessionMemory,
+};
+use agentverse_tools::ToolRegistry;
 use async_trait::async_trait;
+use schemars::JsonSchema;
+use serde::Deserialize;
+use tempfile::TempDir;
 
 #[derive(Default)]
 struct FakeStore {
@@ -154,6 +166,207 @@ impl SessionMemory for FakeStore {
         self.sessions.lock().unwrap().remove(&session_id);
         Ok(())
     }
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct WireTransferArgs {
+    amount: u64,
+}
+
+struct WireTransferTool;
+
+#[async_trait]
+impl Tool for WireTransferTool {
+    type Args = WireTransferArgs;
+
+    fn name(&self) -> &str {
+        "wire_transfer"
+    }
+
+    fn description(&self) -> &str {
+        "Transfer funds"
+    }
+
+    async fn execute(&self, args: Self::Args) -> ToolResult {
+        Ok(serde_json::json!({ "transferred": args.amount }))
+    }
+}
+
+struct WireTransferStrategy {
+    tools: Arc<ToolRegistry>,
+}
+
+impl WireTransferStrategy {
+    fn call() -> ToolCall {
+        ToolCall {
+            name: "wire_transfer".into(),
+            args: serde_json::json!({ "amount": 100 }),
+        }
+    }
+}
+
+#[async_trait]
+impl RunStrategy for WireTransferStrategy {
+    async fn run(&self, _messages: Vec<Message>) -> Result<StrategyOutcome, CoreAgentError> {
+        Ok(StrategyOutcome::Done("wire transfer executed".into()))
+    }
+
+    async fn run_with_active_tools(
+        &self,
+        _messages: Vec<Message>,
+        active_tool_names: &[String],
+    ) -> Result<StrategyOutcome, CoreAgentError> {
+        assert_eq!(active_tool_names, ["wire_transfer"]);
+        let results = self.tools.execute_many(vec![Self::call()]).await;
+        assert!(results[0].result.is_ok());
+        Ok(StrategyOutcome::Done("wire transfer executed".into()))
+    }
+
+    async fn run_hitl(
+        &self,
+        messages: Vec<Message>,
+        active_tool_names: &[String],
+        hook: Arc<dyn HitlHook>,
+    ) -> Result<StrategyOutcome, CoreAgentError> {
+        let call = Self::call();
+        match self
+            .tools
+            .execute_many_hitl(vec![call.clone()], &hook)
+            .await
+        {
+            Ok(results) => {
+                assert!(results[0].result.is_ok());
+                Ok(StrategyOutcome::Done("wire transfer executed".into()))
+            }
+            Err(interrupt) => Ok(StrategyOutcome::Interrupted(agentverse::HitlInterrupt {
+                approval_id: interrupt.approval_id,
+                kind_json: interrupt.kind_json,
+                history: messages,
+                pending_calls: vec![call],
+                active_tool_names: active_tool_names.to_vec(),
+            })),
+        }
+    }
+}
+
+fn write_skill(root: &Path, slot: &str, id: &str, instructions: &str, hitl_tools: &[&str]) {
+    let package = root.join(slot).join(id);
+    std::fs::create_dir_all(&package).unwrap();
+    let hitl_tools = hitl_tools
+        .iter()
+        .map(|name| format!("    - {name}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let hitl_block = if hitl_tools.is_empty() {
+        String::new()
+    } else {
+        format!("  hitl_tools:\n{hitl_tools}\n")
+    };
+    std::fs::write(
+        package.join("SKILL.md"),
+        format!(
+            "---\nname: {id}\ndescription: Transfer funds.\nagentverse:\n  tools:\n    - wire_transfer\n{hitl_block}---\n\n{instructions}\n"
+        ),
+    )
+    .unwrap();
+}
+
+async fn agent_with_skills(root: &TempDir) -> Arc<Agent> {
+    let runner = Arc::new(
+        LlmRunner::from_config(Config {
+            provider: agentverse::ProviderConfig::openai(
+                "test",
+                "sk-test",
+                Some("http://127.0.0.1:1/v1".into()),
+            ),
+            max_messages: 10,
+            tools: vec![],
+            prompts_dir: None,
+            system_prompt: None,
+        })
+        .unwrap(),
+    );
+    let tools = ToolRegistry::new();
+    tools.register(WireTransferTool);
+    let strategy = Arc::new(WireTransferStrategy {
+        tools: Arc::clone(&tools),
+    });
+    let sessions = Arc::new(SqliteSessionMemory::new("sqlite::memory:").await.unwrap());
+    let skills = SkillConfig::load(root.path(), SkillMode::Open).unwrap();
+
+    Agent::builder(
+        runner,
+        tools,
+        Arc::new(PromptRegistry::new()),
+        sessions,
+        strategy,
+    )
+    .with_skills(skills)
+    .build()
+}
+
+#[tokio::test]
+async fn system_hitl_gate_survives_same_id_user_shadow_through_invoke() {
+    let root = tempfile::tempdir().unwrap();
+    write_skill(
+        root.path(),
+        "system",
+        "payments",
+        "Trusted system instructions.",
+        &["wire_transfer"],
+    );
+    write_skill(
+        root.path(),
+        "user",
+        "payments",
+        "User runtime instructions.",
+        &[],
+    );
+    let agent = agent_with_skills(&root).await;
+    let session_id = agent
+        .create_session_with_skill("alice", "payments")
+        .await
+        .unwrap();
+
+    let output = agent
+        .invoke("alice", session_id, "Transfer $100")
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        output,
+        AgentOutput::Interrupted {
+            kind: agentverse_hitl::InterruptKind::ToolApproval { ref tool_name, .. },
+            ..
+        } if tool_name == "wire_transfer"
+    ));
+}
+
+#[tokio::test]
+async fn user_only_hitl_declaration_does_not_influence_policy_through_invoke() {
+    let root = tempfile::tempdir().unwrap();
+    write_skill(
+        root.path(),
+        "user",
+        "payments",
+        "User runtime instructions.",
+        &["wire_transfer"],
+    );
+    let agent = agent_with_skills(&root).await;
+    let session_id = agent
+        .create_session_with_skill("alice", "payments")
+        .await
+        .unwrap();
+
+    let output = agent
+        .invoke("alice", session_id, "Transfer $100")
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        output,
+        AgentOutput::Done(ref text) if text == "wire transfer executed"
+    ));
 }
 
 #[tokio::test]

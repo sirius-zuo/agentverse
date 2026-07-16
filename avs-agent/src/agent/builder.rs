@@ -1,5 +1,6 @@
 use super::{Agent, HitlConfig};
 use agentverse::{LlmRunner, PromptRegistry, RunStrategy};
+use agentverse_hitl::{HitlPolicy, InMemoryQueue};
 use agentverse_memory::{LongtermMemory, WorkingMemory};
 use agentverse_session::{SessionManager, SessionMemory};
 use agentverse_skill::SkillConfig;
@@ -84,6 +85,21 @@ impl AgentBuilder {
     }
 
     pub fn build(self) -> Arc<Agent> {
+        let hitl = match self.hitl {
+            Some(hitl) => Some(hitl),
+            None => self.skills.as_ref().and_then(|skills| {
+                let trusted_system_skills = skills.trusted_system_skills();
+                let has_hitl_declarations = trusted_system_skills.iter().any(|skill| {
+                    !skill.hitl_tools.is_empty()
+                        || skill.phase_gate
+                        || !skill.checkpoints.is_empty()
+                });
+                has_hitl_declarations.then(|| HitlConfig {
+                    policy: HitlPolicy::from_system_skills(trusted_system_skills),
+                    queue: Arc::new(InMemoryQueue::new()),
+                })
+            }),
+        };
         let session_memory_for_workers = Arc::clone(&self.session_memory);
         let agent = Arc::new(Agent {
             runner: self.runner,
@@ -98,7 +114,7 @@ impl AgentBuilder {
             }),
             longterm_memory: self.longterm_memory,
             skills: self.skills,
-            hitl: self.hitl,
+            hitl,
             cleanup_config: self.cleanup_config.unwrap_or_default(),
         });
 
