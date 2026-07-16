@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -7,7 +7,8 @@ use agentverse::{
     AgentError as CoreAgentError, Config, HitlHook, LlmRunner, PromptRegistry, RunStrategy,
     StrategyOutcome, Tool, ToolCall, ToolResult,
 };
-use agentverse_agent::{Agent, AgentOutput, SkillConfig, SkillMode};
+use agentverse_agent::{agent::HitlConfig, Agent, AgentOutput, SkillConfig, SkillMode};
+use agentverse_hitl::{HitlPolicy, InMemoryQueue};
 use agentverse_session::{
     Session, SessionId, SessionMemory, SessionMemoryError, SessionStatus, SqliteSessionMemory,
 };
@@ -303,6 +304,65 @@ async fn agent_with_skills(root: &TempDir) -> Arc<Agent> {
     )
     .with_skills(skills)
     .build()
+}
+
+async fn agent_with_global_tool_blocklist() -> Arc<Agent> {
+    let runner = Arc::new(
+        LlmRunner::from_config(Config {
+            provider: agentverse::ProviderConfig::openai(
+                "test",
+                "sk-test",
+                Some("http://127.0.0.1:1/v1".into()),
+            ),
+            max_messages: 10,
+            tools: vec![],
+            prompts_dir: None,
+            system_prompt: None,
+        })
+        .unwrap(),
+    );
+    let tools = ToolRegistry::new();
+    tools.register(WireTransferTool);
+    let strategy = Arc::new(WireTransferStrategy {
+        tools: Arc::clone(&tools),
+    });
+    let sessions = Arc::new(SqliteSessionMemory::new("sqlite::memory:").await.unwrap());
+    let policy = HitlPolicy {
+        global_tool_blocklist: HashSet::from(["wire_transfer".to_string()]),
+        ..HitlPolicy::default()
+    };
+
+    Agent::builder(
+        runner,
+        tools,
+        Arc::new(PromptRegistry::new()),
+        sessions,
+        strategy,
+    )
+    .with_hitl(HitlConfig {
+        policy,
+        queue: Arc::new(InMemoryQueue::new()),
+    })
+    .build()
+}
+
+#[tokio::test]
+async fn global_hitl_tool_blocklist_interrupts_through_public_agent_invoke() {
+    let agent = agent_with_global_tool_blocklist().await;
+    let session_id = agent.create_session("alice").await.unwrap();
+
+    let output = agent
+        .invoke("alice", session_id, "Transfer $100")
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        output,
+        AgentOutput::Interrupted {
+            kind: agentverse_hitl::InterruptKind::ToolApproval { ref tool_name, .. },
+            ..
+        } if tool_name == "wire_transfer"
+    ));
 }
 
 #[tokio::test]

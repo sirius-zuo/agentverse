@@ -25,9 +25,9 @@ decoupled from `RunStrategy`'s signature — this is the one adapter boundary
 the crate crosses. Three crates consume `avs-hitl` directly: [Tools](tools.md)
 (`avs-tools`)'s `ToolRegistry::execute_many_hitl` takes a
 `&Arc<dyn agentverse::hitl::HitlHook>` and returns `HitlInterruptResult` on
-interception; [Guardrails](guardrails.md) (`avs-guardrails`)'s `ActionGuard`
-holds an optional `HitlPolicy` and submits through a real `ApprovalQueue`
-rather than the auto-approve stub it replaced; and [Agent](agent.md)
+interception; [Guardrails](guardrails.md) (`avs-guardrails`)'s deprecated
+`ActionGuard` remains only as a compatibility API and is not part of the
+runtime interception path; and [Agent](agent.md)
 (`avs-agent`) is the top-level orchestrator — it holds a `HitlConfig`
 (`HitlPolicy` + `Arc<dyn ApprovalQueue>`), constructs a `HitlContext` per
 invocation, and drives the persistence and resume machinery that lives in
@@ -157,6 +157,11 @@ whole point of `request_checkpoint` is that `HitlContext::check_tool`
 intercepts it before the tool registry ever calls `execute`.
 
 ## Runtime Flows
+
+`ActionGuard` is deprecated. When HITL is configured, the supported default
+agent runtime path is `Agent::invoke` constructing a `HitlContext`, ReAct
+passing its `HitlHook` to `ToolRegistry::execute_many_hitl`, and `avs-agent`
+persisting any resulting interrupt for resume.
 
 **Tool-call gate fires mid-invoke (ties into [Agent](agent.md)'s `invoke`):**
 1. `avs-react`'s `ReActStrategy::run_hitl` dispatches tool calls via
