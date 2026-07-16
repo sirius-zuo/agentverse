@@ -307,10 +307,8 @@ persisting any resulting interrupt for resume.
   operator learns about the queue outage only indirectly, the next time
   someone tries to resolve that approval and gets `HitlError::NotFound`.
 - `ApprovalQueue::sweep_expired`'s doc comment says it is "Called by
-  CleanupWorker," but the current `avs-agent` wiring calls it from a
-  dedicated `HitlSweepWorker` instead — the comment predates PR #26's worker
-  split and was not updated; `HitlSweepWorker` is the one that actually
-  invokes it today.
+  `HitlSweepWorker`," matching the current `avs-agent` wiring. The comment
+  predates PR #26's worker split and was not updated until this correction.
 - Sweeping an approval to `Expired` does not, by itself, move the owning
   session out of `Interrupted` or clear its `InterruptedState` — that only
   happens when something calls `Agent::resume` against that approval and
