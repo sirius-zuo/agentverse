@@ -48,9 +48,9 @@ All commands completed successfully from the Task 10 worktree:
 ## Self-Review
 
 Reviewed the Task 10 diff against base `1ee517c`. No correctness, layering,
-compatibility, formatting, or documentation issues found. The existing
-unrelated modification to `.superpowers/sdd/task-9-report.md` was preserved
-and excluded from this task's commit.
+compatibility, formatting, or documentation issues found. The follow-up
+review-fix commit also included the pending Task 9 report correction that
+documented its earlier wiki wording fix; it did not change Task 10 source.
 
 ## Concerns
 
