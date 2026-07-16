@@ -28,7 +28,7 @@ layer (`avs-hitl`, [memory](memory.md), [session](session.md),
 [Subagent](subagent.md) additionally calls `ConnectionManager::with_model`
 directly for per-subagent model overrides, and the strategy crates render
 prompts through `PromptRegistry` and construct `GenerateRequest` values that
-flow into `LlmRunner::invoke`/`invoke_structured`.
+flow into `LlmRunner::invoke`, `invoke_with_tools`, or `invoke_structured`.
 
 ## Architecture
 
@@ -74,6 +74,7 @@ classDiagram
     class LlmRunner {
         +from_config(Config) LlmRunner
         +invoke(messages) GenerateResponse
+        +invoke_with_tools(messages, tools) GenerateResponse
         +invoke_structured(messages, schema) GenerateResponse
     }
     LlmRunner --> ConnectionManager : Arc~ConnectionManager~
@@ -105,9 +106,11 @@ via `ConnectionManager::from_config`, which asks a `ProviderRegistry` to
 resolve a `ProviderConfig { name, settings }` into a `ResolvedProvider`
 (provider instance plus `api_base`/`api_key`/`model_name`). `LlmRunner` is the
 thin entry point strategy crates call: it holds an `Arc<ConnectionManager>`
-and exposes `invoke`/`invoke_structured`, both implemented through a shared
+and exposes `invoke`, `invoke_with_tools`, and `invoke_structured`, all implemented through a shared
 `invoke_inner` that splits `System`-role messages out of the conversation and
-assembles a `GenerateRequest`. `PromptRegistry` (in `prompt.rs`) is a separate,
+assembles a `GenerateRequest`. `invoke_with_tools` forwards native tool definitions to
+the provider request path; it does not parse native tool responses or run a tool loop.
+`PromptRegistry` (in `prompt.rs`) is a separate,
 decoupled subsystem: a minijinja `Environment` pre-loaded with default
 templates (`system`, `react`, `strategies.*`, `router`), optionally extended
 from a directory of `.j2`/`.toml` files or a `PromptConfig`. `LlmRunner` does
@@ -143,6 +146,17 @@ to build the `system` string and `Example`s they pass into a `GenerateRequest`.
    the schema is silently not enforced server-side for Gemini.
 4. The rest of `ConnectionManager::generate` (retry, circuit breaker,
    fallback, `parse_response`) is unchanged from the unstructured path.
+
+**`invoke_with_tools` (native tool definitions):**
+1. Caller passes `messages` plus `Vec<ToolDefinition>` to
+   `LlmRunner::invoke_with_tools`.
+2. `invoke_inner` partitions messages as above and builds a `GenerateRequest`
+   with `tools: Some(tools)` and `response_format: None`.
+3. Each provider serializes the tool definitions into its own wire format;
+   `ConnectionManager::generate` sends that request through its normal retry,
+   circuit-breaker, and fallback path.
+4. The returned response remains text-only today. No strategy consumes native
+   tool calls or dispatches their results until the follow-on work in Tasks 4-5.
 
 **Retry, circuit breaker, and fallback inside `generate`:**
 1. Before building the request, `generate` takes the circuit breaker lock; if
