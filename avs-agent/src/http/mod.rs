@@ -17,7 +17,7 @@ use axum::{
 };
 use config::HttpConfig;
 use openapi::openapi_json;
-use routes::{aether_invoke, health, invoke, ready};
+use routes::{aether_invoke, aether_resume, health, invoke, ready};
 use session_routes::{create_session, end_session, get_session, list_messages, send_message};
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
@@ -48,6 +48,7 @@ fn build_router(agent: Arc<Agent>) -> Router {
         .route("/ready", get(ready))
         .route("/invoke", post(invoke))
         .route("/aether/invoke", post(aether_invoke))
+        .route("/aether/resume", post(aether_resume))
         .nest("/sessions", v1_session_router)
         .with_state(Arc::clone(&agent));
 
@@ -58,6 +59,7 @@ fn build_router(agent: Arc<Agent>) -> Router {
         .route("/ready", get(ready))
         .route("/invoke", post(invoke))
         .route("/aether/invoke", post(aether_invoke))
+        .route("/aether/resume", post(aether_resume))
         .route("/openapi.json", get(openapi_json))
         .layer(Extension(rate_limiter))
         .layer(CorsLayer::permissive())

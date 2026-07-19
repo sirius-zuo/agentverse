@@ -16,6 +16,17 @@ impl Agent {
         Ok(self.sessions.get_session(session_id).await?)
     }
 
+    /// Resolve a session's owner without an ownership assertion. The aether
+    /// resume endpoint receives no user_id in `ResumeRequest`, so it looks the
+    /// owner up from persisted state rather than trusting the request.
+    pub async fn session_owner(&self, session_id: SessionId) -> Result<Option<String>, AgentError> {
+        Ok(self
+            .sessions
+            .get_session(session_id)
+            .await?
+            .map(|s| s.user_id))
+    }
+
     pub async fn end_session(
         &self,
         user_id: &str,
