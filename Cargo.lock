@@ -2666,8 +2666,7 @@ dependencies = [
 [[package]]
 name = "flume"
 version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da0e4dd2a88388a1f4ccc7c9ce104604dab68d9f408dc34cd45823d5a9069095"
+source = "git+https://github.com/sirius-zuo/flume?rev=84ae4839b814f3687ac9f345322a550346780138#84ae4839b814f3687ac9f345322a550346780138"
 dependencies = [
  "futures-core",
  "futures-sink",
@@ -4235,8 +4234,7 @@ dependencies = [
 [[package]]
 name = "lazy_static"
 version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
+source = "git+https://github.com/sirius-zuo/lazy-static.rs?rev=b47c8bbd930cf6216e86e12ea96dfe3eb3f4448d#b47c8bbd930cf6216e86e12ea96dfe3eb3f4448d"
 dependencies = [
  "spin",
 ]
@@ -6363,9 +6361,9 @@ dependencies = [
 
 [[package]]
 name = "spin"
-version = "0.9.8"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
+checksum = "023a211cb3138dbc438680b32560ad89f699977624c9f8dbb95a47d5b4c07dd3"
 dependencies = [
  "lock_api",
 ]
