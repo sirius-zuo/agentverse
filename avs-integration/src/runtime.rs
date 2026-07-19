@@ -5,6 +5,7 @@ use super::error::IntegrationError;
 use super::event::Event;
 use super::github::GithubConnector;
 use super::slack::SlackConnector;
+#[allow(deprecated)]
 use super::whatsapp::WhatsAppConnector;
 use std::collections::HashMap;
 use std::future::Future;
@@ -15,6 +16,7 @@ use std::sync::Arc;
 enum BuiltConnector {
     Slack(Arc<SlackConnector>),
     Github(Arc<GithubConnector>),
+    #[allow(deprecated)]
     Whatsapp(Arc<WhatsAppConnector>),
 }
 
@@ -112,7 +114,7 @@ impl IntegrationRuntime {
             })?;
             built.insert(
                 "whatsapp".to_string(),
-                BuiltConnector::Whatsapp(Arc::new(WhatsAppConnector::new(&api_key, &phone_id))),
+                Self::build_whatsapp_connector(&api_key, &phone_id),
             );
         }
 
@@ -137,6 +139,11 @@ impl IntegrationRuntime {
         }
 
         Ok(Self { input, outputs })
+    }
+
+    #[allow(deprecated)]
+    fn build_whatsapp_connector(api_key: &str, phone_id: &str) -> BuiltConnector {
+        BuiltConnector::Whatsapp(Arc::new(WhatsAppConnector::new(api_key, phone_id)))
     }
 
     /// Start connectors and run the receive → handle → send loop.

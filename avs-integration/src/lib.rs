@@ -1,4 +1,9 @@
-// avs-integration/src/lib.rs
+//! Platform connectors and the example-backed [`IntegrationRuntime`].
+//!
+//! This crate is an incubator: [`IntegrationRuntime`] is maintained by the
+//! integration tests and `example-slack-hr-assistant`, but is not an
+//! `avs-agent` core runtime path.
+
 pub mod config;
 pub mod connector;
 pub mod console;
@@ -17,4 +22,5 @@ pub use event::Event;
 pub use github::GithubConnector;
 pub use runtime::IntegrationRuntime;
 pub use slack::SlackConnector;
+#[allow(deprecated)]
 pub use whatsapp::WhatsAppConnector;

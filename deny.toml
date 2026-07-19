@@ -36,3 +36,7 @@ wildcards = "allow"
 [sources]
 unknown-registry = "warn"
 unknown-git = "deny"
+allow-git = [
+    "https://github.com/sirius-zuo/flume",
+    "https://github.com/sirius-zuo/lazy-static.rs",
+]

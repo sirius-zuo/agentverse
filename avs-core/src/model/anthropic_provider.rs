@@ -334,6 +334,12 @@ mod tests {
         );
         let tools = wire.tools.unwrap();
         assert_eq!(tools.len(), 3);
+        assert_eq!(tools[0].name, "alpha");
+        assert_eq!(tools[0].description, "alpha description");
+        assert_eq!(
+            tools[0].input_schema,
+            serde_json::json!({"type":"object","properties":{}})
+        );
         assert!(tools[0].cache_control.is_none(), "alpha must not be cached");
         assert!(tools[1].cache_control.is_none(), "beta must not be cached");
         assert_eq!(

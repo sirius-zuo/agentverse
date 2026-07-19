@@ -5,8 +5,8 @@
 `avs-agent`'s optional `http` feature is an axum-based HTTP surface that turns
 a running `Agent` into a network service: stateless single-turn invocation,
 per-user session CRUD and message history, health/readiness probes, and an
-inbound `/aether/invoke` endpoint that lets an external `aether` lifecycle
-coordinator trigger an invocation through a shared `Envelope` wire format. It
+inbound `/aether/invoke` endpoint that lets an external Aether-compatible
+caller trigger an invocation through a shared `Envelope` wire format. It
 lives inside `avs-agent` rather than as a standalone crate or binary because
 it has nothing to serve without an already-constructed `Agent` —
 `AgentBuilder::with_http_server()` only sets a flag, and the axum listener is
@@ -20,7 +20,7 @@ built without either exposes no network surface at all.
 
 The `http` feature is not a separate crate — it is an optional compile-time
 feature of `avs-agent` itself, declared in `avs-agent/Cargo.toml`
-(`http = ["dep:axum", "dep:tower", "dep:tower-http", "dep:reqwest",
+(`http = ["dep:axum", "dep:tower", "dep:tower-http",
 "dep:agentverse-guardrails"]`) and gated behind `#[cfg(feature = "http")] mod
 http;` in `avs-agent/src/lib.rs`. Enabling it adds exactly one workspace
 dependency beyond what [Agent](agent.md) already needs:
@@ -76,21 +76,7 @@ classDiagram
         +limit Option~i64~
         +before Option~i64~
     }
-    class AetherClient {
-        -registry_url String
-        -agent_name String
-        -agent_http_url String
-        -capabilities Vec~String~
-        +register() Option~AetherRegistration~
-        +deregister(instance_id)
-        +push_event(instance_id, event_type, payload)
-    }
-    class AetherRegistration {
-        +instance_id String
-        +poll_interval_secs u64
-    }
     Envelope o-- EnvelopeKind
-    AetherClient ..> AetherRegistration : register()
     Agent <.. InvokeRequest : invoke_stateless()
     Agent <.. Envelope : invoke_stateless() via aether_invoke
     Agent <.. SendMessageRequest : invoke()
@@ -100,7 +86,7 @@ classDiagram
     RateLimiter <.. ListMessagesQuery : checked first
 ```
 
-The module splits across eight files under `avs-agent/src/http/`. `mod.rs`
+The module splits across seven files under `avs-agent/src/http/`. `mod.rs`
 holds `build_router` (assembles the axum `Router`), `spawn_server` (the entry
 point `AgentBuilder::build` calls), and the startup security guard
 (`validate_bind_security`, `is_loopback_host`, `api_key_configured`).
@@ -115,10 +101,7 @@ route behind a bearer token when one is configured. `envelope.rs` defines the
 handlers (`create_session`, `send_message`, `list_messages`, `get_session`,
 `end_session`) and their request/query types, plus `store_err_status`, which
 maps `SessionMemoryError` variants to HTTP status codes shared by several
-handlers. `aether_client.rs` defines `AetherClient` (registration,
-deregistration, and event push against an external aether registry) and its
-response types (`AetherRegistration`, `RegisterResponse`). `openapi.rs` holds
-`openapi_json`, a hand-written OpenAPI 3.1 document served at
+handlers. `openapi.rs` holds `openapi_json`, a hand-written OpenAPI 3.1 document served at
 `/openapi.json`.
 
 `build_router` constructs one `Arc<RateLimiter>` (`RateLimiter::new(100,
@@ -272,45 +255,24 @@ Newest first.
   runs, never the other way around.
 - **Ref** — 2026-05-25, commit `2529eb3`.
 
-### Aether registration is opt-in and best-effort; aether coordinates lifecycle, not data
+### Aether inbound compatibility is envelope-only
 - **Decision** — `/aether/invoke` accepts an `Envelope{kind: Invoke}` and
-  returns an `Envelope{kind: Result | Error}` carrying the same `id`/
-  `metadata`; `AetherClient::register`/`deregister`/`push_event` are
-  fire-and-forget HTTP calls to an external aether registry that tolerate
-  registry unavailability by logging and continuing standalone.
-- **Context** — the http registry design spec (untracked) states as a design
-  principle: "Agents are standalone units. An agent runs without aether.
-  Aether involvement is opt-in via `AETHER_REGISTRY_URL`," and "Aether is a
-  lifecycle coordinator, not a proxy... It never carries business data
-  between agents." Its error-handling table specifies: "Agent can't reach
-  aether on startup → Log warning, continue standalone... background retry
-  with backoff" and "Pushing events... Fire-and-forget. Failure is logged,
-  not retried."
-- **Alternatives rejected** — the spec explicitly rules out a routing role:
-  "What Aether Does NOT Do: Route business data between agents... Manage
-  agent-to-agent communication... Guarantee workflow completion or
-  durability."
-- **Consequences** — `AetherClient::register` returns `Option<AetherRegistration>`
-  (`None` on any failure), so its return type alone cannot distinguish "aether
-  not configured" from "aether unreachable." As of current source, no code
-  path in `avs-agent` calls `register`, `deregister`, or `push_event` (see
-  Implementation Notes) even though the inbound `/aether/invoke` route is
-  live and tested.
-- **Ref** — 2026-05-21, http registry design spec (untracked) / commit
-  `fe1eda1`.
+  returns an `Envelope{kind: Result | Error}` carrying the same `id` and
+  `metadata`.
+- **Context** — the endpoint is a compatibility boundary for callers that
+  exchange Aether envelopes. It invokes the already-constructed `Agent`
+  through `invoke_stateless`; no registry lifecycle client is part of this
+  HTTP module.
+- **Consequences** — both `/aether/invoke` and `/v1/aether/invoke` remain
+  available. A successful invocation returns an `EnvelopeKind::Result`; an
+  agent failure returns `500` with an `EnvelopeKind::Error`.
+- **Ref** — `avs-agent/src/http/routes.rs` (`aether_invoke`).
 
 ## Implementation Notes
 
-- **Known debt**: `AetherClient::register`/`deregister`/`push_event` have no
-  call site anywhere in `avs-agent` — `grep -rn "AetherClient" avs-agent/src`
-  finds only the struct's own definition, and `aether_client.rs` carries a
-  module-level `#![allow(dead_code)]` that silences this. The old
-  `avs-server` startup-registration and SIGTERM-deregister wiring (added in
-  commit `fecfe81`, before the crate absorption) was not carried forward when
-  `avs-server` was folded into `avs-agent` (commit `2529eb3`); only the
-  inbound `/aether/invoke` route survived. `push_event`'s own doc comment
-  acknowledges the gap: "Called from the `/invoke` error path once that
-  wiring is added."
+- Commit `6420a3f` removes the unused outbound Aether client and its optional
+  `reqwest` dependency while retaining and directly testing the inbound
+  legacy and `/v1` Aether-compatible routes.
 - Layer order in `build_router` matters: `Extension(rate_limiter)` is applied
   first, then `CorsLayer::permissive()`, then
   `middleware::from_fn(auth::auth_middleware)` — the last `.layer()` call
@@ -345,7 +307,6 @@ Newest first.
 - `avs-agent/src/http/envelope.rs`
 - `avs-agent/src/http/routes.rs`
 - `avs-agent/src/http/session_routes.rs`
-- `avs-agent/src/http/aether_client.rs`
 - `avs-agent/src/http/openapi.rs`
 - `avs-agent/src/agent/builder.rs`
 - `avs-agent/Cargo.toml`

@@ -10,7 +10,6 @@ http = [
     "dep:axum",
     "dep:tower",
     "dep:tower-http",
-    "dep:reqwest",
     "dep:agentverse-guardrails",
 ]
 
@@ -20,6 +19,7 @@ agentverse = { path = "../avs-core" }
 agentverse-memory = { path = "../avs-memory" }
 agentverse-session = { path = "../avs-session" }
 agentverse-strategy = { path = "../avs-strategy" }
+agentverse-router = { path = "../avs-router" }
 agentverse-subagent  = { path = "../avs-subagent" }
 agentverse-tools = { path = "../avs-tools" }
 agentverse-hitl = { path = "../avs-hitl" }
@@ -36,7 +36,6 @@ uuid = { workspace = true }
 axum = { workspace = true, optional = true }
 tower = { workspace = true, optional = true }
 tower-http = { workspace = true, optional = true }
-reqwest = { workspace = true, optional = true }
 agentverse-guardrails = { path = "../avs-guardrails", optional = true }
 
 [dev-dependencies]
@@ -46,3 +45,5 @@ agentverse-session = { path = "../avs-session" }
 agentverse-strategy = { path = "../avs-strategy" }
 tempfile = "3"
 async-trait = { workspace = true }
+schemars = { workspace = true }
+httpmock = { workspace = true }

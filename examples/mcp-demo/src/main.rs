@@ -5,8 +5,8 @@
 //   Server side  — a ToolRegistry with Calculator + DateTime is exposed
 //                  as an MCP endpoint via McpServer.
 //
-//   Client side  — McpCatalogSource discovers those tools through the MCP
-//                  protocol and registers them into a fresh ToolRegistry.
+//   Client side  — McpLoader loads the configured server through the MCP
+//                  protocol and registers its tools into a fresh ToolRegistry.
 //                  An agent then uses those tools without knowing they are
 //                  remote.
 //
@@ -22,7 +22,7 @@
 use agentverse::{Config, LlmRunner, PromptConfig, PromptRegistry, ProviderConfig};
 use agentverse_agent::Agent;
 use agentverse_logging as avs_logging;
-use agentverse_mcp::{McpCatalogSource, McpClient, McpServer, McpTransport};
+use agentverse_mcp::{McpLoader, McpServer, McpServerConfig, TransportKind};
 use agentverse_session::SqliteSessionMemory;
 use agentverse_strategy::{build, StrategyKind};
 use agentverse_tools::{Calculator, DateTimeTool, ToolRegistry};
@@ -56,24 +56,24 @@ async fn main() {
 
     tracing::info!(port, "MCP server listening");
 
-    // ── 3. Connect the client and discover tools ──────────────────────────────
+    // ── 3. Load configured MCP tools ─────────────────────────────────────────
     //
-    // McpCatalogSource calls tools/list and registers each result as an
-    // McpToolAdapter (implements ErasedTool, forwards execute_raw to the server).
-    let transport = McpTransport::StreamableHttp {
-        endpoint: format!("http://127.0.0.1:{port}/mcp")
-            .parse()
-            .expect("parse endpoint URL"),
-        headers: Default::default(),
+    // McpLoader connects to the configured endpoint, calls tools/list, and
+    // registers each result as an McpToolAdapter in the client registry.
+    let server_config = McpServerConfig {
+        name: "local-demo".into(),
+        transport: TransportKind::StreamableHttp,
+        command: None,
+        args: None,
+        env: None,
+        url: Some(format!("http://127.0.0.1:{port}/mcp")),
+        headers: None,
     };
-    let client = McpClient::connect(transport)
-        .await
-        .expect("connect to MCP server");
 
     let client_registry = ToolRegistry::new();
-    let discovered = McpCatalogSource::populate(&client_registry, &client)
+    let discovered = McpLoader::load(&client_registry, &[server_config])
         .await
-        .expect("populate registry from MCP server");
+        .expect("load MCP tools from configured server");
 
     tracing::info!(discovered, "Tools registered from MCP server");
 

@@ -22,13 +22,6 @@ schemars = { version = "0.8", features = ["derive"] }
 toml.workspace = true
 opentelemetry.workspace = true
 
-# Optional tracing
-opentelemetry-otlp = { version = "0.15", optional = true }
-
-[features]
-default = ["tracing"]
-tracing = ["opentelemetry-otlp"]
-
 [dev-dependencies]
 tokio.workspace = true
 httpmock = "0.7"

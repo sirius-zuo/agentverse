@@ -27,6 +27,22 @@ impl Tool for AddTool {
     }
 }
 
+struct ReplacementAddTool;
+
+#[async_trait::async_trait]
+impl Tool for ReplacementAddTool {
+    type Args = AddArgs;
+    fn name(&self) -> &str {
+        "add"
+    }
+    fn description(&self) -> &str {
+        "Replacement add implementation"
+    }
+    async fn execute(&self, args: AddArgs) -> ToolResult {
+        Ok(json!({ "result": args.a + args.b + 1.0 }))
+    }
+}
+
 #[derive(Deserialize, JsonSchema)]
 struct MulArgs {
     a: f64,
@@ -61,6 +77,62 @@ fn register_and_has_tool() {
     let r = ToolRegistry::new();
     r.register(AddTool);
     assert!(r.has_tool("add"));
+}
+
+#[test]
+fn register_if_absent_is_atomic_under_concurrency() {
+    use std::sync::Barrier;
+    use std::thread;
+
+    const WORKERS: usize = 16;
+    let registry = ToolRegistry::new();
+    let barrier = Arc::new(Barrier::new(WORKERS));
+    let handles = (0..WORKERS)
+        .map(|_| {
+            let registry = Arc::clone(&registry);
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                registry.register_if_absent(AddTool)
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let inserted = handles
+        .into_iter()
+        .map(|handle| handle.join().unwrap())
+        .filter(|inserted| *inserted)
+        .count();
+    assert_eq!(inserted, 1);
+    assert_eq!(
+        registry
+            .tool_names()
+            .iter()
+            .filter(|name| name.as_str() == "add")
+            .count(),
+        1
+    );
+    assert_eq!(
+        registry
+            .search("add", 10)
+            .iter()
+            .filter(|tool| tool.name == "add")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn register_keeps_replacement_semantics() {
+    let registry = ToolRegistry::new();
+    registry.register(AddTool);
+    registry.register(ReplacementAddTool);
+
+    let result = registry
+        .execute("add", json!({"a": 2.0, "b": 3.0}))
+        .await
+        .unwrap();
+    assert_eq!(result["result"], 6.0);
 }
 
 #[test]

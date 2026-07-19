@@ -4,8 +4,8 @@
 
 `avs-guardrails` (crate `agentverse-guardrails`) holds the workspace's
 content- and rate-safety checks: prompt-injection screening
-(`check_prompt`), output PII filtering (`check_output`), a dangerous-tool
-interception type (`ActionGuard`), and a per-user request throttle
+(`check_prompt`), output PII filtering (`check_output`), a legacy
+compatibility dangerous-tool interceptor (`ActionGuard`, deprecated), and a per-user request throttle
 (`RateLimiter`). It exists as its own crate so these checks are plain,
 independently testable functions/types rather than logic embedded inside
 each orchestration strategy — a strategy calls `check_prompt`/`check_output`
@@ -85,7 +85,8 @@ credit-card-shaped digit groups, email address) and returns
 the error string. Both are pure functions with no shared state beyond their
 own static pattern lists.
 
-`ActionGuard` holds an `Option<HitlPolicy>` and an `Option<Arc<dyn
+`ActionGuard` is deprecated and retained only for source compatibility. It
+holds an `Option<HitlPolicy>` and an `Option<Arc<dyn
 ApprovalQueue>>`, set via the builder methods `with_policy`/`with_queue`;
 `ActionGuard::new()`/`Default` leave both `None`. Its async `check` method
 returns early with `None` (allowed) if either field is unset or if
@@ -146,9 +147,10 @@ the new request and returns `Ok(())` or returns
    `StatusCode::TOO_MANY_REQUESTS` with a JSON error body before touching
    the `Agent`; on `Ok(())` it proceeds to `agent.invoke_stateless(...)`.
 
-`ActionGuard::check` has no equivalent flow: nothing in the workspace
-outside its own crate constructs an `ActionGuard` or calls `check` (see
-Implementation Notes).
+`ActionGuard::check` is not part of the runtime flow. The supported runtime
+path is `Agent::invoke` constructing a `HitlContext`, ReAct forwarding that
+hook to `ToolRegistry::execute_many_hitl`, and the resulting interrupt being
+persisted by `avs-agent`.
 
 ## Key Decisions
 
@@ -213,17 +215,15 @@ Newest first.
 
 ## Implementation Notes
 
-- Known debt: `ActionGuard` is not called from anywhere in the invoke path.
-  A workspace-wide search (`grep -rn "ActionGuard" --include="*.rs" .`)
-  finds no construction or `.check()` call outside `avs-guardrails/src/action_guard.rs`
-  itself. The architecture design spec (untracked) describes `ActionGuard`
-  as part of a "default-integrated" security layer that suspends the
-  strategy loop on a dangerous call, but the tool-approval interception that
-  actually ships runs through a separate mechanism: `avs-hitl`'s
-  `HitlContext` (which implements `avs-core`'s `HitlHook` trait directly)
-  and `avs-tools`'s `ToolRegistry::execute_many_hitl`, entirely bypassing
-  `avs-guardrails`. `ActionGuard` is exercised only by its own three unit
-  tests.
+- Commit `dfb634b` resolves the framework-wiring ambiguity by deprecating
+  `ActionGuard` and proving the supported `Agent::invoke` + `HitlContext` +
+  `ToolRegistry::execute_many_hitl` path with an agent-level blocklist test.
+- `ActionGuard` is deprecated and is not called from the invoke path. It is
+  retained for existing direct callers, while runtime tool approval uses
+  `avs-hitl`'s `HitlContext` (the `HitlHook` implementation) and
+  `avs-tools`'s `ToolRegistry::execute_many_hitl`. `Agent::invoke` creates
+  that context and ReAct uses the hook; `ActionGuard` remains covered only by
+  compatibility tests.
 - Two distinct `GuardrailError` enums exist: `agentverse_guardrails::GuardrailError`
   (four variants, defined in `prompt_guard.rs`) and `agentverse::GuardrailError`
   (`avs-core`, two variants: `PromptInjection`, `OutputFiltered`). Every

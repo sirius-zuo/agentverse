@@ -89,7 +89,11 @@ pub async fn send_message(
             let status = match &e {
                 AgentError::Session(se) => store_err_status(se),
                 AgentError::Llm(_) => StatusCode::BAD_GATEWAY,
-                AgentError::Skill(_) | AgentError::Json(_) => StatusCode::INTERNAL_SERVER_ERROR,
+                AgentError::Skill(_)
+                | AgentError::Json(_)
+                | AgentError::RoutedStrategyDoesNotSupportHitl { .. } => {
+                    StatusCode::INTERNAL_SERVER_ERROR
+                }
             };
             error!(error = %e, "Failed to invoke session");
             (status, Json(serde_json::json!({ "error": e.to_string() })))
@@ -178,7 +182,11 @@ pub async fn get_session(
             let status = match &e {
                 AgentError::Session(se) => store_err_status(se),
                 AgentError::Llm(_) => StatusCode::BAD_GATEWAY,
-                AgentError::Skill(_) | AgentError::Json(_) => StatusCode::INTERNAL_SERVER_ERROR,
+                AgentError::Skill(_)
+                | AgentError::Json(_)
+                | AgentError::RoutedStrategyDoesNotSupportHitl { .. } => {
+                    StatusCode::INTERNAL_SERVER_ERROR
+                }
             };
             error!(error = %e, "Failed to get session");
             (status, Json(serde_json::json!({ "error": e.to_string() })))
@@ -207,7 +215,11 @@ pub async fn end_session(
             let status = match &e {
                 AgentError::Session(se) => store_err_status(se),
                 AgentError::Llm(_) => StatusCode::BAD_GATEWAY,
-                AgentError::Skill(_) | AgentError::Json(_) => StatusCode::INTERNAL_SERVER_ERROR,
+                AgentError::Skill(_)
+                | AgentError::Json(_)
+                | AgentError::RoutedStrategyDoesNotSupportHitl { .. } => {
+                    StatusCode::INTERNAL_SERVER_ERROR
+                }
             };
             error!(error = %e, "Failed to end session");
             (status, Json(serde_json::json!({ "error": e.to_string() })))

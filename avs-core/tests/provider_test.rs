@@ -1,7 +1,7 @@
 use agentverse::memory::{Message, MessageRole};
 use agentverse::{
     AnthropicProvider, ConnectionManager, GeminiProvider, GenerateRequest, ModelProvider,
-    ProviderConfig, ToolDefinition,
+    OpenAICompatible, ProviderConfig, ToolDefinition,
 };
 use serde_json::json;
 
@@ -110,6 +110,36 @@ fn test_anthropic_parse_response_no_text_content_is_error() {
 // ── GeminiProvider tests ──────────────────────────────────────────────────────
 
 #[test]
+fn test_openai_build_request_with_tools_serializes_chat_tools() {
+    let provider = OpenAICompatible::new();
+    let request = GenerateRequest {
+        system: None,
+        messages: vec![Message {
+            role: MessageRole::User,
+            content: "hello".to_string(),
+        }],
+        tools: Some(vec![ToolDefinition {
+            name: "calculate".to_string(),
+            description: "Perform arithmetic".to_string(),
+            parameters: json!({"type": "object", "properties": {"expression": {"type": "string"}}}),
+        }]),
+        ..Default::default()
+    };
+
+    let body = provider.build_request("gpt", request).unwrap();
+    assert_eq!(body["tools"][0]["type"], "function");
+    assert_eq!(body["tools"][0]["function"]["name"], "calculate");
+    assert_eq!(
+        body["tools"][0]["function"]["description"],
+        "Perform arithmetic"
+    );
+    assert_eq!(
+        body["tools"][0]["function"]["parameters"],
+        json!({"type": "object", "properties": {"expression": {"type": "string"}}})
+    );
+}
+
+#[test]
 fn test_gemini_provider_name() {
     let provider = GeminiProvider::new();
     assert_eq!(provider.name(), "gemini");
@@ -194,6 +224,11 @@ fn test_gemini_build_request_with_tools() {
     let body = provider.build_request("gemini-pro", req).unwrap();
     let tools = body["tools"].as_array().unwrap();
     assert_eq!(tools[0]["functions"][0]["name"], "calc");
+    assert_eq!(tools[0]["functions"][0]["description"], "Calculate");
+    assert_eq!(
+        tools[0]["functions"][0]["parameters"],
+        json!({"type": "object", "properties": {}})
+    );
 }
 
 #[test]

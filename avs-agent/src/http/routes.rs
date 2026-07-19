@@ -259,16 +259,42 @@ pub async fn aether_resume(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentverse::{Config, LlmRunner, PromptRegistry};
+    use agentverse::memory::Message;
+    use agentverse::{
+        AgentError as CoreAgentError, Config, LlmRunner, PromptRegistry, RunStrategy,
+        StrategyOutcome,
+    };
     use agentverse_session::SqliteSessionMemory;
     use agentverse_strategy::{build, StrategyKind};
     use agentverse_tools::ToolRegistry;
+    use async_trait::async_trait;
     use axum::body::Body;
     use axum::http::Request;
     use axum::routing::{get, post};
     use axum::Router;
     use tower::ServiceExt;
     use uuid::Uuid;
+
+    enum StubOutcome {
+        Success,
+        Failure,
+    }
+
+    struct StubStrategy {
+        outcome: StubOutcome,
+    }
+
+    #[async_trait]
+    impl RunStrategy for StubStrategy {
+        async fn run(&self, _messages: Vec<Message>) -> Result<StrategyOutcome, CoreAgentError> {
+            match self.outcome {
+                StubOutcome::Success => Ok(StrategyOutcome::Done("aether reply".to_string())),
+                StubOutcome::Failure => Err(CoreAgentError::Model(
+                    agentverse::ModelError::ApiError("aether test failure".to_string()),
+                )),
+            }
+        }
+    }
 
     async fn make_agent() -> Arc<Agent> {
         let runner = Arc::new(
@@ -298,6 +324,28 @@ mod tests {
         Agent::builder(runner, tools, prompts, session_memory, strategy).build()
     }
 
+    async fn make_agent_with_stub(outcome: StubOutcome) -> Arc<Agent> {
+        let runner = Arc::new(
+            LlmRunner::from_config(Config {
+                provider: agentverse::ProviderConfig::openai(
+                    "test".to_string(),
+                    "sk-test".to_string(),
+                    Some("http://127.0.0.1:1/v1".to_string()),
+                ),
+                max_messages: 10,
+                tools: vec![],
+                prompts_dir: None,
+                system_prompt: None,
+            })
+            .unwrap(),
+        );
+        let tools = ToolRegistry::new();
+        let prompts = Arc::new(PromptRegistry::new());
+        let session_memory = Arc::new(SqliteSessionMemory::new("sqlite::memory:").await.unwrap());
+        let strategy = Arc::new(StubStrategy { outcome });
+        Agent::builder(runner, tools, prompts, session_memory, strategy).build()
+    }
+
     fn make_app(agent: Arc<Agent>) -> Router {
         let limiter = Arc::new(agentverse_guardrails::RateLimiter::new(1000, 60));
         Router::new()
@@ -305,6 +353,7 @@ mod tests {
             .route("/ready", get(ready))
             .route("/invoke", post(invoke))
             .route("/aether/invoke", post(aether_invoke))
+            .route("/v1/aether/invoke", post(aether_invoke))
             .layer(axum::Extension(limiter))
             .with_state(agent)
     }
@@ -395,18 +444,48 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_aether_invoke_with_invoke_kind() {
-        let agent = make_agent().await;
-        let app = make_app(agent);
+    async fn aether_invoke_returns_result_envelope_on_both_aliases() {
+        let agent = make_agent_with_stub(StubOutcome::Success).await;
         let env = serde_json::json!({
             "id": "00000000-0000-0000-0000-000000000001",
             "kind": "invoke",
             "payload": {"input": "hello from aether"},
-            "metadata": {}
+            "metadata": {"trace_id": "aether-trace"}
         });
-        let res = post_json(app, "/aether/invoke", env).await;
-        // 200 (model ok) or 500 (API unreachable with test key) — not 400
-        assert_ne!(res.status(), StatusCode::BAD_REQUEST);
+        for path in ["/aether/invoke", "/v1/aether/invoke"] {
+            let res = post_json(make_app(Arc::clone(&agent)), path, env.clone()).await;
+            assert_eq!(res.status(), StatusCode::OK, "path: {path}");
+            let body: serde_json::Value =
+                serde_json::from_slice(&axum::body::to_bytes(res.into_body(), 1024).await.unwrap())
+                    .unwrap();
+            assert_eq!(body["id"], env["id"]);
+            assert_eq!(body["kind"], "result");
+            assert_eq!(body["payload"]["output"], "aether reply");
+            assert_eq!(body["metadata"], env["metadata"]);
+        }
+    }
+
+    #[tokio::test]
+    async fn aether_invoke_returns_error_envelope_when_agent_fails() {
+        let agent = make_agent_with_stub(StubOutcome::Failure).await;
+        let env = serde_json::json!({
+            "id": "00000000-0000-0000-0000-000000000003",
+            "kind": "invoke",
+            "payload": {"input": "hello from aether"},
+            "metadata": {"trace_id": "aether-trace"}
+        });
+        let res = post_json(make_app(agent), "/aether/invoke", env.clone()).await;
+        assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let body: serde_json::Value =
+            serde_json::from_slice(&axum::body::to_bytes(res.into_body(), 1024).await.unwrap())
+                .unwrap();
+        assert_eq!(body["id"], env["id"]);
+        assert_eq!(body["kind"], "error");
+        assert!(body["payload"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("aether test failure"));
+        assert_eq!(body["metadata"], env["metadata"]);
     }
 
     fn make_versioned_app(agent: Arc<Agent>) -> Router {

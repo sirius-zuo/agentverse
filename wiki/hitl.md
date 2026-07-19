@@ -25,9 +25,9 @@ decoupled from `RunStrategy`'s signature — this is the one adapter boundary
 the crate crosses. Three crates consume `avs-hitl` directly: [Tools](tools.md)
 (`avs-tools`)'s `ToolRegistry::execute_many_hitl` takes a
 `&Arc<dyn agentverse::hitl::HitlHook>` and returns `HitlInterruptResult` on
-interception; [Guardrails](guardrails.md) (`avs-guardrails`)'s `ActionGuard`
-holds an optional `HitlPolicy` and submits through a real `ApprovalQueue`
-rather than the auto-approve stub it replaced; and [Agent](agent.md)
+interception; [Guardrails](guardrails.md) (`avs-guardrails`)'s deprecated
+`ActionGuard` remains only as a compatibility API and is not part of the
+runtime interception path; and [Agent](agent.md)
 (`avs-agent`) is the top-level orchestrator — it holds a `HitlConfig`
 (`HitlPolicy` + `Arc<dyn ApprovalQueue>`), constructs a `HitlContext` per
 invocation, and drives the persistence and resume machinery that lives in
@@ -121,14 +121,15 @@ by `HitlPolicy::new()` with a fixed default set (`file_delete`,
 2/3, `skill_tool_gates`/`skill_phase_gates`/`skill_checkpoints`, start empty
 under `Default` and are additive on top of Tier 1. `requires_tool_approval`
 checks the blocklist first, then the skill-scoped gate map only if a
-`skill_id` is given. There is no constructor in `avs-hitl` or `avs-agent`
-that builds Tiers 2/3 from a loaded `SkillConfig` — `avs-skill`'s `Skill`
-struct carries the parsed `hitl_tools`/`phase_gate`/`checkpoints` frontmatter
-fields (with a comment noting user-skill values are meant to be ignored by
-whatever assembles the policy), but assembling a `HitlPolicy` from that data
-is done by application code today: `examples/accountant-workflow` reads the
-skill registry and populates `policy.skill_phase_gates` /`.skill_tool_gates`/
-`.skill_checkpoints` by hand from each eligible skill's fields. `ApprovalQueue`
+`skill_id` is given. `HitlPolicy::from_system_skills` builds all three tiers
+from a caller-selected trusted collection. `SkillConfig::load` supplies that
+collection to `AgentBuilder` as a synchronous snapshot captured after loading
+`system/` and before loading or applying any `user/` shadows. When no explicit
+`HitlConfig` was supplied, the builder installs the resulting policy with an
+`InMemoryQueue` only if the snapshot declares at least one `hitl_tools`,
+`phase_gate`, or `checkpoints` value. Ordinary configured skills therefore do
+not activate the Tier 1 blocklist by themselves. An explicit `with_hitl`
+configuration remains authoritative and is used unchanged. `ApprovalQueue`
 (`avs-hitl/src/queue.rs`) is the four-method durable-storage trait —
 `submit`, `resolve`, `poll`, `sweep_expired` — with two implementations:
 `InMemoryQueue` (`avs-hitl/src/memory.rs`, a `Mutex<HashMap<ApprovalId,
@@ -156,6 +157,11 @@ whole point of `request_checkpoint` is that `HitlContext::check_tool`
 intercepts it before the tool registry ever calls `execute`.
 
 ## Runtime Flows
+
+`ActionGuard` is deprecated. When HITL is configured, the supported default
+agent runtime path is `Agent::invoke` constructing a `HitlContext`, ReAct
+passing its `HitlHook` to `ToolRegistry::execute_many_hitl`, and `avs-agent`
+persisting any resulting interrupt for resume.
 
 **Tool-call gate fires mid-invoke (ties into [Agent](agent.md)'s `invoke`):**
 1. `avs-react`'s `ReActStrategy::run_hitl` dispatches tool calls via
@@ -283,36 +289,30 @@ intercepts it before the tool registry ever calls `execute`.
   parsing these fields directly on `Skill`; PR #20 introduced the parser
   support for all three fields in a single commit alongside the rest of the
   HITL types.
-- **Consequences** — `SkillRegistry::load` loads `system/` then `user/`
-  skill packages into the same `HashMap<SkillId, Skill>`, with a same-named
-  user skill overwriting its system counterpart entirely (including its
-  `hitl_tools`/`phase_gate`/`checkpoints` fields) — the loader itself
-  applies no system-vs-user filtering of those fields. The "user values are
-  ignored" intent (documented on `Skill`'s own field comment) is therefore
-  not enforced by `avs-skill` or `avs-hitl`; it depends entirely on whatever
-  assembles a `HitlPolicy` reading those fields only from known-system
-  skills. `examples/accountant-workflow` is the one place in the repo that
-  assembles a `HitlPolicy` from a loaded registry, and PR #21's body records
-  simplifying that assembly ("`HitlPolicy` is now derived from the loaded
-  skill registry instead of hardcoding strings that mirror SKILL.md
-  declarations") — but its loop reads `hitl_tools`/`phase_gate`/`checkpoints`
-  off every eligible skill without checking provenance, so a same-named user
-  skill shadowing a system skill would carry its own HITL fields into the
-  policy unchallenged. See Implementation Notes.
+- **Consequences** — runtime shadowing is unchanged: a same-ID user skill still
+  replaces system instructions, documents, and tool declarations in the live
+  registry. `SkillConfig`, however, retains the original system-slot skills in
+  a separate construction-time snapshot. `AgentBuilder` passes only that
+  snapshot to `HitlPolicy::from_system_skills`, so a user shadow cannot erase
+  a system gate and user-only HITL fields cannot add one. The policy constructor
+  intentionally trusts its input; callers that supply an explicit
+  `with_hitl` configuration remain responsible for that policy.
 - **Ref** — 2026-06-12, PR #20 (frontmatter parsing); 2026-06-13, PR #21
   (policy assembly in the example).
 
 ## Implementation Notes
 
+- PR #31 verification follow-ups now build automatic policy only from the
+  trusted system-skill snapshot (`ad73450`, `68140ed`), deprecate the legacy
+  `ActionGuard` path in favor of `HitlContext` (`dfb634b`), and name the
+  actual approval reaper in the queue contract (`e313f37`).
 - `HitlContext::check_tool`'s sentinel-ID fallback on queue-submit failure is
   a deliberate fail-closed choice: the tool is blocked either way, and the
   operator learns about the queue outage only indirectly, the next time
   someone tries to resolve that approval and gets `HitlError::NotFound`.
 - `ApprovalQueue::sweep_expired`'s doc comment says it is "Called by
-  CleanupWorker," but the current `avs-agent` wiring calls it from a
-  dedicated `HitlSweepWorker` instead — the comment predates PR #26's worker
-  split and was not updated; `HitlSweepWorker` is the one that actually
-  invokes it today.
+  `HitlSweepWorker`," matching the current `avs-agent` wiring. The comment
+  predates PR #26's worker split and was not updated until this correction.
 - Sweeping an approval to `Expired` does not, by itself, move the owning
   session out of `Interrupted` or clear its `InterruptedState` — that only
   happens when something calls `Agent::resume` against that approval and
@@ -330,17 +330,11 @@ intercepts it before the tool registry ever calls `execute`.
   them, so a single approval-requiring call in a multi-tool-call turn blocks
   the whole batch rather than executing the safe calls and leaving only the
   gated one pending.
-- **Known gap: the user/system HITL-tier split is documentation, not
-  enforcement (not yet scheduled).** `SkillRegistry::load` (`avs-skill`)
-  applies the same `load_dir` path to both `system/` and `user/` skill
-  packages and lets a user skill overwrite a system skill of the same id
-  wholesale, `hitl_tools`/`phase_gate`/`checkpoints` included. Nothing in
-  `avs-skill` or `avs-hitl` strips those fields from a user-loaded `Skill`,
-  and `examples/accountant-workflow`'s policy-assembly loop reads them from
-  every eligible skill without checking which directory it loaded from. The
-  three-tier model's "user skill HITL fields are ignored" guarantee
-  therefore holds only as long as no user skill reuses a system skill's id —
-  it is not a property the current code enforces.
+- The trusted system snapshot is captured when `SkillConfig` is loaded and is
+  read synchronously by `AgentBuilder::build`; construction never blocks on
+  the live registry's Tokio `RwLock`. Skill hot-reload still replaces runtime
+  routing content, but it does not mutate the already-built immutable HITL
+  policy.
 
 ## Source Anchors
 
@@ -354,6 +348,9 @@ intercepts it before the tool registry ever calls `execute`.
 - `avs-hitl/src/checkpoint.rs`
 - `avs-hitl/src/error.rs`
 - `avs-core/src/hitl.rs`
+- `avs-skill/src/registry.rs`
+- `avs-skill/src/config.rs`
+- `avs-agent/src/agent/builder.rs`
 - `avs-hitl/` (crate)
 
 ## Related Pages

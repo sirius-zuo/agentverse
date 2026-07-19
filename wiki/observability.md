@@ -11,12 +11,9 @@ scattered across the workspace actually produce output. `avs-core`'s metrics
 facade (`avs-core/src/metrics.rs`) is the single place OpenTelemetry
 instruments are created and named, exposing domain-shaped `record_*` helper
 functions so call sites never touch the `opentelemetry` API directly.
-`avs-core` also carries a `tracing/` module — a `Tracer` trait plus
-`NoopTracer`/`OtelTracer` implementations — that predates the metrics facade
-and remains an unused stub (see Implementation Notes). Both real subsystems
-follow the same no-op-until-installed shape: logging and metrics cost nothing
-until a binary opts in, so library crates can instrument liberally without
-forcing an export pipeline on every consumer.
+Both maintained subsystems follow the same no-op-until-installed shape:
+logging and metrics cost nothing until a binary opts in, so library crates can
+instrument liberally without forcing an export pipeline on every consumer.
 
 ## Position in the System
 
@@ -25,12 +22,8 @@ workspace's foundation layer per `scripts/check-layering.sh` — so neither has
 an in-workspace dependency. `avs-logging` depends only on the external
 `tracing`/`tracing-subscriber` crates; the metrics facade's own code depends
 only on the external `opentelemetry` API crate, and `opentelemetry_sdk` is a
-dev-dependency only. `opentelemetry-otlp 0.15` is a separate story: it
-remains a default-on optional dependency of `avs-core` itself
-(`tracing = ["opentelemetry-otlp"]`, enabled by the crate's own
-`default = ["tracing"]`), unrelated to the metrics facade — it exists only to
-satisfy the dead `OtelTracer` scaffolding (see Implementation Notes), not
-because any `record_*` call site needs it.
+dev-dependency only. Binaries that export metrics own their exporter
+dependencies, keeping library consumers on the OTel API-only path.
 
 It is consumed by every layer above. Every binary (all `examples/*`
 crates) calls `agentverse_logging::init()` once at startup, before
@@ -82,15 +75,7 @@ classDiagram
         -session_deleted Counter~u64~
         -maintenance_backlog Histogram~u64~
     }
-    class Tracer {
-        <<trait, unused stub>>
-        +span(name) Span
-    }
-    class NoopTracer
-    class OtelTracer
     MetricsFacade ..> Instruments : instruments() OnceLock
-    Tracer <|.. NoopTracer
-    Tracer <|.. OtelTracer
 ```
 
 `avs-logging/src/lib.rs` is a single public function, `init()`: it builds an
@@ -114,17 +99,6 @@ an enum for any label with a bounded set of values — `RetryReason`,
 `SkillRoutingOutcome`, `PhaseTransitionOutcome`, `HitlTransition`,
 `SessionDeleteReason` — so a call site can never accidentally attach
 unbounded-cardinality text as an attribute.
-
-`avs-core/src/tracing/` is a separate, older module unrelated to the metrics
-facade: `Tracer` (a trait with one method, `span(&self, name: &str) -> Span`),
-a `Span` struct whose `set_attribute` is a no-op builder method, `NoopTracer`
-(always returns an empty `Span`), and `OtelTracer` (identical behavior to
-`NoopTracer` today — its `span()` also just returns `Span`). `DefaultTracer`
-is a type alias selecting `OtelTracer` when the crate's `tracing` feature is
-enabled (the default) or `NoopTracer` otherwise. `avs-core/src/lib.rs`
-re-exports `Tracer` and `NoopTracer`, but nothing in the workspace constructs
-a `Tracer`, calls `.span()`, or references `DefaultTracer`/`OtelTracer`
-outside this module — see Implementation Notes.
 
 ## Runtime Flows
 
@@ -228,20 +202,14 @@ Newest first.
   created and named; consuming crates (`avs-tools`, `avs-hitl`, `avs-agent`)
   call `agentverse::metrics::record_*` helpers and never touch
   `opentelemetry::metrics` types directly. `opentelemetry_sdk` is confined to
-  dev-dependencies and `examples/http-agent`'s own `Cargo.toml`.
-  `opentelemetry-otlp` is not: `avs-core/Cargo.toml` still carries it as a
-  default-on optional dependency (`tracing = ["opentelemetry-otlp"]`,
-  `default = ["tracing"]`), left over from the pre-facade `OtelTracer` stub —
-  known debt this decision did not remove (see Implementation Notes).
+  dev-dependencies and `examples/http-agent`'s own `Cargo.toml`; metric
+  exporters remain binary-owned.
 - **Context** — PR #25, describing what that PR itself added, states:
   "`opentelemetry` (API only, no-op unless a provider is installed) is a
   runtime dependency of `avs-core` alone; `opentelemetry_sdk` is
   dev-dependency-only everywhere; `opentelemetry-otlp` is confined to the
-  example," matching the no-op-until-installed model the crate already used
-  for `tracing`. That description held for what PR #25 added but did not
-  account for the pre-existing `opentelemetry-otlp` optional dependency
-  already sitting in `avs-core/Cargo.toml`'s `tracing` feature, which PR #25
-  did not remove and which is still present today.
+  example," matching the no-op-until-installed model used by the metrics
+  facade.
 - **Alternatives rejected** — none recorded; the design presents this as the
   intended shape rather than a choice among alternatives.
 - **Consequences** — adding a metric anywhere in the workspace never adds an
@@ -318,16 +286,10 @@ Newest first.
 
 ## Implementation Notes
 
-- `avs-core/src/tracing/` (`Tracer`, `Span`, `NoopTracer`, `OtelTracer`,
-  `DefaultTracer`) is known debt: it has no callers anywhere in the
-  workspace beyond `avs-core/src/lib.rs`'s re-export of `Tracer`/`NoopTracer`.
-  The 2026-05-21 logging design spec (untracked) explicitly listed
-  "OpenTelemetry / distributed tracing integration (the stub in
-  `avs-core/src/tracing/` is untouched)" as a non-goal when `avs-logging` was
-  introduced. PR #25 independently rediscovered the scaffolding — "now-fully-
-  dead `opentelemetry-otlp 0.15`/`OtelTracer` scaffolding" — and flagged
-  removal as a follow-up rather than deleting it in that branch; it remains
-  unremoved as of PR #29.
+- Commit `54baf3c` removes the unused legacy `avs-core::tracing` facade and
+  its obsolete OpenTelemetry dependency family. The active
+  `agentverse::metrics` facade and `avs-logging` initialization remain the
+  maintained observability paths described above.
 - The metrics facade has no in-lib unit tests. `avs-core/tests/metrics_facade_test.rs`
   asserts every instrument from a single `#[test]` function in its own
   integration-test binary, because OTel's global meter provider is
@@ -350,9 +312,6 @@ Newest first.
 
 - `avs-logging/src/lib.rs`
 - `avs-core/src/metrics.rs`
-- `avs-core/src/tracing/mod.rs`
-- `avs-core/src/tracing/noop.rs`
-- `avs-core/src/tracing/otel.rs`
 - `avs-core/tests/metrics_facade_test.rs`
 - `avs-logging/` (crate)
 

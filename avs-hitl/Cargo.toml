@@ -7,6 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 agentverse = { path = "../avs-core" }
+agentverse-skill = { path = "../avs-skill" }
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true

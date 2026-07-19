@@ -3,6 +3,7 @@ use std::sync::Arc;
 use agentverse::{LlmRunner, PromptRegistry, RunStrategy};
 use agentverse_hitl::InterruptKind;
 use agentverse_memory::{LongtermMemory, WorkingMemory};
+use agentverse_router::{StrategyName, StrategyRouter};
 use agentverse_session::{SessionManager, SessionMemoryError};
 use agentverse_skill::{SkillConfig, SkillError};
 use agentverse_tools::ToolRegistry;
@@ -81,6 +82,10 @@ pub enum AgentError {
     Skill(#[from] SkillError),
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
+    #[error(
+        "routed strategy `{strategy}` does not support HITL interception; only ReAct can be used with configured HITL"
+    )]
+    RoutedStrategyDoesNotSupportHitl { strategy: StrategyName },
 }
 
 pub struct Agent {
@@ -92,6 +97,7 @@ pub struct Agent {
     prompts: Arc<PromptRegistry>,
     sessions: Arc<SessionManager>,
     strategy: Arc<dyn RunStrategy>,
+    strategy_router: Option<StrategyRouter>,
     working_memory: Arc<dyn WorkingMemory>,
     longterm_memory: Option<Arc<dyn LongtermMemory>>,
     skills: Option<SkillConfig>,

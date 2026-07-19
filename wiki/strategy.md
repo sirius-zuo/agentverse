@@ -14,7 +14,9 @@ three implementations and owns `build(StrategyKind, ...)`, the single factory
 `avs-agent` uses to construct a strategy. Splitting orchestration out of
 `avs-agent` keeps each algorithm independently testable and lets `Agent` treat
 "how the model reasons and calls tools" as a pluggable `Arc<dyn RunStrategy>`
-rather than a hardcoded loop.
+rather than a hardcoded loop. Strategy routing is explicit and opt-in:
+without `AgentBuilder::with_strategy_router`, the caller-supplied fixed
+strategy remains the execution path.
 
 ## Position in the System
 
@@ -31,11 +33,12 @@ output and rendered prompts. `avs-router` consumes only `avs-core` and
 not depend on `avs-react`/`avs-plan`/`avs-strategy` and holds no reference to
 any strategy instance; it produces a `StrategyName`, not a constructed
 strategy. [Agent](agent.md) is the sole consumer of `avs-strategy::build()`:
-it holds the returned `Arc<dyn RunStrategy>` and calls `run`/
+it accepts a fixed `Arc<dyn RunStrategy>` and calls `run`/
 `run_with_active_tools`/`run_hitl` on it from `Agent::invoke`/
-`invoke_stateless`. No crate in the workspace currently constructs a
-`StrategyRouter` outside `avs-router`'s own tests — it is not wired into
-`Agent`'s strategy-selection path.
+`invoke_stateless`. When configured through
+`AgentBuilder::with_strategy_router`, session-aware `invoke` instead calls
+`StrategyRouter::route` and uses `build()` to construct the selected strategy
+for that invocation. `invoke_stateless` remains on the fixed strategy.
 
 ## Architecture
 
@@ -112,7 +115,9 @@ directly). `CycleSkeleton` holds the three resources every ReAct iteration
 needs (`Arc<LlmRunner>`, `Arc<PromptRegistry>`, `Arc<ToolRegistry>`) plus
 `max_iterations`, and exposes helpers (`execute_tool`, `execute_many`,
 `build_tools_str_active`, `check_output_guardrail`) that `ReActStrategy::run_with_active_tools`
-and `run_hitl` call from their loops. `parse_response` (`avs-react/src/parse.rs`)
+and `run_hitl` call from their loops. A shared ReAct helper also resolves the
+active names through `ToolRegistry::tool_definitions_for` and selects the
+appropriate `LlmRunner` entry point. `parse_response` (`avs-react/src/parse.rs`)
 turns raw model text into a `CycleAction` (`Continue`, `ToolCall`, `ToolCalls`,
 `Done`, `Error`) that the loop matches on. `PlanStrategy` and
 `HierarchicalStrategy` share `planner::generate_plan`/`decompose_request`
@@ -124,9 +129,9 @@ single construction path: `avs-agent` matches no strategy type by name
 anywhere else in the workspace. `StrategyRouter` (`avs-router/src/router.rs`)
 is a separate, self-contained mechanism: it asks the LLM to pick a
 `StrategyName` given a request and a `strategy_description`, but returns only
-the name — the caller would still have to call `avs-strategy::build()` with
-the corresponding `StrategyKind` to get a runnable strategy, and nothing in
-the workspace currently does that wiring.
+the name. `avs-agent` owns the non-cyclic conversion to `StrategyKind` and,
+when routing is explicitly configured, builds the corresponding runnable
+strategy from its existing runner, prompts, and tools for each invocation.
 
 ## Runtime Flows
 
@@ -146,7 +151,9 @@ the workspace currently does that wiring.
    there is no session to persist the suspended state into.
 4. On resume, `Agent` reconstructs the message buffer from the persisted
    `HitlInterrupt.history` and calls `run_hitl` again with the same
-   `active_tool_names`.
+   `active_tool_names`. A router-enabled HITL session reconstructs ReAct for
+   this continuation; without a router, resume keeps using the supplied fixed
+   strategy.
 
 **ReAct loop (`ReActStrategy::run_with_active_tools`, `avs-react/src/react.rs`):**
 1. `prepare_buffer_with_active` inserts a one-time ReAct preamble (tool
@@ -154,23 +161,28 @@ the workspace currently does that wiring.
    plus few-shot examples from `PromptRegistry::get_examples("react_examples")`)
    before the first non-system message, but only if a `react.j2` template is
    registered (`PromptRegistry::has_react_template`).
-2. Each iteration: `LlmRunner::invoke(buf.clone())` gets a raw text response;
-   `check_output_guardrail` screens it; `parse_response` turns it into a
-   `CycleAction`.
-3. `CycleAction::Continue` appends the thought and a nudge message telling
+2. Each iteration resolves `active_tool_names` through
+   `ToolRegistry::tool_definitions_for`. A non-empty result is sent through
+   `LlmRunner::invoke_with_tools`; an empty result uses `LlmRunner::invoke`,
+   preserving `GenerateRequest.tools: None` instead of `Some([])`.
+3. The response path remains text-only: `check_output_guardrail` screens the
+   content and `parse_response` turns the existing
+   `Thought:`/`Action:`/`Action Input:`/`Answer:` format into a `CycleAction`.
+4. `CycleAction::Continue` appends the thought and a nudge message telling
    the model to call a tool or answer; if a `Continue` follows another
    `Continue`, the saved thought is returned as the answer (nudge fallback)
    instead of looping forever.
-4. `CycleAction::ToolCall`/`ToolCalls` execute one tool (`CycleSkeleton::execute_tool`)
+5. `CycleAction::ToolCall`/`ToolCalls` execute one tool (`CycleSkeleton::execute_tool`)
    or many concurrently (`CycleSkeleton::execute_many`) and append the
    result(s) as a `User`-role observation message.
-5. `CycleAction::Done` returns `StrategyOutcome::Done(answer)`;
+6. `CycleAction::Done` returns `StrategyOutcome::Done(answer)`;
    `CycleAction::Error` (empty model output) returns `AgentError::Model`.
-6. The loop errors with `ModelError::Timeout` once `iteration` reaches
+7. The loop errors with `ModelError::Timeout` once `iteration` reaches
    `max_iterations`.
 
-**ReAct loop with HITL (`ReActStrategy::run_hitl`):** identical to the plain
-loop except tool dispatch goes through `ToolRegistry::execute_many_hitl(calls, &hook)`
+**ReAct loop with HITL (`ReActStrategy::run_hitl`):** uses the same active-tool
+request helper and text response parser as the plain loop, but tool dispatch
+goes through `ToolRegistry::execute_many_hitl(calls, &hook)`
 instead of `execute_tool`/`execute_many`. A history snapshot is taken
 *before* the assistant's tool-call message is pushed, so a suspended
 `HitlInterrupt.history` never contains a dangling tool call with no
@@ -211,7 +223,19 @@ call answers the original request from all sub-goal results.
    user's request; the lower-cased, trimmed response is matched against
    `"react"`/`"plan_and_execute"`/`"plan-and-execute"`/`"hierarchical"`.
 4. An unrecognized response returns `AgentError::Model(ModelError::InvalidResponse)`
-   rather than defaulting to a strategy — routing is fail-closed.
+   rather than defaulting to a strategy. A recognized name that is absent from
+   the router's configured `available_strategies` returns the same error;
+   model output cannot expand that allowlist.
+5. `Agent::invoke` converts the result to `StrategyKind` and calls `build()`
+   with `DEFAULT_ROUTED_STRATEGY_MAX_ITERATIONS` (10). This happens on every
+   routed invocation; the strategy object is not cached across sessions or
+   turns. Construction receives a `ToolRegistry` restricted exactly to
+   `active_tool_names`, including a truly empty registry for an empty set, and
+   the same names continue through `run_with_active_tools`/`run_hitl`.
+6. With configured HITL, only routed ReAct is allowed. Plan-and-Execute and
+   Hierarchical do not override `run_hitl`, so `Agent` returns
+   `RoutedStrategyDoesNotSupportHitl` before executing either one rather than
+   silently discarding the interception hook.
 
 ## Key Decisions
 
@@ -298,27 +322,27 @@ call answers the original request from all sub-goal results.
 - **Consequences** — adding a fourth strategy means adding a `StrategyKind`
   variant and a `build()` match arm in one place; the current `StrategyKind`
   enum (`React`, `Plan`, `Hierarchical`) has no `Router` variant, unlike the
-  spec's four-variant proposal — `StrategyRouter` is not one of the things
-  `build()` can construct, and nothing currently calls `StrategyRouter::route`
-  and then `build()`s the result.
+  spec's four-variant proposal. `StrategyRouter` is not itself something
+  `build()` constructs; it selects the kind that `Agent::invoke` asks the
+  factory to build when routing is enabled.
 - **Ref** — 2026-05-25, commit `f8a32f5` (same commit that simplified `build()`'s
   signature down to its current parameters).
 
 ## Implementation Notes
 
-- **Native tool-calling plumbing exists but is unused by every strategy
-  today (known gap).** `avs-core::model::GenerateRequest` has a
-  `tools: Option<Vec<ToolDefinition>>` field explicitly commented "for native
-  tool calling," but `LlmRunner::invoke`/`invoke_structured` (the only entry
-  points any strategy calls) always construct `GenerateRequest { tools: None, .. }`.
-  `ReActStrategy` gets tool awareness into the model by rendering
-  `ErasedTool::schema()` output as prose into the `react.j2` preamble
-  (`CycleSkeleton::build_tools_str_active`) and parsing the reply as
-  `Thought:`/`Action:`/`Action Input:`/`Answer:` text (`parse::parse_response`),
-  not by sending structured tool definitions and reading a native
-  tool-call response. No PR or spec records a rationale for leaving `tools`
-  unpopulated; it is observed current state, not a documented scoping
-  decision.
+- PR #31 verification follow-ups wire request-side native definitions into
+  both ReAct loops (`9b3e717`, `c06a94f`, `75cc734`) and make dynamic routing
+  opt-in, allow-listed, tool-scoped, resume-stable, and fail-closed under
+  unsupported HITL strategies (`9cbb02f`, `92fbf2a`).
+- **ReAct has request-side native tool definitions, not full native tool
+  calling.** Its normal and HITL loops send non-empty active registry
+  definitions through `LlmRunner::invoke_with_tools`, while empty or
+  all-unknown active sets use `invoke` and retain `tools: None`. The existing
+  prose schemas from `CycleSkeleton::build_tools_str_active` remain as a text
+  fallback, and replies still go through `parse_response`; native tool-call
+  response parsing is explicitly deferred. `PlanStrategy` and
+  `HierarchicalStrategy` still call `LlmRunner::invoke` and do not send native
+  definitions.
 - `CycleAction::ToolCalls` (plural) lets one model turn request several
   tools at once; `CycleSkeleton::execute_many` runs them concurrently and the
   observations are joined back into a single `User` message in call order —
@@ -332,12 +356,12 @@ call answers the original request from all sub-goal results.
 - `PlanStrategy`/`HierarchicalStrategy` drop any `PlanStep` whose `id`
   exceeds `max_iterations` silently (`break`, not an error) — a plan with
   more steps than the iteration budget just executes a truncated prefix.
-- `avs-router`'s `StrategyRouter` is fully functional and unit-tested in
-  isolation but is not reachable from any binary in the workspace — no
-  example and no `avs-agent` code path constructs one or calls `route()`.
-  Treat it as available-but-unwired rather than dead code: it has no
-  callers to keep in sync with, but also delivers no runtime behavior until
-  something composes it with `avs-strategy::build()`.
+- `avs-router`'s `StrategyRouter` is opt-in through
+  `AgentBuilder::with_strategy_router`; no router means the required fixed
+  strategy behaves exactly as before. Routed strategies are built per
+  session-aware invocation with a max-iteration default of 10. There is no
+  dedicated router wiki page; this page and [Agent](agent.md) document the
+  composition boundary.
 
 ## Source Anchors
 
