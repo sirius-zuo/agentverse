@@ -1,7 +1,8 @@
 //! Integration tests for StrategyRouter.
 
-use agentverse::{Config, LlmRunner};
+use agentverse::{AgentError, Config, LlmRunner, ModelError};
 use agentverse_router::{StrategyName, StrategyRouter};
+use httpmock::prelude::*;
 use std::sync::Arc;
 
 fn make_router() -> StrategyRouter {
@@ -54,4 +55,43 @@ fn test_strategy_display() {
     assert_eq!(StrategyName::ReAct.to_string(), "react");
     assert_eq!(StrategyName::PlanAndExecute.to_string(), "plan_and_execute");
     assert_eq!(StrategyName::Hierarchical.to_string(), "hierarchical");
+}
+
+#[tokio::test]
+async fn strategy_router_rejects_model_selection_outside_allowlist() {
+    let server = MockServer::start_async().await;
+    server
+        .mock_async(|when, then| {
+            when.method(POST).path("/chat/completions");
+            then.status(200).json_body(serde_json::json!({
+                "choices": [{"message": {"role": "assistant", "content": "plan_and_execute"}}],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}
+            }));
+        })
+        .await;
+    let router = StrategyRouter::new(
+        Arc::new(
+            LlmRunner::from_config(Config {
+                provider: agentverse::ProviderConfig::openai(
+                    "test",
+                    "test-key",
+                    Some(server.base_url()),
+                ),
+                max_messages: 10,
+                tools: vec![],
+                prompts_dir: None,
+                system_prompt: None,
+            })
+            .unwrap(),
+        ),
+        vec![StrategyName::ReAct],
+    );
+
+    let error = router.route("make a plan").await.unwrap_err();
+
+    assert!(matches!(
+        error,
+        AgentError::Model(ModelError::InvalidResponse(ref message))
+            if message.contains("not in the router's available strategies")
+    ));
 }

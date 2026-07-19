@@ -126,13 +126,25 @@ impl StrategyRouter {
         let response = self.runner.invoke(messages).await?;
         let selected = response.content.trim().to_lowercase();
 
-        match selected.as_str() {
-            "react" => Ok(StrategyName::ReAct),
-            "plan_and_execute" | "plan-and-execute" => Ok(StrategyName::PlanAndExecute),
-            "hierarchical" => Ok(StrategyName::Hierarchical),
-            _ => Err(AgentError::Model(agentverse::ModelError::InvalidResponse(
-                format!("Unknown strategy: {}", response.content),
-            ))),
+        let selected = match selected.as_str() {
+            "react" => StrategyName::ReAct,
+            "plan_and_execute" | "plan-and-execute" => StrategyName::PlanAndExecute,
+            "hierarchical" => StrategyName::Hierarchical,
+            _ => {
+                return Err(AgentError::Model(agentverse::ModelError::InvalidResponse(
+                    format!("Unknown strategy: {}", response.content),
+                )))
+            }
+        };
+
+        if self.strategies.contains(&selected) {
+            Ok(selected)
+        } else {
+            Err(AgentError::Model(agentverse::ModelError::InvalidResponse(
+                format!(
+                    "Selected strategy `{selected}` is not in the router's available strategies"
+                ),
+            )))
         }
     }
 

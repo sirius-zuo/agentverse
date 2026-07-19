@@ -15,6 +15,11 @@ on none of them. Its job is to make one LLM call reliably and return a
 structured response — everything above it (strategy loops, memory, tools) is
 built in terms of the types it exports.
 
+Its maintained observability surface is `metrics`, which provides the shared
+OpenTelemetry `record_*` facade; workspace logging is provided separately by
+`avs-logging`. The former `avs-core` tracing scaffold and its legacy feature
+are removed rather than retained as an inactive API.
+
 ## Position in the System
 
 `avs-core` consumes no other workspace crate — it is the dependency-free
@@ -28,7 +33,7 @@ layer (`avs-hitl`, [memory](memory.md), [session](session.md),
 [Subagent](subagent.md) additionally calls `ConnectionManager::with_model`
 directly for per-subagent model overrides, and the strategy crates render
 prompts through `PromptRegistry` and construct `GenerateRequest` values that
-flow into `LlmRunner::invoke`/`invoke_structured`.
+flow into `LlmRunner::invoke`, `invoke_with_tools`, or `invoke_structured`.
 
 ## Architecture
 
@@ -74,6 +79,7 @@ classDiagram
     class LlmRunner {
         +from_config(Config) LlmRunner
         +invoke(messages) GenerateResponse
+        +invoke_with_tools(messages, tools) GenerateResponse
         +invoke_structured(messages, schema) GenerateResponse
     }
     LlmRunner --> ConnectionManager : Arc~ConnectionManager~
@@ -105,9 +111,11 @@ via `ConnectionManager::from_config`, which asks a `ProviderRegistry` to
 resolve a `ProviderConfig { name, settings }` into a `ResolvedProvider`
 (provider instance plus `api_base`/`api_key`/`model_name`). `LlmRunner` is the
 thin entry point strategy crates call: it holds an `Arc<ConnectionManager>`
-and exposes `invoke`/`invoke_structured`, both implemented through a shared
+and exposes `invoke`, `invoke_with_tools`, and `invoke_structured`, all implemented through a shared
 `invoke_inner` that splits `System`-role messages out of the conversation and
-assembles a `GenerateRequest`. `PromptRegistry` (in `prompt.rs`) is a separate,
+assembles a `GenerateRequest`. `invoke_with_tools` forwards native tool definitions to
+the provider request path; it does not parse native tool responses or run a tool loop.
+`PromptRegistry` (in `prompt.rs`) is a separate,
 decoupled subsystem: a minijinja `Environment` pre-loaded with default
 templates (`system`, `react`, `strategies.*`, `router`), optionally extended
 from a directory of `.j2`/`.toml` files or a `PromptConfig`. `LlmRunner` does
@@ -143,6 +151,22 @@ to build the `system` string and `Example`s they pass into a `GenerateRequest`.
    the schema is silently not enforced server-side for Gemini.
 4. The rest of `ConnectionManager::generate` (retry, circuit breaker,
    fallback, `parse_response`) is unchanged from the unstructured path.
+
+**`invoke_with_tools` (native tool definitions):**
+1. Caller passes `messages` plus `Vec<ToolDefinition>` to
+   `LlmRunner::invoke_with_tools`.
+2. `invoke_inner` partitions messages as above and builds a `GenerateRequest`
+   with `tools: Some(tools)` and `response_format: None`.
+3. Each provider serializes the tool definitions into its own wire format;
+   `ConnectionManager::generate` sends that request through its normal retry,
+   circuit-breaker, and fallback path.
+4. ReAct's normal and HITL loops use this entry point when their active tool
+   names resolve to at least one registry definition. They fall back to
+   `invoke` when no definitions resolve, preserving `tools: None` rather than
+   sending `Some([])`.
+5. The returned response remains text-only today. ReAct still uses its
+   `Thought:`/`Action:`/`Action Input:`/`Answer:` parser; parsing native
+   tool-call response payloads and dispatching them remains deferred.
 
 **Retry, circuit breaker, and fallback inside `generate`:**
 1. Before building the request, `generate` takes the circuit breaker lock; if
@@ -219,6 +243,9 @@ to build the `system` string and `Example`s they pass into a `GenerateRequest`.
   construction (defaulting `disable_thinking` to `true`) to keep ReAct-style
   structured-text output reliable against reasoning-capable OpenAI-compatible
   backends; it is not re-read per request.
+- Metrics remain the core crate's maintained observability path. It creates
+  OTel instruments only through `avs-core/src/metrics.rs`; binaries install
+  exporters, while `avs-logging` owns `tracing` subscriber initialization.
 - Known follow-ups explicitly deferred out of scope (per PR #24's body):
   parsing `Retry-After` in HTTP-date form (only integer-seconds is handled
   today) and `--all-targets` on the CI clippy job. Per PR #27: registering a

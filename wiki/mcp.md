@@ -29,13 +29,13 @@ It depends on nothing else in the workspace; it sits at the same
 architectural layer as `avs-tools` and `avs-guardrails` per
 `scripts/check-layering.sh`.
 
-No workspace crate currently depends on `agentverse-mcp` — `avs-agent`,
-`avs-react`, `avs-strategy`, and the rest of the reasoning stack are
-unaware MCP exists. It is wired only from example binaries
-(`examples/mcp-demo`, `examples/business-report`,
-`examples/project-feasibility`), which construct `McpClient`, `McpServer`,
-and `McpCatalogSource` directly in `main.rs` rather than through any
-framework-level integration point.
+No non-example runtime crate currently depends on `agentverse-mcp` —
+`avs-agent`, `avs-react`, `avs-strategy`, and the rest of the reasoning stack
+are unaware MCP exists. The runtime-owned maintained call path is
+`examples/mcp-demo`: it constructs `McpServerConfig` and calls
+`McpLoader::load` to populate its client registry. `McpClient`,
+`McpTransport`, and `McpCatalogSource` remain public for advanced callers
+that need to manage connection or discovery themselves.
 
 ## Architecture
 
@@ -185,10 +185,10 @@ connection, handshake, protocol, parsing, tool-call, and config failures.
    visible — minus `find_tools` — to a client in any other process. This
    is exactly the round trip `examples/mcp-demo` runs in a single binary:
    a server registry holding `Calculator` and `DateTimeTool` is served by
-   `McpServer`, then rediscovered into a separate client registry by
-   `McpCatalogSource` before an agent runs against it.
+   `McpServer`, then loaded into a separate client registry by
+   `McpLoader` before an agent runs against it.
 
-**Config-driven loading: `agent.toml` → `McpServerConfig` → `McpLoader`:**
+**Config-driven loading: MCP config → `McpServerConfig` → `McpLoader`:**
 1. An operator declares one or more MCP servers as `[[mcp_servers]]` TOML
    entries, each deserialized into an `McpServerConfig` with `transport`
    selecting `TransportKind::Stdio` or `TransportKind::StreamableHttp`.
@@ -200,7 +200,10 @@ connection, handshake, protocol, parsing, tool-call, and config failures.
 3. `McpLoader::load(registry, servers)` iterates the config slice, calls
    `into_transport` then `McpClient::connect` for each entry, and hands
    the resulting client to `McpCatalogSource::populate`, summing the
-   discovered tool count across every configured server.
+   discovered tool count across every configured server. The maintained
+   `examples/mcp-demo` path constructs this config for its in-process
+   endpoint and calls `McpLoader::load`; manual composition stays available
+   for advanced integrations.
 
 ## Key Decisions
 
@@ -279,25 +282,19 @@ Newest first.
 
 ## Implementation Notes
 
+- The undeclared pre-rewrite adapter was removed in `603c612`; the maintained
+  config-driven loader path and its in-process integration coverage landed in
+  `baf68ff`, with its example-backed ownership clarified in `1ee517c`.
 - `McpClient::call_tool` reads only the first text content block out of a
   `tools/call` response (`content.iter().find_map(|c| c["text"].as_str())`)
   and wraps it in `Value::String`; a server returning image/resource
   content blocks, multiple content blocks, or non-text-only results has no
-  representation past that first text block. Known debt.
-- `avs-mcp/src/tools.rs` still contains a pre-rewrite `McpToolAdapter` that
-  implements the old `AsyncTool` trait directly (predating `Tool`/
-  `ErasedTool`). It was not touched by the PR #5 rewrite that added
-  `adapter.rs`, is not declared as `mod tools;` in `lib.rs`, and has no
-  references anywhere in the crate — it is dead source left in the tree.
-  Known debt.
-- `McpLoader::load` has no call site in the workspace: no example, test,
-  or `AgentConfig` field currently wires an `agent.toml`'s
-  `[[mcp_servers]]` array into it. Every current example
-  (`examples/mcp-demo`, `examples/business-report`,
-  `examples/project-feasibility`) constructs `McpClient`/`McpServer`/
-  `McpCatalogSource` by hand in `main.rs` instead; `McpServerConfig`
-  deserialization and `into_transport` are exercised only directly by
-  `avs-mcp/tests/config_test.rs`. Known debt.
+  representation past that first text block. This is intentional deferred
+  debt; the loader wiring follow-up did not change response-content modeling.
+- `examples/mcp-demo` is the maintained configuration-driven loading path:
+  it constructs `McpServerConfig` for its local endpoint and calls
+  `McpLoader::load`. Lower-level `McpClient`, `McpTransport`, and
+  `McpCatalogSource` APIs remain public for advanced integrations.
 - `McpServer::run` panics (`.expect("call bind_random_port before run")`)
   if called before `bind_random_port`, and `axum::serve(...).await.unwrap()`
   propagates a server-startup failure as a panic rather than a `Result`.

@@ -120,6 +120,11 @@ impl SubAgentExecutor {
         // depth=0: tools registered at the agent root always spawn top-level subagents
         registry.register(crate::tool::SubAgentTool::new(Arc::clone(executor), 0));
     }
+
+    /// Atomically register the root `SubAgentTool` if one is not already present.
+    pub fn register_tool_if_absent(executor: &Arc<Self>, registry: &Arc<ToolRegistry>) -> bool {
+        registry.register_if_absent(crate::tool::SubAgentTool::new(Arc::clone(executor), 0))
+    }
 }
 
 // ── internal helpers ──────────────────────────────────────────────────────────

@@ -1,8 +1,11 @@
 use super::{Agent, HitlConfig};
 use agentverse::{LlmRunner, PromptRegistry, RunStrategy};
+use agentverse_hitl::{HitlPolicy, InMemoryQueue};
 use agentverse_memory::{LongtermMemory, WorkingMemory};
+use agentverse_router::StrategyRouter;
 use agentverse_session::{SessionManager, SessionMemory};
 use agentverse_skill::SkillConfig;
+use agentverse_subagent::SubAgentExecutor;
 use agentverse_tools::ToolRegistry;
 use std::sync::Arc;
 use std::time::Duration;
@@ -22,6 +25,8 @@ pub struct AgentBuilder {
     prompts: Arc<PromptRegistry>,
     session_memory: Arc<dyn SessionMemory>,
     strategy: Arc<dyn RunStrategy>,
+    strategy_router: Option<StrategyRouter>,
+    subagent_executor: Option<Arc<SubAgentExecutor>>,
     enable_http_server: bool,
     longterm_memory: Option<Arc<dyn LongtermMemory>>,
     working_memory: Option<Arc<dyn WorkingMemory>>,
@@ -44,6 +49,8 @@ impl AgentBuilder {
             prompts,
             session_memory,
             strategy,
+            strategy_router: None,
+            subagent_executor: None,
             enable_http_server: false,
             longterm_memory: None,
             working_memory: None,
@@ -78,12 +85,44 @@ impl AgentBuilder {
         self
     }
 
+    /// Route each session-aware invocation to a freshly constructed strategy.
+    /// Without this option, the supplied fixed strategy remains in use.
+    pub fn with_strategy_router(mut self, router: StrategyRouter) -> Self {
+        self.strategy_router = Some(router);
+        self
+    }
+
+    /// Register subagent spawning during `build` unless the registry already
+    /// contains `spawn_subagent`, in which case the existing registration wins.
+    pub fn with_subagent_executor(mut self, executor: Arc<SubAgentExecutor>) -> Self {
+        self.subagent_executor = Some(executor);
+        self
+    }
+
     pub fn with_cleanup_config(mut self, config: crate::workers::CleanupConfig) -> Self {
         self.cleanup_config = Some(config);
         self
     }
 
     pub fn build(self) -> Arc<Agent> {
+        let hitl = match self.hitl {
+            Some(hitl) => Some(hitl),
+            None => self.skills.as_ref().and_then(|skills| {
+                let trusted_system_skills = skills.trusted_system_skills();
+                let has_hitl_declarations = trusted_system_skills.iter().any(|skill| {
+                    !skill.hitl_tools.is_empty()
+                        || skill.phase_gate
+                        || !skill.checkpoints.is_empty()
+                });
+                has_hitl_declarations.then(|| HitlConfig {
+                    policy: HitlPolicy::from_system_skills(trusted_system_skills),
+                    queue: Arc::new(InMemoryQueue::new()),
+                })
+            }),
+        };
+        if let Some(executor) = &self.subagent_executor {
+            SubAgentExecutor::register_tool_if_absent(executor, &self.tools);
+        }
         let session_memory_for_workers = Arc::clone(&self.session_memory);
         let agent = Arc::new(Agent {
             runner: self.runner,
@@ -91,6 +130,7 @@ impl AgentBuilder {
             prompts: self.prompts,
             sessions: Arc::new(SessionManager::new(self.session_memory)),
             strategy: self.strategy,
+            strategy_router: self.strategy_router,
             working_memory: self.working_memory.unwrap_or_else(|| {
                 Arc::new(agentverse_memory::CacheMemory::new(Duration::from_secs(
                     300,
@@ -98,7 +138,7 @@ impl AgentBuilder {
             }),
             longterm_memory: self.longterm_memory,
             skills: self.skills,
-            hitl: self.hitl,
+            hitl,
             cleanup_config: self.cleanup_config.unwrap_or_default(),
         });
 

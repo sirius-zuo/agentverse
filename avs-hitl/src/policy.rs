@@ -33,6 +33,30 @@ impl HitlPolicy {
         }
     }
 
+    pub fn from_system_skills<'a>(
+        skills: impl IntoIterator<Item = &'a agentverse_skill::Skill>,
+    ) -> Self {
+        let mut policy = Self::new();
+
+        for skill in skills {
+            if !skill.hitl_tools.is_empty() {
+                policy
+                    .skill_tool_gates
+                    .insert(skill.id.clone(), skill.hitl_tools.iter().cloned().collect());
+            }
+            if skill.phase_gate {
+                policy.skill_phase_gates.insert(skill.id.clone());
+            }
+            if !skill.checkpoints.is_empty() {
+                policy
+                    .skill_checkpoints
+                    .insert(skill.id.clone(), skill.checkpoints.clone());
+            }
+        }
+
+        policy
+    }
+
     pub fn requires_tool_approval(&self, skill_id: Option<&str>, tool_name: &str) -> bool {
         if self.global_tool_blocklist.contains(tool_name) {
             return true;
@@ -49,5 +73,68 @@ impl HitlPolicy {
 
     pub fn is_checkpoint_tool(tool_name: &str) -> bool {
         tool_name == "request_checkpoint"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentverse_skill::Skill;
+
+    fn skill(id: &str, hitl_tools: Vec<&str>, phase_gate: bool, checkpoints: Vec<&str>) -> Skill {
+        Skill {
+            id: id.into(),
+            version: "1.0.0".into(),
+            description: "test skill".into(),
+            tags: vec![],
+            tools: vec![],
+            activation_domains: vec![],
+            instructions: String::new(),
+            documents: vec![],
+            max_iterations: None,
+            hitl_tools: hitl_tools.into_iter().map(str::to_owned).collect(),
+            phase_gate,
+            checkpoints: checkpoints.into_iter().map(str::to_owned).collect(),
+        }
+    }
+
+    #[test]
+    fn from_system_skills_includes_declared_hitl_metadata() {
+        let system_skill = skill(
+            "financial-review",
+            vec!["ledger_post"],
+            true,
+            vec!["draft_ready", "before_send"],
+        );
+
+        let policy = HitlPolicy::from_system_skills([&system_skill]);
+
+        assert!(policy.requires_tool_approval(Some("financial-review"), "ledger_post"));
+        assert!(policy.requires_tool_approval(None, "exec_command"));
+        assert!(policy.requires_phase_gate("financial-review"));
+        assert_eq!(
+            policy.skill_checkpoints.get("financial-review"),
+            Some(&vec!["draft_ready".into(), "before_send".into()]),
+        );
+    }
+
+    #[test]
+    fn from_system_skills_ignores_parsed_metadata_outside_the_trusted_collection() {
+        let system_skill = skill("financial-review", vec!["ledger_post"], false, vec![]);
+        let user_skill = skill(
+            "user-uploaded-skill",
+            vec!["user_only_tool"],
+            true,
+            vec!["user_checkpoint"],
+        );
+
+        let policy = HitlPolicy::from_system_skills([&system_skill]);
+
+        assert_eq!(user_skill.hitl_tools, vec!["user_only_tool"]);
+        assert!(user_skill.phase_gate);
+        assert_eq!(user_skill.checkpoints, vec!["user_checkpoint"]);
+        assert!(!policy.requires_phase_gate(&user_skill.id));
+        assert!(!policy.requires_tool_approval(Some(&user_skill.id), "user_only_tool"));
+        assert!(!policy.skill_checkpoints.contains_key(&user_skill.id));
     }
 }

@@ -1,6 +1,5 @@
 // HTTP server module — only compiled with the `http` feature.
 
-mod aether_client;
 pub(crate) mod auth;
 mod config;
 mod envelope;

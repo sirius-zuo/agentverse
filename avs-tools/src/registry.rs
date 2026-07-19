@@ -64,6 +64,24 @@ impl ToolRegistry {
         self.register_with_options(tool, ToolOptions::default());
     }
 
+    /// Register a tool only when its name is absent, returning whether it was inserted.
+    /// The tool map and search document are updated once under the same map write lock.
+    pub fn register_if_absent<T: agentverse::Tool + 'static>(&self, tool: T) -> bool {
+        let name = tool.name().to_string();
+        let text = format!("{} {}", tool.name(), tool.description());
+        let erased: Arc<dyn ErasedTool> = Arc::new(tool);
+        let mut tools = self.tools.write().unwrap();
+
+        match tools.entry(name.clone()) {
+            std::collections::hash_map::Entry::Occupied(_) => false,
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                self.index.write().unwrap().insert(&name, &text);
+                entry.insert((erased, ToolOptions::default()));
+                true
+            }
+        }
+    }
+
     /// Register a tool with explicit category and execution mode.
     pub fn register_with_options<T: agentverse::Tool + 'static>(&self, tool: T, opts: ToolOptions) {
         let name = tool.name().to_string();
@@ -224,6 +242,23 @@ impl ToolRegistry {
             .collect()
     }
 
+    /// Return native tool definitions for the requested registered tools.
+    pub fn tool_definitions_for(&self, names: &[String]) -> Vec<agentverse::ToolDefinition> {
+        let tools = self.tools.read().unwrap();
+        names
+            .iter()
+            .filter_map(|name| {
+                let (tool, _) = tools.get(name)?;
+                let schema = tool.schema();
+                Some(agentverse::ToolDefinition {
+                    name: schema.get("name")?.as_str()?.to_string(),
+                    description: schema.get("description")?.as_str()?.to_string(),
+                    parameters: schema.get("input_schema")?.clone(),
+                })
+            })
+            .collect()
+    }
+
     /// BM25 keyword search over tool names and descriptions.
     pub fn search(&self, query: &str, limit: usize) -> Vec<ToolInfo> {
         let hits = self.index.read().unwrap().search(query, limit);
@@ -261,17 +296,14 @@ impl ToolRegistry {
         new_reg
     }
 
-    /// Return a new registry containing only tools whose names appear in `names`.
-    /// `spawn_subagent` is always excluded regardless of `names` — SubAgents cannot
-    /// spawn sub-SubAgents.
-    pub fn filter_by_names(&self, names: &[String]) -> Arc<ToolRegistry> {
+    fn copy_named_tools(&self, names: &[String], exclude_subagent_spawner: bool) -> Arc<Self> {
         let new_reg = Arc::new(ToolRegistry {
             tools: RwLock::new(HashMap::new()),
             index: RwLock::new(BM25Index::new()),
         });
         let tools = self.tools.read().unwrap();
         for name in names {
-            if name == SPAWN_SUBAGENT_TOOL_NAME {
+            if exclude_subagent_spawner && name == SPAWN_SUBAGENT_TOOL_NAME {
                 continue;
             }
             if let Some((tool, opts)) = tools.get(name) {
@@ -285,6 +317,19 @@ impl ToolRegistry {
             }
         }
         new_reg
+    }
+
+    /// Return a new registry containing exactly the registered tools named in `names`.
+    /// An empty list returns an empty registry.
+    pub fn restricted_to_names(&self, names: &[String]) -> Arc<Self> {
+        self.copy_named_tools(names, false)
+    }
+
+    /// Return a new registry containing only tools whose names appear in `names`.
+    /// `spawn_subagent` is always excluded regardless of `names` — SubAgents cannot
+    /// spawn sub-SubAgents.
+    pub fn filter_by_names(&self, names: &[String]) -> Arc<ToolRegistry> {
+        self.copy_named_tools(names, true)
     }
 
     pub fn has_tool(&self, name: &str) -> bool {
@@ -400,6 +445,54 @@ mod tests {
             reg.tool_summaries_for(&["ghost".to_string()]),
             "none (reasoning only)"
         );
+    }
+
+    #[test]
+    fn tool_definitions_for_ignores_unknown_names_and_preserves_order() {
+        use crate::calculator::Calculator;
+        use crate::datetime::DateTimeTool;
+
+        let reg = ToolRegistry::new();
+        reg.register(Calculator);
+        reg.register(DateTimeTool);
+
+        let names = vec![
+            "datetime".to_string(),
+            "ghost".to_string(),
+            "calculator".to_string(),
+        ];
+        let definitions = reg.tool_definitions_for(&names);
+
+        assert_eq!(
+            definitions
+                .iter()
+                .map(|definition| definition.name.as_str())
+                .collect::<Vec<_>>(),
+            ["datetime", "calculator"]
+        );
+    }
+
+    #[test]
+    fn tool_definitions_for_maps_schema_fields() {
+        use crate::calculator::Calculator;
+
+        let reg = ToolRegistry::new();
+        reg.register(Calculator);
+
+        let definitions = reg.tool_definitions_for(&["calculator".to_string()]);
+        let definition = definitions.first().unwrap();
+        let schema = reg
+            .schema()
+            .into_iter()
+            .find(|schema| schema["name"] == "calculator")
+            .unwrap();
+
+        assert_eq!(definition.name, schema["name"].as_str().unwrap());
+        assert_eq!(
+            definition.description,
+            schema["description"].as_str().unwrap()
+        );
+        assert_eq!(definition.parameters, schema["input_schema"]);
     }
 
     #[test]

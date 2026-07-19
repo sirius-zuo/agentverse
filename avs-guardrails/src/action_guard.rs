@@ -4,13 +4,25 @@ use serde_json::Value;
 use std::sync::Arc;
 use uuid::Uuid;
 
-/// ActionGuard: pre-execution check for dangerous tool calls.
+/// Legacy pre-execution check for dangerous tool calls.
+///
+/// # Deprecated
+/// For runtime tool interception, use `HitlContext` with
+/// `ToolRegistry::execute_many_hitl`. When HITL is configured,
+/// `Agent::invoke` constructs the hook and the ReAct strategy uses that
+/// supported path automatically.
+///
 /// Returns Some(approval_id) when the call is intercepted, None when allowed.
+#[deprecated(
+    since = "0.1.0",
+    note = "ActionGuard is retained for compatibility; use HitlContext with ToolRegistry::execute_many_hitl through Agent::invoke/ReAct instead"
+)]
 pub struct ActionGuard {
     policy: Option<HitlPolicy>,
     queue: Option<Arc<dyn ApprovalQueue>>,
 }
 
+#[allow(deprecated)] // Retained implementation of the deprecated compatibility API.
 impl ActionGuard {
     pub fn new() -> Self {
         Self {
@@ -63,6 +75,7 @@ impl ActionGuard {
     }
 }
 
+#[allow(deprecated)] // Retained implementation of the deprecated compatibility API.
 impl Default for ActionGuard {
     fn default() -> Self {
         Self::new()
@@ -70,6 +83,7 @@ impl Default for ActionGuard {
 }
 
 #[cfg(test)]
+#[allow(deprecated)] // Compatibility tests intentionally exercise the legacy API.
 mod tests {
     use super::*;
 
