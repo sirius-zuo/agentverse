@@ -1,5 +1,6 @@
 // HTTP server module — only compiled with the `http` feature.
 
+mod aether;
 pub(crate) mod auth;
 mod config;
 mod envelope;
@@ -8,6 +9,7 @@ mod routes;
 mod session_routes;
 
 use crate::Agent;
+use aether::{aether_invoke, aether_resume};
 use agentverse_guardrails::RateLimiter;
 use axum::{
     middleware,
@@ -16,7 +18,7 @@ use axum::{
 };
 use config::HttpConfig;
 use openapi::openapi_json;
-use routes::{aether_invoke, aether_resume, health, invoke, ready};
+use routes::{health, invoke, ready};
 use session_routes::{create_session, end_session, get_session, list_messages, send_message};
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
