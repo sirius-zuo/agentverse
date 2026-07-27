@@ -156,11 +156,11 @@ impl agentverse::RunStrategy for HierarchicalStrategy {
         let synthesis_messages = vec![
             Message {
                 role: MessageRole::System,
-                content: final_prompt,
+                content: "You are a synthesis assistant. Combine the results of the completed sub-goals below into a single, comprehensive answer to the user's request.".to_string(),
             },
             Message {
                 role: MessageRole::User,
-                content: "Based on the completed sub-goals, provide the final answer.".to_string(),
+                content: final_prompt,
             },
         ];
 
