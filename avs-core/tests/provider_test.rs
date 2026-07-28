@@ -150,6 +150,88 @@ fn test_openai_build_request_with_tools_serializes_chat_tools() {
 }
 
 #[test]
+fn test_openai_build_request_serializes_assistant_tool_calls() {
+    let provider = OpenAICompatible::new();
+    let request = GenerateRequest {
+        system: None,
+        messages: vec![Message {
+            role: MessageRole::Assistant,
+            content: vec![agentverse::ContentBlock::ToolUse {
+                id: "call_1".to_string(),
+                name: "calculate".to_string(),
+                input: json!({"a": 1, "b": 2}),
+            }],
+        }],
+        tools: None,
+        ..Default::default()
+    };
+    let body = provider.build_request("gpt", request).unwrap();
+    let message = &body["messages"][0];
+    assert_eq!(message["role"], "assistant");
+    assert!(
+        message.get("content").is_none(),
+        "content must be omitted when there is no text"
+    );
+    let tool_call = &message["tool_calls"][0];
+    assert_eq!(tool_call["id"], "call_1");
+    assert_eq!(tool_call["type"], "function");
+    assert_eq!(tool_call["function"]["name"], "calculate");
+    let arguments: serde_json::Value =
+        serde_json::from_str(tool_call["function"]["arguments"].as_str().unwrap()).unwrap();
+    assert_eq!(arguments, json!({"a": 1, "b": 2}));
+}
+
+#[test]
+fn test_openai_build_request_serializes_tool_results_as_separate_messages() {
+    let provider = OpenAICompatible::new();
+    let request = GenerateRequest {
+        system: None,
+        messages: vec![Message {
+            role: MessageRole::Tool,
+            content: vec![
+                agentverse::ContentBlock::ToolResult {
+                    tool_use_id: "call_1".to_string(),
+                    content: "3".to_string(),
+                    is_error: false,
+                },
+                agentverse::ContentBlock::ToolResult {
+                    tool_use_id: "call_2".to_string(),
+                    content: "boom".to_string(),
+                    is_error: true,
+                },
+            ],
+        }],
+        tools: None,
+        ..Default::default()
+    };
+    let body = provider.build_request("gpt", request).unwrap();
+    let messages = body["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 2, "each ToolResult must become its own message");
+    assert_eq!(messages[0]["role"], "tool");
+    assert_eq!(messages[0]["tool_call_id"], "call_1");
+    assert_eq!(messages[0]["content"], "3");
+    assert_eq!(messages[1]["role"], "tool");
+    assert_eq!(messages[1]["tool_call_id"], "call_2");
+    assert_eq!(messages[1]["content"], "boom");
+}
+
+#[test]
+fn test_openai_build_request_text_only_message_unaffected() {
+    let provider = OpenAICompatible::new();
+    let request = GenerateRequest {
+        system: None,
+        messages: vec![Message::text(MessageRole::User, "hello")],
+        tools: None,
+        ..Default::default()
+    };
+    let body = provider.build_request("gpt", request).unwrap();
+    assert_eq!(body["messages"][0]["role"], "user");
+    assert_eq!(body["messages"][0]["content"], "hello");
+    assert!(body["messages"][0].get("tool_calls").is_none());
+    assert!(body["messages"][0].get("tool_call_id").is_none());
+}
+
+#[test]
 fn test_openai_parse_response_extracts_tool_calls() {
     let provider = OpenAICompatible::new();
     let body = json!({

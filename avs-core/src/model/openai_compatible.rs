@@ -4,6 +4,7 @@ use serde_json::Value;
 
 use super::ModelProvider;
 use crate::error::ModelError;
+use crate::memory::{ContentBlock, MessageRole};
 use crate::model::{GenerateRequest, GenerateResponse, UsageStats};
 
 #[derive(Debug, Clone)]
@@ -29,7 +30,26 @@ struct ChatRequest {
 #[derive(Debug, Clone, Serialize)]
 struct ChatMessage {
     role: String,
-    content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Vec<ChatToolCallOut>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_call_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ChatToolCallOut {
+    id: String,
+    #[serde(rename = "type")]
+    type_field: &'static str, // "function"
+    function: ChatFunctionCallOut,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ChatFunctionCallOut {
+    name: String,
+    arguments: String, // JSON-encoded, per OpenAI's wire format
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -100,6 +120,45 @@ fn read_disable_thinking() -> bool {
         .unwrap_or(true)
 }
 
+/// Build a `ChatMessage` for a User/Assistant-role message: `Text` blocks
+/// join into `content`, `ToolUse` blocks collect into `tool_calls`.
+/// `ToolResult` blocks are not expected here (they only ever arrive on a
+/// Tool-role message, handled separately) and are ignored.
+fn build_text_message(role: &str, content: Vec<ContentBlock>) -> ChatMessage {
+    let mut text_parts = Vec::new();
+    let mut tool_calls = Vec::new();
+    for block in content {
+        match block {
+            ContentBlock::Text { text } => text_parts.push(text),
+            ContentBlock::ToolUse { id, name, input } => {
+                tool_calls.push(ChatToolCallOut {
+                    id,
+                    type_field: "function",
+                    function: ChatFunctionCallOut {
+                        name,
+                        arguments: serde_json::to_string(&input).unwrap_or_default(),
+                    },
+                });
+            }
+            ContentBlock::ToolResult { .. } => {}
+        }
+    }
+    ChatMessage {
+        role: role.to_string(),
+        content: if text_parts.is_empty() {
+            None
+        } else {
+            Some(text_parts.join("\n"))
+        },
+        tool_calls: if tool_calls.is_empty() {
+            None
+        } else {
+            Some(tool_calls)
+        },
+        tool_call_id: None,
+    }
+}
+
 impl OpenAICompatible {
     pub fn new() -> Self {
         Self {
@@ -124,31 +183,48 @@ impl ModelProvider for OpenAICompatible {
         model: &str,
         request: GenerateRequest,
     ) -> Result<serde_json::Value, ModelError> {
-        use crate::memory::MessageRole;
-
         let mut messages = Vec::new();
 
         // System → prepend as role:"system"
         if let Some(system) = request.system {
             messages.push(ChatMessage {
                 role: "system".to_string(),
-                content: system,
+                content: Some(system),
+                tool_calls: None,
+                tool_call_id: None,
             });
         }
 
-        // Conversation messages — map roles
+        // Conversation messages — map roles. A Tool-role message expands
+        // into one ChatMessage per ToolResult block (OpenAI requires a
+        // separate role:"tool" message per result, each with its own
+        // tool_call_id); User/Assistant-role messages stay one ChatMessage,
+        // collecting any ToolUse blocks into a single tool_calls array.
         for m in request.messages {
-            let text = m.as_text();
-            let role = match m.role {
-                MessageRole::User => "user",
-                MessageRole::Assistant => "assistant",
-                MessageRole::Tool => "tool",
+            match m.role {
                 MessageRole::System => continue, // already handled above
-            };
-            messages.push(ChatMessage {
-                role: role.to_string(),
-                content: text,
-            });
+                MessageRole::Tool => {
+                    for block in m.content {
+                        if let ContentBlock::ToolResult {
+                            tool_use_id,
+                            content,
+                            ..
+                        } = block
+                        {
+                            messages.push(ChatMessage {
+                                role: "tool".to_string(),
+                                content: Some(content),
+                                tool_calls: None,
+                                tool_call_id: Some(tool_use_id),
+                            });
+                        }
+                    }
+                }
+                MessageRole::User => messages.push(build_text_message("user", m.content)),
+                MessageRole::Assistant => {
+                    messages.push(build_text_message("assistant", m.content))
+                }
+            }
         }
 
         let chat_tools = request.tools.map(|t| {
