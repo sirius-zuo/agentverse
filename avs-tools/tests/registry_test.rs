@@ -197,10 +197,12 @@ async fn execute_many_runs_in_parallel() {
 
     let calls = vec![
         ToolCall {
+            id: "call_a".into(),
             name: "slow_a".into(),
             args: json!({}),
         },
         ToolCall {
+            id: "call_b".into(),
             name: "slow_b".into(),
             args: json!({}),
         },
@@ -258,6 +260,7 @@ async fn execute_many_hitl_intercepts_blocked_tool() {
     let registry = ToolRegistry::new();
     let hook: Arc<dyn HitlHook> = Arc::new(BlockAll);
     let calls = vec![ToolCall {
+        id: "call_1".to_string(),
         name: "find_tools".to_string(),
         args: json!({}),
     }];
@@ -284,6 +287,7 @@ async fn execute_many_hitl_returns_kind_json_on_intercept() {
     let registry = ToolRegistry::new();
     let hook: Arc<dyn HitlHook> = Arc::new(BlockAll);
     let calls = vec![ToolCall {
+        id: "call_1".to_string(),
         name: "find_tools".to_string(),
         args: json!({}),
     }];

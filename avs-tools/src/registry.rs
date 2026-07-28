@@ -170,6 +170,7 @@ impl ToolRegistry {
                 let metric_name = if not_found { "<unknown>" } else { &c.name };
                 agentverse::metrics::record_tool_call(metric_name, start.elapsed(), outcome);
                 ToolCallResult {
+                    id: c.id,
                     name: c.name,
                     result,
                 }
@@ -222,6 +223,7 @@ impl ToolRegistry {
                 None => Err(ToolError::NotFound(call.name.clone())),
             };
             let _ = tx.send(ToolCallResult {
+                id: call.id,
                 name: call.name,
                 result,
             });

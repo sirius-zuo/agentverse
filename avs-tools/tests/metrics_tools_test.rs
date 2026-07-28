@@ -50,6 +50,7 @@ async fn execute_records_tool_call_metrics() {
     }
     let hook: std::sync::Arc<dyn agentverse::hitl::HitlHook> = std::sync::Arc::new(BlockAll);
     let calls = vec![agentverse::ToolCall {
+        id: "call_1".to_string(),
         name: "calculator".to_string(),
         args: serde_json::json!({}),
     }];
