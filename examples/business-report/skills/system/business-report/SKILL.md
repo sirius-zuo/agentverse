@@ -27,7 +27,7 @@ as the subject, call it three times:
   `market_sizing_calculator` with realistic capture rates and expected time to reach SOM
 - `system_prompt`: `"You are a market research analyst. Use market_sizing_calculator to quantify the market opportunity with specific numbers."`
 - `allowed_tools`: `["market_sizing_calculator"]`
-- `max_steps`: 6, `max_tokens`: 8000, `timeout_secs`: 60
+- `max_steps`: 6, `max_tokens`: 8000, `timeout_secs`: 180
 
 **financial-analyst** — spawn with these parameters:
 
@@ -47,7 +47,7 @@ as the subject, call it three times:
   `milestone_scheduler` and quantifying delivery uncertainty via `risk_adjusted_schedule`
 - `system_prompt`: `"You are an operations analyst. Use milestone_scheduler and risk_adjusted_schedule to plan and de-risk the build-out."`
 - `allowed_tools`: `["milestone_scheduler", "risk_adjusted_schedule"]`
-- `max_steps`: 8, `max_tokens`: 10000, `timeout_secs`: 90
+- `max_steps`: 8, `max_tokens`: 10000, `timeout_secs`: 180
 
 ## Step 2 — synthesize
 
