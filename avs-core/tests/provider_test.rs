@@ -92,7 +92,9 @@ fn test_anthropic_parse_response_usage_maps_cache_tokens() {
 }
 
 #[test]
-fn test_anthropic_parse_response_no_text_content_is_error() {
+fn test_anthropic_parse_response_malformed_tool_use_with_no_text_is_error() {
+    // A tool_use block with no "input" field is malformed and produces no
+    // usable ContentBlock; with no text block either, this must error.
     let provider = AnthropicProvider::new();
     let body = json!({
         "content": [{"type": "tool_use", "id": "x", "name": "fn"}],
@@ -101,7 +103,20 @@ fn test_anthropic_parse_response_no_text_content_is_error() {
     })
     .to_string();
     let err = provider.parse_response(&body).unwrap_err();
-    assert!(err.to_string().contains("No text content"));
+    assert!(err.to_string().contains("No text or tool_use content"));
+}
+
+#[test]
+fn test_anthropic_parse_response_extracts_tool_use() {
+    let provider = AnthropicProvider::new();
+    let body = json!({
+        "content": [{"type": "tool_use", "id": "call_1", "name": "calculate", "input": {"a": 1}}],
+        "usage": {"input_tokens": 10, "output_tokens": 5,
+                  "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+    })
+    .to_string();
+    let result = provider.parse_response(&body).unwrap();
+    assert_eq!(result.content.len(), 1);
 }
 
 // ── GeminiProvider tests ──────────────────────────────────────────────────────

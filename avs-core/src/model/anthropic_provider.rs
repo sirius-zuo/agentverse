@@ -60,6 +60,7 @@ struct AnthropicTool {
     input_schema: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     cache_control: Option<CacheControl>,
+    strict: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -95,11 +96,13 @@ struct AnthropicResponse {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct AnthropicContent {
     #[serde(rename = "type")]
     content_type: String,
     text: Option<String>,
+    id: Option<String>,
+    name: Option<String>,
+    input: Option<Value>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -128,6 +131,7 @@ fn build_wire_request(model_name: &str, request: GenerateRequest) -> AnthropicRe
                 description: d.description,
                 input_schema: d.parameters,
                 cache_control: None,
+                strict: true,
             })
             .collect();
         if let Some(last) = tools.last_mut() {
@@ -221,17 +225,29 @@ impl ModelProvider for AnthropicProvider {
         let resp: AnthropicResponse =
             serde_json::from_str(body).map_err(|e| ModelError::InvalidResponse(e.to_string()))?;
 
-        let content = resp
+        let content: Vec<ContentBlock> = resp
             .content
             .into_iter()
-            .find(|c| c.content_type == "text")
-            .and_then(|c| c.text)
-            .ok_or_else(|| {
-                ModelError::InvalidResponse("No text content in response".to_string())
-            })?;
+            .filter_map(|c| match c.content_type.as_str() {
+                "text" => c.text.map(|text| ContentBlock::Text { text }),
+                "tool_use" => match (c.id, c.name, c.input) {
+                    (Some(id), Some(name), Some(input)) => {
+                        Some(ContentBlock::ToolUse { id, name, input })
+                    }
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+
+        if content.is_empty() {
+            return Err(ModelError::InvalidResponse(
+                "No text or tool_use content in response".to_string(),
+            ));
+        }
 
         Ok(GenerateResponse {
-            content: vec![ContentBlock::Text { text: content }],
+            content,
             usage: UsageStats {
                 input_tokens: resp.usage.input_tokens,
                 output_tokens: resp.usage.output_tokens,
@@ -516,5 +532,95 @@ mod tests {
             )
             .unwrap();
         assert!(body.get("output_config").is_none());
+    }
+
+    #[test]
+    fn tools_are_sent_with_strict_true() {
+        let wire = build_wire_request(
+            "m",
+            GenerateRequest {
+                system: None,
+                messages: vec![user("hi")],
+                tools: Some(vec![tool_def("alpha")]),
+                ..Default::default()
+            },
+        );
+        let tools = wire.tools.unwrap();
+        assert!(tools[0].strict);
+    }
+
+    #[test]
+    fn parse_response_extracts_tool_use_block() {
+        let provider = AnthropicProvider::new();
+        let body = r#"{
+            "content": [{"type": "tool_use", "id": "call_1", "name": "milestone_scheduler", "input": {"start_date": "2026-01-01"}}],
+            "usage": {"input_tokens": 10, "output_tokens": 5,
+                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+        }"#;
+        let resp = provider.parse_response(body).unwrap();
+        assert_eq!(resp.content.len(), 1);
+        match &resp.content[0] {
+            ContentBlock::ToolUse { id, name, input } => {
+                assert_eq!(id, "call_1");
+                assert_eq!(name, "milestone_scheduler");
+                assert_eq!(input["start_date"], "2026-01-01");
+            }
+            other => panic!("expected ToolUse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_response_extracts_text_and_tool_use_together() {
+        let provider = AnthropicProvider::new();
+        let body = r#"{
+            "content": [
+                {"type": "text", "text": "Let me check the schedule."},
+                {"type": "tool_use", "id": "call_1", "name": "milestone_scheduler", "input": {}}
+            ],
+            "usage": {"input_tokens": 10, "output_tokens": 5,
+                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+        }"#;
+        let resp = provider.parse_response(body).unwrap();
+        assert_eq!(resp.content.len(), 2);
+        assert!(matches!(resp.content[0], ContentBlock::Text { .. }));
+        assert!(matches!(resp.content[1], ContentBlock::ToolUse { .. }));
+    }
+
+    #[test]
+    fn parse_response_extracts_multiple_tool_use_blocks() {
+        let provider = AnthropicProvider::new();
+        let body = r#"{
+            "content": [
+                {"type": "tool_use", "id": "call_1", "name": "milestone_scheduler", "input": {}},
+                {"type": "tool_use", "id": "call_2", "name": "risk_adjusted_schedule", "input": {}}
+            ],
+            "usage": {"input_tokens": 10, "output_tokens": 5,
+                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+        }"#;
+        let resp = provider.parse_response(body).unwrap();
+        assert_eq!(resp.content.len(), 2);
+        let ids: Vec<&str> = resp
+            .content
+            .iter()
+            .map(|c| match c {
+                ContentBlock::ToolUse { id, .. } => id.as_str(),
+                other => panic!("expected ToolUse, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(ids, ["call_1", "call_2"]);
+    }
+
+    #[test]
+    fn parse_response_no_usable_content_is_error() {
+        let provider = AnthropicProvider::new();
+        // A tool_use block missing "input" (malformed) and no text block at
+        // all: nothing usable is present, so this must still error.
+        let body = r#"{
+            "content": [{"type": "tool_use", "id": "x", "name": "fn"}],
+            "usage": {"input_tokens": 10, "output_tokens": 5,
+                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+        }"#;
+        let err = provider.parse_response(body).unwrap_err();
+        assert!(err.to_string().contains("No text or tool_use content"));
     }
 }
