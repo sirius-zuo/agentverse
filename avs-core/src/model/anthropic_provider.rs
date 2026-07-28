@@ -19,30 +19,89 @@ struct CacheControl {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct AnthropicContentBlock {
-    #[serde(rename = "type")]
-    block_type: &'static str, // "text"
-    text: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    cache_control: Option<CacheControl>,
+#[serde(tag = "type")]
+enum AnthropicContentBlock {
+    #[serde(rename = "text")]
+    Text {
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
+    #[serde(rename = "tool_use")]
+    ToolUse {
+        id: String,
+        name: String,
+        input: Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
+    #[serde(rename = "tool_result")]
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+        is_error: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
 }
 
 impl AnthropicContentBlock {
-    fn text(text: String) -> Self {
-        Self {
-            block_type: "text",
+    fn new_text(text: String) -> Self {
+        Self::Text {
             text,
             cache_control: None,
         }
     }
 
-    fn text_cached(text: String) -> Self {
-        Self {
-            block_type: "text",
+    fn new_text_cached(text: String) -> Self {
+        Self::Text {
             text,
             cache_control: Some(CacheControl {
                 cache_type: "ephemeral",
             }),
+        }
+    }
+
+    fn new_tool_use(id: String, name: String, input: Value) -> Self {
+        Self::ToolUse {
+            id,
+            name,
+            input,
+            cache_control: None,
+        }
+    }
+
+    fn new_tool_result(tool_use_id: String, content: String, is_error: bool) -> Self {
+        Self::ToolResult {
+            tool_use_id,
+            content,
+            is_error,
+            cache_control: None,
+        }
+    }
+
+    /// The text payload, if this is a `Text` block. Used only by tests that
+    /// pin down the system-prompt / plain-text wiring.
+    fn text(&self) -> Option<&str> {
+        match self {
+            Self::Text { text, .. } => Some(text),
+            _ => None,
+        }
+    }
+
+    fn cache_control(&self) -> Option<&CacheControl> {
+        match self {
+            Self::Text { cache_control, .. }
+            | Self::ToolUse { cache_control, .. }
+            | Self::ToolResult { cache_control, .. } => cache_control.as_ref(),
+        }
+    }
+
+    fn set_cache_control(&mut self, cc: CacheControl) {
+        match self {
+            Self::Text { cache_control, .. }
+            | Self::ToolUse { cache_control, .. }
+            | Self::ToolResult { cache_control, .. } => *cache_control = Some(cc),
         }
     }
 }
@@ -145,26 +204,39 @@ fn build_wire_request(model_name: &str, request: GenerateRequest) -> AnthropicRe
     // 2. System — single block, always cached
     let system: Vec<AnthropicContentBlock> = request
         .system
-        .map(|s| vec![AnthropicContentBlock::text_cached(s)])
+        .map(|s| vec![AnthropicContentBlock::new_text_cached(s)])
         .unwrap_or_default();
 
-    // 3. Messages — filter System role; cache breakpoint on the penultimate
+    // 3. Messages — filter System role; map every content block 1:1;
+    //    cache breakpoint on the penultimate message's last block
     let mut messages: Vec<AnthropicMessage> = request
         .messages
         .into_iter()
         .filter_map(|m| {
-            let text = m.as_text();
-            map_role(m.role).map(|role| AnthropicMessage {
-                role,
-                content: vec![AnthropicContentBlock::text(text)],
-            })
+            let role = map_role(m.role)?;
+            let content = m
+                .content
+                .into_iter()
+                .map(|block| match block {
+                    ContentBlock::Text { text } => AnthropicContentBlock::new_text(text),
+                    ContentBlock::ToolUse { id, name, input } => {
+                        AnthropicContentBlock::new_tool_use(id, name, input)
+                    }
+                    ContentBlock::ToolResult {
+                        tool_use_id,
+                        content,
+                        is_error,
+                    } => AnthropicContentBlock::new_tool_result(tool_use_id, content, is_error),
+                })
+                .collect();
+            Some(AnthropicMessage { role, content })
         })
         .collect();
 
     if messages.len() >= 2 {
         let penultimate = messages.len() - 2;
         if let Some(block) = messages[penultimate].content.last_mut() {
-            block.cache_control = Some(CacheControl {
+            block.set_cache_control(CacheControl {
                 cache_type: "ephemeral",
             });
         }
@@ -324,9 +396,9 @@ mod tests {
             },
         );
         assert_eq!(wire.system.len(), 1);
-        assert_eq!(wire.system[0].text, "You are helpful.");
+        assert_eq!(wire.system[0].text().unwrap(), "You are helpful.");
         assert_eq!(
-            wire.system[0].cache_control.as_ref().unwrap().cache_type,
+            wire.system[0].cache_control().unwrap().cache_type,
             "ephemeral"
         );
     }
@@ -386,7 +458,7 @@ mod tests {
         );
         assert_eq!(wire.messages.len(), 1);
         assert!(
-            wire.messages[0].content[0].cache_control.is_none(),
+            wire.messages[0].content[0].cache_control().is_none(),
             "single message must not be cached"
         );
     }
@@ -407,20 +479,16 @@ mod tests {
         let msgs = &wire.messages;
         assert_eq!(msgs.len(), 3);
         assert!(
-            msgs[0].content[0].cache_control.is_none(),
+            msgs[0].content[0].cache_control().is_none(),
             "user1 not cached"
         );
         assert_eq!(
-            msgs[1].content[0]
-                .cache_control
-                .as_ref()
-                .unwrap()
-                .cache_type,
+            msgs[1].content[0].cache_control().unwrap().cache_type,
             "ephemeral",
             "assistant1 (penultimate) must be cached"
         );
         assert!(
-            msgs[2].content[0].cache_control.is_none(),
+            msgs[2].content[0].cache_control().is_none(),
             "user2 (current) must not be cached"
         );
     }
@@ -438,14 +506,10 @@ mod tests {
             },
         );
         assert_eq!(
-            wire.messages[0].content[0]
-                .cache_control
-                .as_ref()
-                .unwrap()
-                .cache_type,
+            wire.messages[0].content[0].cache_control().unwrap().cache_type,
             "ephemeral"
         );
-        assert!(wire.messages[1].content[0].cache_control.is_none());
+        assert!(wire.messages[1].content[0].cache_control().is_none());
     }
 
     #[test]
@@ -464,7 +528,7 @@ mod tests {
             1,
             "System-role message must be filtered"
         );
-        assert_eq!(wire.messages[0].content[0].text, "hi");
+        assert_eq!(wire.messages[0].content[0].text().unwrap(), "hi");
     }
 
     #[test]
@@ -700,5 +764,133 @@ mod tests {
             )
             .unwrap();
         assert_eq!(body["tools"][0]["strict"], true);
+    }
+
+    #[test]
+    fn build_wire_request_serializes_assistant_tool_use_block() {
+        let wire = build_wire_request(
+            "m",
+            GenerateRequest {
+                system: None,
+                messages: vec![Message {
+                    role: MessageRole::Assistant,
+                    content: vec![ContentBlock::ToolUse {
+                        id: "call_1".to_string(),
+                        name: "milestone_scheduler".to_string(),
+                        input: serde_json::json!({"start_date": "2026-01-01"}),
+                    }],
+                }],
+                tools: None,
+                ..Default::default()
+            },
+        );
+        assert_eq!(wire.messages.len(), 1);
+        assert_eq!(wire.messages[0].role, "assistant");
+        assert_eq!(wire.messages[0].content.len(), 1);
+        match &wire.messages[0].content[0] {
+            AnthropicContentBlock::ToolUse { id, name, input, .. } => {
+                assert_eq!(id, "call_1");
+                assert_eq!(name, "milestone_scheduler");
+                assert_eq!(input["start_date"], "2026-01-01");
+            }
+            other => panic!("expected ToolUse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_wire_request_serializes_tool_result_block() {
+        let wire = build_wire_request(
+            "m",
+            GenerateRequest {
+                system: None,
+                messages: vec![Message {
+                    role: MessageRole::Tool,
+                    content: vec![ContentBlock::ToolResult {
+                        tool_use_id: "call_1".to_string(),
+                        content: "42".to_string(),
+                        is_error: false,
+                    }],
+                }],
+                tools: None,
+                ..Default::default()
+            },
+        );
+        assert_eq!(wire.messages.len(), 1);
+        assert_eq!(wire.messages[0].role, "user");
+        match &wire.messages[0].content[0] {
+            AnthropicContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+                ..
+            } => {
+                assert_eq!(tool_use_id, "call_1");
+                assert_eq!(content, "42");
+                assert!(!is_error);
+            }
+            other => panic!("expected ToolResult, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_wire_request_serializes_mixed_text_and_tool_use_in_one_message() {
+        let wire = build_wire_request(
+            "m",
+            GenerateRequest {
+                system: None,
+                messages: vec![Message {
+                    role: MessageRole::Assistant,
+                    content: vec![
+                        ContentBlock::Text {
+                            text: "Let me check.".to_string(),
+                        },
+                        ContentBlock::ToolUse {
+                            id: "call_1".to_string(),
+                            name: "fn".to_string(),
+                            input: serde_json::json!({}),
+                        },
+                    ],
+                }],
+                tools: None,
+                ..Default::default()
+            },
+        );
+        assert_eq!(wire.messages[0].content.len(), 2);
+        assert!(matches!(
+            wire.messages[0].content[0],
+            AnthropicContentBlock::Text { .. }
+        ));
+        assert!(matches!(
+            wire.messages[0].content[1],
+            AnthropicContentBlock::ToolUse { .. }
+        ));
+    }
+
+    #[test]
+    fn build_request_tool_use_block_has_correct_wire_json_shape() {
+        let provider = AnthropicProvider::new();
+        let body = provider
+            .build_request(
+                "m",
+                GenerateRequest {
+                    system: None,
+                    messages: vec![Message {
+                        role: MessageRole::Assistant,
+                        content: vec![ContentBlock::ToolUse {
+                            id: "call_1".to_string(),
+                            name: "fn".to_string(),
+                            input: serde_json::json!({"x": 1}),
+                        }],
+                    }],
+                    tools: None,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let block = &body["messages"][0]["content"][0];
+        assert_eq!(block["type"], "tool_use");
+        assert_eq!(block["id"], "call_1");
+        assert_eq!(block["name"], "fn");
+        assert_eq!(block["input"]["x"], 1);
     }
 }
