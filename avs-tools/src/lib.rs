@@ -7,6 +7,7 @@ pub mod http_client;
 pub mod registry;
 pub mod search;
 pub mod shell;
+pub mod strict_schema;
 pub mod web_search;
 
 pub use active::ActiveToolSet;
@@ -20,4 +21,5 @@ pub use registry::{
 };
 pub use search::ToolInfo;
 pub use shell::ShellTool;
+pub use strict_schema::{to_strict_schema, StrictSchemaError};
 pub use web_search::WebSearch;
