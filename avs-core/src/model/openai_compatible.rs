@@ -202,7 +202,13 @@ impl ModelProvider for OpenAICompatible {
 
         let mut content: Vec<crate::memory::ContentBlock> = Vec::new();
         if let Some(text) = message.content {
-            content.push(crate::memory::ContentBlock::Text { text });
+            // Some OpenAI-compatible servers (llama.cpp, vLLM, etc.) send
+            // content: "" alongside tool_calls rather than content: null --
+            // skip the empty block so it doesn't show up as a spurious
+            // Text("") alongside the real ToolUse block(s).
+            if !text.trim().is_empty() {
+                content.push(crate::memory::ContentBlock::Text { text });
+            }
         }
         for call in message.tool_calls {
             let input: Value = serde_json::from_str(&call.function.arguments).map_err(|e| {

@@ -225,20 +225,33 @@ impl ModelProvider for AnthropicProvider {
         let resp: AnthropicResponse =
             serde_json::from_str(body).map_err(|e| ModelError::InvalidResponse(e.to_string()))?;
 
-        let content: Vec<ContentBlock> = resp
-            .content
-            .into_iter()
-            .filter_map(|c| match c.content_type.as_str() {
-                "text" => c.text.map(|text| ContentBlock::Text { text }),
+        // A malformed tool_use block (missing id/name/input) is a hard error,
+        // not silently dropped — even when other usable blocks are present.
+        // Otherwise a model's real tool call could vanish with no signal,
+        // leaving only unrelated text as the (wrong) final answer.
+        let mut content: Vec<ContentBlock> = Vec::new();
+        for c in resp.content {
+            match c.content_type.as_str() {
+                "text" => {
+                    if let Some(text) = c.text {
+                        if !text.trim().is_empty() {
+                            content.push(ContentBlock::Text { text });
+                        }
+                    }
+                }
                 "tool_use" => match (c.id, c.name, c.input) {
                     (Some(id), Some(name), Some(input)) => {
-                        Some(ContentBlock::ToolUse { id, name, input })
+                        content.push(ContentBlock::ToolUse { id, name, input });
                     }
-                    _ => None,
+                    _ => {
+                        return Err(ModelError::InvalidResponse(
+                            "tool_use content block missing id, name, or input".to_string(),
+                        ));
+                    }
                 },
-                _ => None,
-            })
-            .collect();
+                _ => {}
+            }
+        }
 
         if content.is_empty() {
             return Err(ModelError::InvalidResponse(
@@ -611,16 +624,81 @@ mod tests {
     }
 
     #[test]
-    fn parse_response_no_usable_content_is_error() {
+    fn parse_response_malformed_tool_use_is_error() {
         let provider = AnthropicProvider::new();
-        // A tool_use block missing "input" (malformed) and no text block at
-        // all: nothing usable is present, so this must still error.
+        // A tool_use block missing "input" is malformed and must error
+        // loudly, not be silently dropped -- this is what keeps Anthropic
+        // consistent with the OpenAI-compatible provider's hard-error-on-
+        // malformed-arguments behavior.
         let body = r#"{
             "content": [{"type": "tool_use", "id": "x", "name": "fn"}],
             "usage": {"input_tokens": 10, "output_tokens": 5,
                       "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
         }"#;
         let err = provider.parse_response(body).unwrap_err();
+        assert!(err.to_string().contains("missing id, name, or input"));
+    }
+
+    #[test]
+    fn parse_response_malformed_tool_use_errors_even_with_text_present() {
+        let provider = AnthropicProvider::new();
+        // The malformed tool_use must not be silently dropped just because
+        // a text block is also present -- that would surface as a wrong
+        // (text-only) final answer instead of a diagnosable error.
+        let body = r#"{
+            "content": [
+                {"type": "text", "text": "Let me look that up."},
+                {"type": "tool_use", "id": "x", "name": "fn"}
+            ],
+            "usage": {"input_tokens": 10, "output_tokens": 5,
+                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+        }"#;
+        let err = provider.parse_response(body).unwrap_err();
+        assert!(err.to_string().contains("missing id, name, or input"));
+    }
+
+    #[test]
+    fn parse_response_truly_empty_content_is_error() {
+        let provider = AnthropicProvider::new();
+        let body = r#"{
+            "content": [],
+            "usage": {"input_tokens": 10, "output_tokens": 5,
+                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+        }"#;
+        let err = provider.parse_response(body).unwrap_err();
         assert!(err.to_string().contains("No text or tool_use content"));
+    }
+
+    #[test]
+    fn parse_response_skips_empty_text_blocks() {
+        let provider = AnthropicProvider::new();
+        let body = r#"{
+            "content": [
+                {"type": "text", "text": ""},
+                {"type": "tool_use", "id": "call_1", "name": "fn", "input": {}}
+            ],
+            "usage": {"input_tokens": 10, "output_tokens": 5,
+                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+        }"#;
+        let resp = provider.parse_response(body).unwrap();
+        assert_eq!(resp.content.len(), 1);
+        assert!(matches!(resp.content[0], ContentBlock::ToolUse { .. }));
+    }
+
+    #[test]
+    fn strict_field_is_serialized_in_wire_json() {
+        let provider = AnthropicProvider::new();
+        let body = provider
+            .build_request(
+                "m",
+                GenerateRequest {
+                    system: None,
+                    messages: vec![user("hi")],
+                    tools: Some(vec![tool_def("alpha")]),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(body["tools"][0]["strict"], true);
     }
 }

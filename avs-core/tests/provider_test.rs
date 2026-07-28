@@ -93,8 +93,8 @@ fn test_anthropic_parse_response_usage_maps_cache_tokens() {
 
 #[test]
 fn test_anthropic_parse_response_malformed_tool_use_with_no_text_is_error() {
-    // A tool_use block with no "input" field is malformed and produces no
-    // usable ContentBlock; with no text block either, this must error.
+    // A tool_use block with no "input" field is malformed and must error
+    // loudly, not be silently dropped.
     let provider = AnthropicProvider::new();
     let body = json!({
         "content": [{"type": "tool_use", "id": "x", "name": "fn"}],
@@ -103,7 +103,7 @@ fn test_anthropic_parse_response_malformed_tool_use_with_no_text_is_error() {
     })
     .to_string();
     let err = provider.parse_response(&body).unwrap_err();
-    assert!(err.to_string().contains("No text or tool_use content"));
+    assert!(err.to_string().contains("missing id, name, or input"));
 }
 
 #[test]
@@ -196,6 +196,86 @@ fn test_openai_parse_response_extracts_text_and_tool_calls_together() {
     .to_string();
     let result = provider.parse_response(&body).unwrap();
     assert_eq!(result.content.len(), 2);
+}
+
+#[test]
+fn test_openai_parse_response_extracts_multiple_tool_calls() {
+    let provider = OpenAICompatible::new();
+    let body = json!({
+        "choices": [{"message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "milestone_scheduler", "arguments": "{}"}
+                },
+                {
+                    "id": "call_2",
+                    "type": "function",
+                    "function": {"name": "risk_adjusted_schedule", "arguments": "{}"}
+                }
+            ]
+        }}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 3}
+    })
+    .to_string();
+    let result = provider.parse_response(&body).unwrap();
+    assert_eq!(result.content.len(), 2);
+    let ids: Vec<&str> = result
+        .content
+        .iter()
+        .map(|c| match c {
+            agentverse::ContentBlock::ToolUse { id, .. } => id.as_str(),
+            other => panic!("expected ToolUse, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(ids, ["call_1", "call_2"]);
+}
+
+#[test]
+fn test_openai_parse_response_malformed_tool_call_arguments_is_error() {
+    let provider = OpenAICompatible::new();
+    let body = json!({
+        "choices": [{"message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "calculate", "arguments": "not valid json"}
+            }]
+        }}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 3}
+    })
+    .to_string();
+    let err = provider.parse_response(&body).unwrap_err();
+    assert!(err.to_string().contains("invalid tool_call arguments JSON"));
+}
+
+#[test]
+fn test_openai_parse_response_skips_empty_text_block_alongside_tool_calls() {
+    let provider = OpenAICompatible::new();
+    let body = json!({
+        "choices": [{"message": {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "calculate", "arguments": "{}"}
+            }]
+        }}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 3}
+    })
+    .to_string();
+    let result = provider.parse_response(&body).unwrap();
+    assert_eq!(result.content.len(), 1);
+    assert!(matches!(
+        result.content[0],
+        agentverse::ContentBlock::ToolUse { .. }
+    ));
 }
 
 #[test]
