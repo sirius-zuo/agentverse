@@ -216,7 +216,7 @@ fn test_openai_build_request_serializes_tool_results_as_separate_messages() {
     assert_eq!(messages[0]["content"], "3");
     assert_eq!(messages[1]["role"], "tool");
     assert_eq!(messages[1]["tool_call_id"], "call_2");
-    assert_eq!(messages[1]["content"], "boom");
+    assert_eq!(messages[1]["content"], "Error: boom");
 }
 
 #[test]
@@ -233,6 +233,61 @@ fn test_openai_build_request_text_only_message_unaffected() {
     assert_eq!(body["messages"][0]["content"], "hello");
     assert!(body["messages"][0].get("tool_calls").is_none());
     assert!(body["messages"][0].get("tool_call_id").is_none());
+}
+
+#[test]
+fn test_openai_build_request_tool_role_message_with_non_tool_result_block_is_error() {
+    let provider = OpenAICompatible::new();
+    let request = GenerateRequest {
+        system: None,
+        messages: vec![Message {
+            role: MessageRole::Tool,
+            content: vec![agentverse::ContentBlock::Text {
+                text: "stray tool text".to_string(),
+            }],
+        }],
+        tools: None,
+        ..Default::default()
+    };
+    let err = provider.build_request("gpt", request).unwrap_err();
+    assert!(err.to_string().contains("Tool-role message"));
+}
+
+#[test]
+fn test_openai_build_request_prefixes_error_tool_result_content() {
+    let provider = OpenAICompatible::new();
+    let request = GenerateRequest {
+        system: None,
+        messages: vec![Message {
+            role: MessageRole::Tool,
+            content: vec![agentverse::ContentBlock::ToolResult {
+                tool_use_id: "call_1".to_string(),
+                content: "boom".to_string(),
+                is_error: true,
+            }],
+        }],
+        tools: None,
+        ..Default::default()
+    };
+    let body = provider.build_request("gpt", request).unwrap();
+    assert_eq!(body["messages"][0]["content"], "Error: boom");
+}
+
+#[test]
+fn test_openai_build_request_assistant_message_with_no_content_serializes_empty_string() {
+    let provider = OpenAICompatible::new();
+    let request = GenerateRequest {
+        system: None,
+        messages: vec![Message {
+            role: MessageRole::Assistant,
+            content: vec![],
+        }],
+        tools: None,
+        ..Default::default()
+    };
+    let body = provider.build_request("gpt", request).unwrap();
+    assert_eq!(body["messages"][0]["content"], "");
+    assert!(body["messages"][0].get("tool_calls").is_none());
 }
 
 #[test]

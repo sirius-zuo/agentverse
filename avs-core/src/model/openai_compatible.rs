@@ -121,10 +121,10 @@ fn read_disable_thinking() -> bool {
 }
 
 /// Build a `ChatMessage` for a User/Assistant-role message: `Text` blocks
-/// join into `content`, `ToolUse` blocks collect into `tool_calls`.
-/// `ToolResult` blocks are not expected here (they only ever arrive on a
-/// Tool-role message, handled separately) and are ignored.
-fn build_text_message(role: &str, content: Vec<ContentBlock>) -> ChatMessage {
+/// join into `content`, `ToolUse` blocks collect into `tool_calls`. A
+/// `ToolResult` block here is a protocol violation (results only ever
+/// belong on a Tool-role message) and is a hard error, not a silent drop.
+fn build_text_message(role: &str, content: Vec<ContentBlock>) -> Result<ChatMessage, ModelError> {
     let mut text_parts = Vec::new();
     let mut tool_calls = Vec::new();
     for block in content {
@@ -136,27 +136,35 @@ fn build_text_message(role: &str, content: Vec<ContentBlock>) -> ChatMessage {
                     type_field: "function",
                     function: ChatFunctionCallOut {
                         name,
-                        arguments: serde_json::to_string(&input).unwrap_or_default(),
+                        arguments: serde_json::to_string(&input)
+                            .unwrap_or_else(|_| "{}".to_string()),
                     },
                 });
             }
-            ContentBlock::ToolResult { .. } => {}
+            ContentBlock::ToolResult { .. } => {
+                return Err(ModelError::InvalidResponse(format!(
+                    "{role}-role message must not contain a ToolResult block"
+                )));
+            }
         }
     }
-    ChatMessage {
+    let content = if text_parts.is_empty() && tool_calls.is_empty() {
+        Some(String::new())
+    } else if text_parts.is_empty() {
+        None
+    } else {
+        Some(text_parts.join("\n"))
+    };
+    Ok(ChatMessage {
         role: role.to_string(),
-        content: if text_parts.is_empty() {
-            None
-        } else {
-            Some(text_parts.join("\n"))
-        },
+        content,
         tool_calls: if tool_calls.is_empty() {
             None
         } else {
             Some(tool_calls)
         },
         tool_call_id: None,
-    }
+    })
 }
 
 impl OpenAICompatible {
@@ -205,23 +213,36 @@ impl ModelProvider for OpenAICompatible {
                 MessageRole::System => continue, // already handled above
                 MessageRole::Tool => {
                     for block in m.content {
-                        if let ContentBlock::ToolResult {
-                            tool_use_id,
-                            content,
-                            ..
-                        } = block
-                        {
-                            messages.push(ChatMessage {
-                                role: "tool".to_string(),
-                                content: Some(content),
-                                tool_calls: None,
-                                tool_call_id: Some(tool_use_id),
-                            });
+                        match block {
+                            ContentBlock::ToolResult {
+                                tool_use_id,
+                                content,
+                                is_error,
+                            } => {
+                                let content = if is_error {
+                                    format!("Error: {content}")
+                                } else {
+                                    content
+                                };
+                                messages.push(ChatMessage {
+                                    role: "tool".to_string(),
+                                    content: Some(content),
+                                    tool_calls: None,
+                                    tool_call_id: Some(tool_use_id),
+                                });
+                            }
+                            other => {
+                                return Err(ModelError::InvalidResponse(format!(
+                                    "Tool-role message must contain only ToolResult blocks, found {other:?}"
+                                )));
+                            }
                         }
                     }
                 }
-                MessageRole::User => messages.push(build_text_message("user", m.content)),
-                MessageRole::Assistant => messages.push(build_text_message("assistant", m.content)),
+                MessageRole::User => messages.push(build_text_message("user", m.content)?),
+                MessageRole::Assistant => {
+                    messages.push(build_text_message("assistant", m.content)?)
+                }
             }
         }
 
