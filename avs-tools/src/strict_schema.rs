@@ -31,15 +31,17 @@ impl std::error::Error for StrictSchemaError {}
 /// object node gets `additionalProperties: false` and lists every
 /// property as `required`.
 ///
-/// Genuine `Option<T>` fields are already nullable in schemars' own
-/// output (`"type": [.., "null"]`) and are left as-is beyond being added
-/// to `required`. Fields using `#[serde(default)]` on a non-`Option`
-/// type are marked by schemars with a `"type"` key instead of being
-/// absent — these are added to `required` WITHOUT adding "null" to
-/// their type, because a strict-mode model sending an explicit `null`
-/// there would crash the tool's own `serde_json::from_value`
-/// deserialization (`#[serde(default)]` only supplies its fallback when
-/// the JSON key is absent, not when it's present as `null`).
+/// Schemars sometimes handles nullability itself (e.g. `Option<T>` becomes
+/// `{"type": [..., "null"]}` or `{"anyOf": [..., {"type": "null"}]}`),
+/// and those are left untouched — the adapter only processes fields
+/// without a `"type"` key at all. For properties not in the original
+/// `required` list that lack a `"type"` key: if they already have `anyOf`,
+/// they're already nullable (schemars' handling), so no-op. If they have
+/// a bare `$ref`, wrap in `anyOf` to add nullability. Otherwise (e.g.
+/// `Option<Value>` or `#[serde(default)] Option<T>`), add an explicit
+/// type array that permits any JSON value plus null. This is safe because
+/// every such schema shape observed corresponds to a genuinely-nullable
+/// field, never one where `null` would break deserialization.
 pub fn to_strict_schema(mut schema: Value) -> Result<Value, StrictSchemaError> {
     if let Some(defs) = schema
         .get_mut("definitions")
@@ -112,45 +114,36 @@ fn has_no_type(prop_schema: &Value) -> bool {
     }
 }
 
-/// Adds "null" to a property's type only when the property is a genuine
-/// `Option<T>` — distinguished from a `#[serde(default)]` non-Option
-/// field by the absence of a "type" key. Never adds "null" when a
-/// "type" key is present.
+/// Adds "null" to a property when it lacks a "type" key (indicating a
+/// genuinely-nullable field like `Option<T>` or `#[serde(default)] Option<T>`).
+/// If the property already has `anyOf`, schemars has already handled
+/// nullability, so no action is taken. For bare `$ref` without type, wraps
+/// in `anyOf` to add null. For other schemas without type, adds an explicit
+/// type array permitting any JSON value plus null.
 fn make_nullable_if_true_optional(prop_schema: &mut Value) {
     let Some(obj) = prop_schema.as_object_mut() else {
         return;
     };
-    if obj.contains_key("default") {
+    // If already has anyOf, schemars handled nullability there, so no-op
+    if obj.contains_key("anyOf") {
         return;
     }
-    match obj.get("type").cloned() {
-        Some(Value::String(t)) if t != "null" => {
-            obj.insert("type".to_string(), serde_json::json!([t, "null"]));
-        }
-        Some(Value::Array(mut arr)) if !arr.iter().any(|v| v == "null") => {
-            arr.push(Value::String("null".to_string()));
-            obj.insert("type".to_string(), Value::Array(arr));
-        }
-        None => {
-            // If there's no type, check if this is a $ref
-            if obj.contains_key("$ref") {
-                // For $ref without type, wrap in anyOf to add null
-                let original = Value::Object(obj.clone());
-                obj.clear();
-                obj.insert(
-                    "anyOf".to_string(),
-                    serde_json::json!([original, {"type": "null"}]),
-                );
-            } else {
-                // For other schemas without type, create a type that allows any JSON value plus null
-                obj.insert(
-                    "type".to_string(),
-                    serde_json::json!(["string", "number", "object", "array", "boolean", "null"]),
-                );
-            }
-        }
-        _ => {}
+    // If bare $ref without type, wrap in anyOf to add null
+    if obj.contains_key("$ref") {
+        let original = Value::Object(obj.clone());
+        obj.clear();
+        obj.insert(
+            "anyOf".to_string(),
+            serde_json::json!([original, {"type": "null"}]),
+        );
+        return;
     }
+    // For other schemas without type (like Option<Value> or #[serde(default)] Option<T>),
+    // create a type that allows any JSON value plus null
+    obj.insert(
+        "type".to_string(),
+        serde_json::json!(["string", "number", "object", "array", "boolean", "null"]),
+    );
 }
 
 #[cfg(test)]
@@ -257,5 +250,76 @@ mod tests {
             .iter()
             .any(|v| v == "flexible"));
         assert!(strict["properties"]["flexible"]["anyOf"].is_array());
+    }
+
+    #[test]
+    fn serde_default_option_t_gets_nullability_added() {
+        // #[serde(default)] Option<T> produces {"default": null} with no
+        // "type" key. After fix for Bug 1, this should not early-return,
+        // and nullability should be added.
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "opt_field": { "default": null }
+            },
+            "required": []
+        });
+        let strict = to_strict_schema(schema).unwrap();
+
+        // Must be added to required
+        assert!(strict["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == "opt_field"));
+
+        // Must have explicit nullability (either type array with null or anyOf with null)
+        let opt_field = &strict["properties"]["opt_field"];
+        let has_nullability = if let Some(arr) = opt_field["type"].as_array() {
+            arr.iter().any(|v| v == "null")
+        } else {
+            opt_field["anyOf"].is_array()
+        };
+        assert!(
+            has_nullability,
+            "opt_field should be nullable after transformation"
+        );
+    }
+
+    #[test]
+    fn anyof_null_already_present_is_left_unchanged() {
+        // Option<SomeStruct> produces {"anyOf": [{"$ref": "..."}, {"type": "null"}]}.
+        // After fix for Bug 2, the existing anyOf should be left completely untouched,
+        // not have a redundant type array added alongside.
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "opt_struct": {
+                    "anyOf": [
+                        {"$ref": "#/definitions/Something"},
+                        {"type": "null"}
+                    ]
+                }
+            },
+            "required": []
+        });
+        let strict = to_strict_schema(schema).unwrap();
+
+        // Must be added to required
+        assert!(strict["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == "opt_struct"));
+
+        // The anyOf must be preserved exactly as-is
+        let opt_struct = &strict["properties"]["opt_struct"];
+        assert!(opt_struct["anyOf"].is_array());
+        assert_eq!(opt_struct["anyOf"].as_array().unwrap().len(), 2);
+        assert!(opt_struct["anyOf"][0]["$ref"].is_string());
+        assert_eq!(opt_struct["anyOf"][1]["type"], "null");
+
+        // Must NOT have a redundant type field added
+        assert!(opt_struct.get("type").is_none() || opt_struct["type"].is_null());
     }
 }
