@@ -508,7 +508,10 @@ mod tests {
             },
         );
         assert_eq!(
-            wire.messages[0].content[0].cache_control().unwrap().cache_type,
+            wire.messages[0].content[0]
+                .cache_control()
+                .unwrap()
+                .cache_type,
             "ephemeral"
         );
         assert!(wire.messages[1].content[0].cache_control().is_none());
@@ -790,7 +793,9 @@ mod tests {
         assert_eq!(wire.messages[0].role, "assistant");
         assert_eq!(wire.messages[0].content.len(), 1);
         match &wire.messages[0].content[0] {
-            AnthropicContentBlock::ToolUse { id, name, input, .. } => {
+            AnthropicContentBlock::ToolUse {
+                id, name, input, ..
+            } => {
                 assert_eq!(id, "call_1");
                 assert_eq!(name, "milestone_scheduler");
                 assert_eq!(input["start_date"], "2026-01-01");

@@ -221,9 +221,7 @@ impl ModelProvider for OpenAICompatible {
                     }
                 }
                 MessageRole::User => messages.push(build_text_message("user", m.content)),
-                MessageRole::Assistant => {
-                    messages.push(build_text_message("assistant", m.content))
-                }
+                MessageRole::Assistant => messages.push(build_text_message("assistant", m.content)),
             }
         }
 

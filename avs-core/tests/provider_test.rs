@@ -206,7 +206,11 @@ fn test_openai_build_request_serializes_tool_results_as_separate_messages() {
     };
     let body = provider.build_request("gpt", request).unwrap();
     let messages = body["messages"].as_array().unwrap();
-    assert_eq!(messages.len(), 2, "each ToolResult must become its own message");
+    assert_eq!(
+        messages.len(),
+        2,
+        "each ToolResult must become its own message"
+    );
     assert_eq!(messages[0]["role"], "tool");
     assert_eq!(messages[0]["tool_call_id"], "call_1");
     assert_eq!(messages[0]["content"], "3");
