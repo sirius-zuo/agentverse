@@ -83,6 +83,7 @@ impl ModelProvider for GeminiProvider {
             .messages
             .into_iter()
             .filter_map(|m| {
+                let text = m.as_text();
                 let role = match m.role {
                     MessageRole::User => "user",
                     MessageRole::Assistant => "model",
@@ -91,7 +92,7 @@ impl ModelProvider for GeminiProvider {
                 };
                 Some(GeminiContent {
                     role: role.to_string(),
-                    parts: vec![GeminiPart::Text { text: m.content }],
+                    parts: vec![GeminiPart::Text { text }],
                 })
             })
             .collect();
@@ -134,7 +135,7 @@ impl ModelProvider for GeminiProvider {
             .ok_or_else(|| ModelError::InvalidResponse("No content in response".to_string()))?;
 
         Ok(GenerateResponse {
-            content,
+            content: vec![crate::memory::ContentBlock::Text(content)],
             usage: UsageStats::default(), // Gemini context caching is a separate API
         })
     }

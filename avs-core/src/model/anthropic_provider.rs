@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use super::ModelProvider;
 use crate::error::ModelError;
-use crate::memory::MessageRole;
+use crate::memory::{ContentBlock, MessageRole};
 use crate::model::{GenerateRequest, GenerateResponse, ToolDefinition, UsageStats};
 
 #[derive(Debug, Clone, Default)]
@@ -149,9 +149,10 @@ fn build_wire_request(model_name: &str, request: GenerateRequest) -> AnthropicRe
         .messages
         .into_iter()
         .filter_map(|m| {
+            let text = m.as_text();
             map_role(m.role).map(|role| AnthropicMessage {
                 role,
-                content: vec![AnthropicContentBlock::text(m.content)],
+                content: vec![AnthropicContentBlock::text(text)],
             })
         })
         .collect();
@@ -230,7 +231,7 @@ impl ModelProvider for AnthropicProvider {
             })?;
 
         Ok(GenerateResponse {
-            content,
+            content: vec![ContentBlock::Text(content)],
             usage: UsageStats {
                 input_tokens: resp.usage.input_tokens,
                 output_tokens: resp.usage.output_tokens,
@@ -267,17 +268,11 @@ mod tests {
     use crate::memory::{Message, MessageRole};
 
     fn user(content: &str) -> Message {
-        Message {
-            role: MessageRole::User,
-            content: content.to_string(),
-        }
+        Message::text(MessageRole::User, content)
     }
 
     fn assistant(content: &str) -> Message {
-        Message {
-            role: MessageRole::Assistant,
-            content: content.to_string(),
-        }
+        Message::text(MessageRole::Assistant, content)
     }
 
     fn tool_def(name: &str) -> ToolDefinition {
@@ -430,13 +425,7 @@ mod tests {
             "m",
             GenerateRequest {
                 system: None,
-                messages: vec![
-                    Message {
-                        role: MessageRole::System,
-                        content: "ignored".to_string(),
-                    },
-                    user("hi"),
-                ],
+                messages: vec![Message::text(MessageRole::System, "ignored"), user("hi")],
                 tools: None,
                 ..Default::default()
             },
@@ -454,10 +443,7 @@ mod tests {
         let provider = AnthropicProvider::new();
         let req = GenerateRequest {
             system: Some("You are helpful.".to_string()),
-            messages: vec![Message {
-                role: MessageRole::User,
-                content: "hi".into(),
-            }],
+            messages: vec![Message::text(MessageRole::User, "hi")],
             tools: None,
             ..Default::default()
         };
@@ -491,7 +477,7 @@ mod tests {
                       "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
         }"#;
         let resp = provider.parse_response(body).unwrap();
-        assert_eq!(resp.content, "Hello!");
+        assert_eq!(resp.as_text(), "Hello!");
         assert_eq!(resp.usage.input_tokens, 10);
     }
 

@@ -123,6 +123,7 @@ impl ModelProvider for OpenAICompatible {
 
         // Conversation messages — map roles
         for m in request.messages {
+            let text = m.as_text();
             let role = match m.role {
                 MessageRole::User => "user",
                 MessageRole::Assistant => "assistant",
@@ -131,7 +132,7 @@ impl ModelProvider for OpenAICompatible {
             };
             messages.push(ChatMessage {
                 role: role.to_string(),
-                content: m.content,
+                content: text,
             });
         }
 
@@ -184,7 +185,7 @@ impl ModelProvider for OpenAICompatible {
             .ok_or_else(|| ModelError::InvalidResponse("No content in response".to_string()))?;
 
         Ok(GenerateResponse {
-            content,
+            content: vec![crate::memory::ContentBlock::Text(content)],
             usage: UsageStats {
                 input_tokens: chat_response.usage.prompt_tokens,
                 output_tokens: chat_response.usage.completion_tokens,
