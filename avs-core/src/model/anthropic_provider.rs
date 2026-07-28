@@ -231,7 +231,7 @@ impl ModelProvider for AnthropicProvider {
             })?;
 
         Ok(GenerateResponse {
-            content: vec![ContentBlock::Text(content)],
+            content: vec![ContentBlock::Text { text: content }],
             usage: UsageStats {
                 input_tokens: resp.usage.input_tokens,
                 output_tokens: resp.usage.output_tokens,

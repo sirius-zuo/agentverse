@@ -139,7 +139,9 @@ mod tests {
     #[test]
     fn generate_response_as_text_flattens_content() {
         let resp = GenerateResponse {
-            content: vec![crate::memory::ContentBlock::Text("42".to_string())],
+            content: vec![crate::memory::ContentBlock::Text {
+                text: "42".to_string(),
+            }],
             usage: UsageStats::default(),
         };
         assert_eq!(resp.as_text(), "42");

@@ -9,7 +9,10 @@ use thiserror::Error;
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContentBlock {
     /// Plain text content.
-    Text(String),
+    Text {
+        /// The text payload.
+        text: String,
+    },
     /// A tool call issued by the model.
     ///
     /// The `id` field is issued by the provider (the model's response) and must
@@ -42,7 +45,7 @@ pub fn content_as_text(content: &[ContentBlock]) -> String {
     content
         .iter()
         .map(|block| match block {
-            ContentBlock::Text(text) => text.clone(),
+            ContentBlock::Text { text } => text.clone(),
             ContentBlock::ToolUse { name, .. } => format!("[tool_use: {name}]"),
             ContentBlock::ToolResult {
                 tool_use_id,
@@ -54,7 +57,7 @@ pub fn content_as_text(content: &[ContentBlock]) -> String {
         .join("\n")
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Message {
     pub role: MessageRole,
     pub content: Vec<ContentBlock>,
@@ -66,7 +69,7 @@ impl Message {
     pub fn text(role: MessageRole, text: impl Into<String>) -> Self {
         Self {
             role,
-            content: vec![ContentBlock::Text(text.into())],
+            content: vec![ContentBlock::Text { text: text.into() }],
         }
     }
 
@@ -77,7 +80,7 @@ impl Message {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum MessageRole {
     System,
     User,
@@ -104,7 +107,12 @@ mod tests {
     #[test]
     fn text_constructor_wraps_a_single_text_block() {
         let msg = Message::text(MessageRole::User, "hello");
-        assert_eq!(msg.content, vec![ContentBlock::Text("hello".to_string())]);
+        assert_eq!(
+            msg.content,
+            vec![ContentBlock::Text {
+                text: "hello".to_string()
+            }]
+        );
     }
 
     #[test]
@@ -118,7 +126,9 @@ mod tests {
         let assistant_turn = Message {
             role: MessageRole::Assistant,
             content: vec![
-                ContentBlock::Text("checking the schedule".to_string()),
+                ContentBlock::Text {
+                    text: "checking the schedule".to_string(),
+                },
                 ContentBlock::ToolUse {
                     id: "call_1".to_string(),
                     name: "milestone_scheduler".to_string(),
@@ -148,5 +158,85 @@ mod tests {
     #[test]
     fn content_as_text_handles_empty_slice() {
         assert_eq!(content_as_text(&[]), "");
+    }
+
+    #[test]
+    fn serde_roundtrip_text_block() {
+        let text_block = ContentBlock::Text {
+            text: "hello world".to_string(),
+        };
+
+        // Serialize to JSON
+        let json =
+            serde_json::to_string(&text_block).expect("Text block should serialize successfully");
+
+        // Verify the shape: should be {"type":"text","text":"hello world"}
+        assert_eq!(json, r#"{"type":"text","text":"hello world"}"#);
+
+        // Deserialize back
+        let deserialized: ContentBlock =
+            serde_json::from_str(&json).expect("Should deserialize back to Text block");
+
+        // Verify round-trip
+        assert_eq!(deserialized, text_block);
+    }
+
+    #[test]
+    fn serde_roundtrip_tool_use_block() {
+        let tool_use = ContentBlock::ToolUse {
+            id: "call_xyz".to_string(),
+            name: "fetch_data".to_string(),
+            input: serde_json::json!({"url": "https://example.com"}),
+        };
+
+        let json =
+            serde_json::to_string(&tool_use).expect("ToolUse block should serialize successfully");
+
+        let deserialized: ContentBlock =
+            serde_json::from_str(&json).expect("Should deserialize back to ToolUse block");
+
+        assert_eq!(deserialized, tool_use);
+    }
+
+    #[test]
+    fn serde_roundtrip_tool_result_block() {
+        let tool_result = ContentBlock::ToolResult {
+            tool_use_id: "call_xyz".to_string(),
+            content: r#"{"status": "success", "data": [1, 2, 3]}"#.to_string(),
+            is_error: false,
+        };
+
+        let json = serde_json::to_string(&tool_result)
+            .expect("ToolResult block should serialize successfully");
+
+        let deserialized: ContentBlock =
+            serde_json::from_str(&json).expect("Should deserialize back to ToolResult block");
+
+        assert_eq!(deserialized, tool_result);
+    }
+
+    #[test]
+    fn serde_roundtrip_message_with_mixed_content() {
+        let msg = Message {
+            role: MessageRole::Assistant,
+            content: vec![
+                ContentBlock::Text {
+                    text: "Let me check that for you.".to_string(),
+                },
+                ContentBlock::ToolUse {
+                    id: "call_1".to_string(),
+                    name: "search".to_string(),
+                    input: serde_json::json!({"query": "example"}),
+                },
+            ],
+        };
+
+        let json = serde_json::to_string(&msg)
+            .expect("Message with mixed content should serialize successfully");
+
+        let deserialized: Message =
+            serde_json::from_str(&json).expect("Should deserialize back to Message");
+
+        assert_eq!(deserialized, msg);
     }
 }

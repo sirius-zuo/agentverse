@@ -135,7 +135,7 @@ impl ModelProvider for GeminiProvider {
             .ok_or_else(|| ModelError::InvalidResponse("No content in response".to_string()))?;
 
         Ok(GenerateResponse {
-            content: vec![crate::memory::ContentBlock::Text(content)],
+            content: vec![crate::memory::ContentBlock::Text { text: content }],
             usage: UsageStats::default(), // Gemini context caching is a separate API
         })
     }
