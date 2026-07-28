@@ -1,17 +1,36 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+/// A single piece of message content: text, a tool call, or a tool result.
+///
+/// This is the atomic unit of content exchanged with language models. `Message`
+/// contains a vec of these; model responses produce them as part of the output.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContentBlock {
+    /// Plain text content.
     Text(String),
+    /// A tool call issued by the model.
+    ///
+    /// The `id` field is issued by the provider (the model's response) and must
+    /// be echoed back verbatim as the `tool_use_id` in the matching `ToolResult`
+    /// in the next turn — this is how the provider correlates the result to the call.
     ToolUse {
+        /// Unique identifier for this tool call, issued by the provider.
         id: String,
+        /// Name of the tool to invoke.
         name: String,
+        /// Tool input as JSON.
         input: serde_json::Value,
     },
+    /// Result of executing a tool call.
     ToolResult {
+        /// The `id` from the `ToolUse` call this result answers.
         tool_use_id: String,
+        /// Pre-serialized tool output as a string. This is the shape both
+        /// Anthropic and OpenAI wire protocols expect, not a structured `Value`.
         content: String,
+        /// Whether this result represents an error.
         is_error: bool,
     },
 }
@@ -124,5 +143,10 @@ mod tests {
             tool_turn.as_text(),
             "[tool_result call_1: {\"total_weeks\": 12}]"
         );
+    }
+
+    #[test]
+    fn content_as_text_handles_empty_slice() {
+        assert_eq!(content_as_text(&[]), "");
     }
 }
