@@ -82,6 +82,7 @@ impl AnthropicContentBlock {
 
     /// The text payload, if this is a `Text` block. Used only by tests that
     /// pin down the system-prompt / plain-text wiring.
+    #[cfg(test)]
     fn text(&self) -> Option<&str> {
         match self {
             Self::Text { text, .. } => Some(text),
@@ -89,6 +90,7 @@ impl AnthropicContentBlock {
         }
     }
 
+    #[cfg(test)]
     fn cache_control(&self) -> Option<&CacheControl> {
         match self {
             Self::Text { cache_control, .. }
