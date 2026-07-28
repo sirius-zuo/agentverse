@@ -242,21 +242,35 @@ impl ToolRegistry {
             .collect()
     }
 
-    /// Return native tool definitions for the requested registered tools.
-    pub fn tool_definitions_for(&self, names: &[String]) -> Vec<agentverse::ToolDefinition> {
+    /// Return native tool definitions for the requested registered tools, with
+    /// each tool's schema run through the strict-mode adapter (see
+    /// `crate::strict_schema`). Unknown names are silently skipped, preserving
+    /// the order of `names`. Returns `Err` if any requested tool's schema
+    /// cannot be made strict-mode compatible (e.g. an open-dictionary shape) —
+    /// this is not caught and skipped, since silently dropping a tool from the
+    /// list offered to the model is its own kind of silent failure.
+    pub fn tool_definitions_for(
+        &self,
+        names: &[String],
+    ) -> Result<Vec<agentverse::ToolDefinition>, crate::strict_schema::StrictSchemaError> {
         let tools = self.tools.read().unwrap();
         names
             .iter()
-            .filter_map(|name| {
-                let (tool, _) = tools.get(name)?;
+            .filter_map(|name| tools.get(name))
+            .map(|(tool, _)| {
                 let schema = tool.schema();
-                Some(agentverse::ToolDefinition {
-                    name: schema.get("name")?.as_str()?.to_string(),
-                    description: schema.get("description")?.as_str()?.to_string(),
-                    parameters: schema.get("input_schema")?.clone(),
+                let parameters =
+                    crate::strict_schema::to_strict_schema(schema["input_schema"].clone())?;
+                Ok(agentverse::ToolDefinition {
+                    name: schema["name"].as_str().unwrap_or_default().to_string(),
+                    description: schema["description"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string(),
+                    parameters,
                 })
             })
-            .collect()
+            .collect::<Result<Vec<_>, _>>()
     }
 
     /// BM25 keyword search over tool names and descriptions.
@@ -461,7 +475,7 @@ mod tests {
             "ghost".to_string(),
             "calculator".to_string(),
         ];
-        let definitions = reg.tool_definitions_for(&names);
+        let definitions = reg.tool_definitions_for(&names).unwrap();
 
         assert_eq!(
             definitions
@@ -479,7 +493,9 @@ mod tests {
         let reg = ToolRegistry::new();
         reg.register(Calculator);
 
-        let definitions = reg.tool_definitions_for(&["calculator".to_string()]);
+        let definitions = reg
+            .tool_definitions_for(&["calculator".to_string()])
+            .unwrap();
         let definition = definitions.first().unwrap();
         let schema = reg
             .schema()
@@ -492,7 +508,63 @@ mod tests {
             definition.description,
             schema["description"].as_str().unwrap()
         );
-        assert_eq!(definition.parameters, schema["input_schema"]);
+        // parameters is now the strict-adapted schema, not the raw one.
+        assert_eq!(
+            definition.parameters,
+            crate::strict_schema::to_strict_schema(schema["input_schema"].clone()).unwrap()
+        );
+    }
+
+    #[test]
+    fn tool_definitions_for_returns_strict_schemas() {
+        use crate::calculator::Calculator;
+
+        let reg = ToolRegistry::new();
+        reg.register(Calculator);
+
+        let definitions = reg
+            .tool_definitions_for(&["calculator".to_string()])
+            .unwrap();
+        let definition = definitions.first().unwrap();
+        assert_eq!(
+            definition.parameters["additionalProperties"],
+            serde_json::Value::Bool(false)
+        );
+    }
+
+    #[test]
+    fn tool_definitions_for_propagates_strict_schema_errors() {
+        use agentverse::{Tool, ToolResult};
+        use schemars::JsonSchema;
+        use serde::Deserialize;
+        use std::collections::HashMap;
+
+        #[allow(dead_code)]
+        #[derive(Deserialize, JsonSchema)]
+        struct OpenDictArgs {
+            tags: HashMap<String, String>,
+        }
+
+        struct OpenDictTool;
+
+        #[async_trait::async_trait]
+        impl Tool for OpenDictTool {
+            type Args = OpenDictArgs;
+            fn name(&self) -> &str {
+                "open_dict_tool"
+            }
+            fn description(&self) -> &str {
+                "test tool with an open dictionary arg"
+            }
+            async fn execute(&self, _args: OpenDictArgs) -> ToolResult {
+                Ok(serde_json::json!({}))
+            }
+        }
+
+        let reg = ToolRegistry::new();
+        reg.register(OpenDictTool);
+        let result = reg.tool_definitions_for(&["open_dict_tool".to_string()]);
+        assert!(result.is_err());
     }
 
     #[test]
