@@ -44,6 +44,7 @@ struct FunctionDefinition {
     name: String,
     description: String,
     parameters: Value,
+    strict: bool,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -77,6 +78,20 @@ struct Choice {
 #[derive(Debug, Deserialize)]
 struct ResponseMessage {
     content: Option<String>,
+    #[serde(default)]
+    tool_calls: Vec<ToolCallWire>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ToolCallWire {
+    id: String,
+    function: FunctionCallWire,
+}
+
+#[derive(Debug, Deserialize)]
+struct FunctionCallWire {
+    name: String,
+    arguments: String,
 }
 
 fn read_disable_thinking() -> bool {
@@ -144,6 +159,7 @@ impl ModelProvider for OpenAICompatible {
                         name: tool.name,
                         description: tool.description,
                         parameters: tool.parameters,
+                        strict: true,
                     },
                 })
                 .collect()
@@ -177,15 +193,36 @@ impl ModelProvider for OpenAICompatible {
         let chat_response: ChatResponse =
             serde_json::from_str(body).map_err(|e| ModelError::InvalidResponse(e.to_string()))?;
 
-        let content = chat_response
+        let message = chat_response
             .choices
             .into_iter()
             .next()
-            .and_then(|c| c.message.content)
+            .map(|c| c.message)
             .ok_or_else(|| ModelError::InvalidResponse("No content in response".to_string()))?;
 
+        let mut content: Vec<crate::memory::ContentBlock> = Vec::new();
+        if let Some(text) = message.content {
+            content.push(crate::memory::ContentBlock::Text { text });
+        }
+        for call in message.tool_calls {
+            let input: Value = serde_json::from_str(&call.function.arguments).map_err(|e| {
+                ModelError::InvalidResponse(format!("invalid tool_call arguments JSON: {e}"))
+            })?;
+            content.push(crate::memory::ContentBlock::ToolUse {
+                id: call.id,
+                name: call.function.name,
+                input,
+            });
+        }
+
+        if content.is_empty() {
+            return Err(ModelError::InvalidResponse(
+                "No content in response".to_string(),
+            ));
+        }
+
         Ok(GenerateResponse {
-            content: vec![crate::memory::ContentBlock::Text { text: content }],
+            content,
             usage: UsageStats {
                 input_tokens: chat_response.usage.prompt_tokens,
                 output_tokens: chat_response.usage.completion_tokens,

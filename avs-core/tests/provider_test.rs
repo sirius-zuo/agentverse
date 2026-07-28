@@ -146,6 +146,68 @@ fn test_openai_build_request_with_tools_serializes_chat_tools() {
         body["tools"][0]["function"]["parameters"],
         json!({"type": "object", "properties": {"expression": {"type": "string"}}})
     );
+    assert_eq!(body["tools"][0]["function"]["strict"], true);
+}
+
+#[test]
+fn test_openai_parse_response_extracts_tool_calls() {
+    let provider = OpenAICompatible::new();
+    let body = json!({
+        "choices": [{"message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "calculate", "arguments": "{\"a\":1,\"b\":2}"}
+            }]
+        }}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 3}
+    })
+    .to_string();
+    let result = provider.parse_response(&body).unwrap();
+    assert_eq!(result.content.len(), 1);
+    match &result.content[0] {
+        agentverse::ContentBlock::ToolUse { id, name, input } => {
+            assert_eq!(id, "call_1");
+            assert_eq!(name, "calculate");
+            assert_eq!(input["a"], 1);
+            assert_eq!(input["b"], 2);
+        }
+        other => panic!("expected ToolUse, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_openai_parse_response_extracts_text_and_tool_calls_together() {
+    let provider = OpenAICompatible::new();
+    let body = json!({
+        "choices": [{"message": {
+            "role": "assistant",
+            "content": "Let me check.",
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "calculate", "arguments": "{}"}
+            }]
+        }}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 3}
+    })
+    .to_string();
+    let result = provider.parse_response(&body).unwrap();
+    assert_eq!(result.content.len(), 2);
+}
+
+#[test]
+fn test_openai_parse_response_no_content_or_tool_calls_is_error() {
+    let provider = OpenAICompatible::new();
+    let body = json!({
+        "choices": [{"message": {"role": "assistant", "content": null}}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 3}
+    })
+    .to_string();
+    let err = provider.parse_response(&body).unwrap_err();
+    assert!(err.to_string().contains("No content"));
 }
 
 #[test]
