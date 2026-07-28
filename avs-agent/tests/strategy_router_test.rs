@@ -1,7 +1,7 @@
 use agentverse::memory::Message;
 use agentverse::{
     AgentError as CoreAgentError, Config, LlmRunner, PromptRegistry, RunStrategy, StrategyOutcome,
-    Tool, ToolError, ToolResult,
+    Tool, ToolResult,
 };
 use agentverse_agent::{agent::HitlConfig, Agent, AgentError, AgentOutput, SkillConfig, SkillMode};
 use agentverse_hitl::{ApprovalDecision, HitlPolicy, InMemoryQueue};
@@ -309,14 +309,19 @@ Action Input: {"text":"secret"}"#,
         .await
         .unwrap();
 
-    let error = agent
+    // The excluded tool is not found in the restricted registry, so the call
+    // fails internally and is fed back to the model as an observation (same
+    // recoverable-error handling as the HITL twin below), rather than
+    // aborting the whole invocation. The security property under test is
+    // that the real tool body never runs.
+    let output = agent
         .invoke("alice", session_id, "attempt hidden tool")
         .await
-        .unwrap_err();
+        .unwrap();
 
     assert!(matches!(
-        error,
-        AgentError::Llm(CoreAgentError::Tool(ToolError::NotFound(ref name))) if name == "echo"
+        output,
+        AgentOutput::Done(ref text) if text == "tool ran"
     ));
     assert_eq!(tool_calls.load(Ordering::SeqCst), 0);
     assert_eq!(fixed_calls.load(Ordering::SeqCst), 0);

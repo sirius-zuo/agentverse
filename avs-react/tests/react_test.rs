@@ -398,6 +398,86 @@ async fn react_run_returns_error_on_bad_port() {
     assert!(result.is_err(), "Expected error when LLM is unreachable");
 }
 
+#[tokio::test]
+async fn react_run_recovers_from_single_tool_call_error() {
+    use httpmock::prelude::*;
+
+    fn chat_completion(content: &str) -> serde_json::Value {
+        json!({
+            "choices": [{"message": {"role": "assistant", "content": content}}],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}
+        })
+    }
+
+    fn is_first_turn(req: &HttpMockRequest) -> bool {
+        let body = req
+            .body
+            .as_ref()
+            .map(|b| String::from_utf8_lossy(b).to_string())
+            .unwrap_or_default();
+        !body.contains("Tool: missing_tool")
+    }
+
+    fn is_second_turn(req: &HttpMockRequest) -> bool {
+        let body = req
+            .body
+            .as_ref()
+            .map(|b| String::from_utf8_lossy(b).to_string())
+            .unwrap_or_default();
+        body.contains("Tool: missing_tool")
+    }
+
+    let server = MockServer::start_async().await;
+    server
+        .mock_async(|when, then| {
+            when.method(POST)
+                .path("/chat/completions")
+                .matches(is_first_turn);
+            then.status(200).json_body(chat_completion(
+                "Thought: try the tool.\nAction: missing_tool\nAction Input: {}",
+            ));
+        })
+        .await;
+    server
+        .mock_async(|when, then| {
+            when.method(POST)
+                .path("/chat/completions")
+                .matches(is_second_turn);
+            then.status(200)
+                .json_body(chat_completion("Thought: recovered.\nAnswer: done"));
+        })
+        .await;
+
+    let runner = Arc::new(
+        LlmRunner::from_config(Config {
+            provider: agentverse::ProviderConfig::openai(
+                "test".to_string(),
+                "sk-test".to_string(),
+                Some(server.base_url()),
+            ),
+            max_messages: 10,
+            tools: vec![],
+            prompts_dir: None,
+            system_prompt: None,
+        })
+        .unwrap(),
+    );
+
+    // "missing_tool" is intentionally not registered, so the first call fails
+    // with ToolError::NotFound — this must be fed back to the model as an
+    // observation, not propagated as a hard error.
+    let tools = ToolRegistry::new();
+    let strategy = ReActStrategy::new(runner, Arc::new(PromptRegistry::new()), tools, 5);
+
+    let result = strategy.run(user_message()).await;
+
+    match result {
+        Ok(agentverse::StrategyOutcome::Done(answer)) => assert_eq!(answer, "done"),
+        Ok(agentverse::StrategyOutcome::Interrupted(_)) => panic!("expected Done, got Interrupted"),
+        Err(e) => panic!("expected recovery via retry, got Err: {e}"),
+    }
+}
+
 // ─── run_hitl interrupt tests ──────────────────────────────────────────────
 
 #[tokio::test]

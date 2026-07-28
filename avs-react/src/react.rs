@@ -146,11 +146,16 @@ impl agentverse::RunStrategy for ReActStrategy {
                         role: agentverse::MessageRole::Assistant,
                         content: response.content.clone(),
                     });
-                    let result = self.skeleton.execute_tool(&tool_name, args).await?;
-                    info!(iteration, action = "tool_call", tool = %tool_name, "Tool executed");
+                    let observation = match self.skeleton.execute_tool(&tool_name, args).await {
+                        Ok(result) => {
+                            info!(iteration, action = "tool_call", tool = %tool_name, "Tool executed");
+                            result
+                        }
+                        Err(e) => format!("Error: {e}"),
+                    };
                     buf.push(Message {
                         role: agentverse::MessageRole::User,
-                        content: format!("Tool: {}\nResult: {}", tool_name, result),
+                        content: format!("Tool: {}\nResult: {}", tool_name, observation),
                     });
                 }
                 CycleAction::ToolCalls { calls } => {
