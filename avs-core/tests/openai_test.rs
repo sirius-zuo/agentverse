@@ -10,10 +10,7 @@ fn test_openai_compatible_build_request() {
             "test-model",
             GenerateRequest {
                 system: None,
-                messages: vec![Message {
-                    role: MessageRole::User,
-                    content: "hello".to_string(),
-                }],
+                messages: vec![Message::text(MessageRole::User, "hello")],
                 tools: None,
                 ..Default::default()
             },
@@ -55,7 +52,7 @@ fn test_openai_compatible_parse_response() {
         "usage": {"prompt_tokens": 5, "completion_tokens": 8}
     }"#;
     let result = model.parse_response(body).unwrap();
-    assert_eq!(result.content, "Hello! How can I help you?");
+    assert_eq!(result.as_text(), "Hello! How can I help you?");
     assert_eq!(result.usage.input_tokens, 5);
     assert_eq!(result.usage.output_tokens, 8);
 }
@@ -72,10 +69,7 @@ fn response_format_serialized_as_json_schema_wrapper() {
             "qwen",
             GenerateRequest {
                 system: None,
-                messages: vec![Message {
-                    role: MessageRole::User,
-                    content: "plan this".to_string(),
-                }],
+                messages: vec![Message::text(MessageRole::User, "plan this")],
                 tools: None,
                 response_format: Some(schema.clone()),
             },
@@ -94,10 +88,7 @@ fn response_format_omitted_when_none() {
             "qwen",
             GenerateRequest {
                 system: None,
-                messages: vec![Message {
-                    role: MessageRole::User,
-                    content: "hello".to_string(),
-                }],
+                messages: vec![Message::text(MessageRole::User, "hello")],
                 tools: None,
                 response_format: None,
             },

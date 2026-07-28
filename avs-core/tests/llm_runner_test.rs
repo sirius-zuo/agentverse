@@ -24,10 +24,7 @@ fn llm_runner_from_config_builds_successfully() {
 #[tokio::test]
 async fn llm_runner_invoke_takes_messages_and_returns_error_on_bad_port() {
     let runner = LlmRunner::from_config(closed_port_config()).unwrap();
-    let messages = vec![Message {
-        role: MessageRole::User,
-        content: "hello".to_string(),
-    }];
+    let messages = vec![Message::text(MessageRole::User, "hello")];
     let result = runner.invoke(messages).await;
     assert!(result.is_err(), "expected network error on closed port");
 }
@@ -36,14 +33,8 @@ async fn llm_runner_invoke_takes_messages_and_returns_error_on_bad_port() {
 async fn llm_runner_invoke_with_system_message_fails_on_bad_port() {
     let runner = LlmRunner::from_config(closed_port_config()).unwrap();
     let messages = vec![
-        Message {
-            role: MessageRole::System,
-            content: "You are a helpful assistant.".to_string(),
-        },
-        Message {
-            role: MessageRole::User,
-            content: "hello".to_string(),
-        },
+        Message::text(MessageRole::System, "You are a helpful assistant."),
+        Message::text(MessageRole::User, "hello"),
     ];
     let result = runner.invoke(messages).await;
     assert!(result.is_err());

@@ -42,10 +42,7 @@ fn test_anthropic_build_request_system_prompt() {
     let provider = AnthropicProvider::new();
     let req = GenerateRequest {
         system: Some("Be helpful.".to_string()),
-        messages: vec![Message {
-            role: MessageRole::User,
-            content: "hello".to_string(),
-        }],
+        messages: vec![Message::text(MessageRole::User, "hello")],
         tools: None,
         ..Default::default()
     };
@@ -114,10 +111,7 @@ fn test_openai_build_request_with_tools_serializes_chat_tools() {
     let provider = OpenAICompatible::new();
     let request = GenerateRequest {
         system: None,
-        messages: vec![Message {
-            role: MessageRole::User,
-            content: "hello".to_string(),
-        }],
+        messages: vec![Message::text(MessageRole::User, "hello")],
         tools: Some(vec![ToolDefinition {
             name: "calculate".to_string(),
             description: "Perform arithmetic".to_string(),
@@ -167,10 +161,7 @@ fn test_gemini_build_request_system_instruction() {
     let provider = GeminiProvider::new();
     let req = GenerateRequest {
         system: Some("System instruction".to_string()),
-        messages: vec![Message {
-            role: MessageRole::User,
-            content: "hello".to_string(),
-        }],
+        messages: vec![Message::text(MessageRole::User, "hello")],
         tools: None,
         ..Default::default()
     };
@@ -187,14 +178,8 @@ fn test_gemini_build_request_system_role_messages_filtered() {
     let req = GenerateRequest {
         system: Some("System instruction".to_string()),
         messages: vec![
-            Message {
-                role: MessageRole::System,
-                content: "this should be filtered".to_string(),
-            },
-            Message {
-                role: MessageRole::User,
-                content: "hello".to_string(),
-            },
+            Message::text(MessageRole::System, "this should be filtered"),
+            Message::text(MessageRole::User, "hello"),
         ],
         tools: None,
         ..Default::default()
@@ -210,10 +195,7 @@ fn test_gemini_build_request_with_tools() {
     let provider = GeminiProvider::new();
     let req = GenerateRequest {
         system: None,
-        messages: vec![Message {
-            role: MessageRole::User,
-            content: "hello".to_string(),
-        }],
+        messages: vec![Message::text(MessageRole::User, "hello")],
         tools: Some(vec![ToolDefinition {
             name: "calc".to_string(),
             description: "Calculate".to_string(),
@@ -244,7 +226,7 @@ fn test_gemini_parse_response_ok() {
     })
     .to_string();
     let result = provider.parse_response(&body).unwrap();
-    assert_eq!(result.content, "Hello from Gemini!");
+    assert_eq!(result.as_text(), "Hello from Gemini!");
 }
 
 #[test]
@@ -282,10 +264,7 @@ fn connection_manager_with_model_uses_new_model_name() {
         .expect("known provider");
     let req = agentverse::GenerateRequest {
         system: None,
-        messages: vec![Message {
-            role: MessageRole::User,
-            content: "hi".into(),
-        }],
+        messages: vec![Message::text(MessageRole::User, "hi")],
         tools: None,
         ..Default::default()
     };
@@ -303,10 +282,7 @@ fn connection_manager_with_model_openai_uses_new_model_name() {
         .expect("known provider");
     let req = agentverse::GenerateRequest {
         system: None,
-        messages: vec![Message {
-            role: MessageRole::User,
-            content: "hi".into(),
-        }],
+        messages: vec![Message::text(MessageRole::User, "hi")],
         tools: None,
         ..Default::default()
     };
@@ -338,10 +314,7 @@ fn connection_manager_with_model_gemini_uses_new_model_name() {
         .expect("known provider");
     let req = agentverse::GenerateRequest {
         system: None,
-        messages: vec![Message {
-            role: MessageRole::User,
-            content: "hi".into(),
-        }],
+        messages: vec![Message::text(MessageRole::User, "hi")],
         tools: None,
         ..Default::default()
     };
