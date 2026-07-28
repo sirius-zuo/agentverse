@@ -37,7 +37,7 @@ as the subject, call it three times:
   `runway_projector` with realistic funding, burn, and revenue growth assumptions
 - `system_prompt`: `"You are a financial analyst. Use runway_projector to model cash runway and break-even timing with specific numbers."`
 - `allowed_tools`: `["runway_projector"]`
-- `max_steps`: 6, `max_tokens`: 8000, `timeout_secs`: 60
+- `max_steps`: 6, `max_tokens`: 8000, `timeout_secs`: 180
 
 **operations-analyst** — spawn with these parameters:
 
