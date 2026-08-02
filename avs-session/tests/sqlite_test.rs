@@ -37,41 +37,26 @@ async fn append_and_load_messages_preserves_order() {
     let session = store.create("user-1").await.unwrap();
 
     store
-        .append_message(
-            session.id,
-            Message {
-                role: MessageRole::User,
-                content: "hello".to_string(),
-            },
-        )
+        .append_message(session.id, Message::text(MessageRole::User, "hello"))
         .await
         .unwrap();
     store
         .append_message(
             session.id,
-            Message {
-                role: MessageRole::Assistant,
-                content: "hi there".to_string(),
-            },
+            Message::text(MessageRole::Assistant, "hi there"),
         )
         .await
         .unwrap();
     store
-        .append_message(
-            session.id,
-            Message {
-                role: MessageRole::User,
-                content: "how are you".to_string(),
-            },
-        )
+        .append_message(session.id, Message::text(MessageRole::User, "how are you"))
         .await
         .unwrap();
 
     let messages = store.load_messages(session.id).await.unwrap();
     assert_eq!(messages.len(), 3);
-    assert_eq!(messages[0].content, "hello");
-    assert_eq!(messages[1].content, "hi there");
-    assert_eq!(messages[2].content, "how are you");
+    assert_eq!(messages[0].as_text(), "hello");
+    assert_eq!(messages[1].as_text(), "hi there");
+    assert_eq!(messages[2].as_text(), "how are you");
 }
 
 #[tokio::test]
@@ -82,14 +67,8 @@ async fn append_turn_persists_both_messages_in_order() {
     store
         .append_turn(
             session.id,
-            Message {
-                role: MessageRole::User,
-                content: "hello".to_string(),
-            },
-            Message {
-                role: MessageRole::Assistant,
-                content: "hi".to_string(),
-            },
+            Message::text(MessageRole::User, "hello"),
+            Message::text(MessageRole::Assistant, "hi"),
         )
         .await
         .unwrap();
@@ -97,9 +76,9 @@ async fn append_turn_persists_both_messages_in_order() {
     let messages = store.load_messages(session.id).await.unwrap();
     assert_eq!(messages.len(), 2);
     assert!(matches!(messages[0].role, MessageRole::User));
-    assert_eq!(messages[0].content, "hello");
+    assert_eq!(messages[0].as_text(), "hello");
     assert!(matches!(messages[1].role, MessageRole::Assistant));
-    assert_eq!(messages[1].content, "hi");
+    assert_eq!(messages[1].as_text(), "hi");
 }
 
 #[tokio::test]
@@ -173,10 +152,7 @@ async fn user_cannot_access_other_users_session() {
     store
         .append_message(
             alice_session.id,
-            Message {
-                role: MessageRole::User,
-                content: "secret message".to_string(),
-            },
+            Message::text(MessageRole::User, "secret message"),
         )
         .await
         .unwrap();
