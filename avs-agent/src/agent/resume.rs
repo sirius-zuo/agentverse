@@ -182,6 +182,18 @@ impl Agent {
             InterruptedState::PendingPhaseGate { .. } => unreachable!(),
         };
 
+        // Deliberately not made tolerant of pre-Phase-4 rows: a HITL interrupt
+        // persisted before `ToolCall`/`Message` gained their current shape will
+        // fail here with a serde error ("missing field `id`" for `pending_calls_json`,
+        // "invalid type: string, expected a sequence" for `history_json`) — a hard
+        // runtime error, not a silent one. Unlike session history (Task 2's
+        // avs-memory fallback), there is no safe fallback for a missing `id`: a
+        // fabricated id would desynchronize `tool_use_id` correlation for exactly
+        // the calls a human is trying to resume, reproducing the bug this whole
+        // refactor exists to fix. Accepted per this project's "no migration for
+        // persisted session data" decision — any session interrupted before this
+        // deploy and not yet resumed will need to be abandoned, not silently
+        // mis-resumed.
         let history: Vec<agentverse::memory::Message> = serde_json::from_str(&history_json)?;
         let pending: Vec<agentverse::ToolCall> = serde_json::from_str(&pending_calls_json)?;
         let execution_tools = if self.strategy_router.is_some() {
@@ -218,6 +230,7 @@ impl Agent {
             ApprovalDecision::Modified { new_args } => {
                 if let Some(first) = pending.first() {
                     let modified = agentverse::ToolCall {
+                        id: first.id.clone(),
                         name: first.name.clone(),
                         args: new_args.clone(),
                     };
@@ -253,10 +266,10 @@ impl Agent {
         };
 
         let mut augmented = history;
-        augmented.push(agentverse::memory::Message {
-            role: agentverse::memory::MessageRole::User,
-            content: observation,
-        });
+        augmented.push(agentverse::memory::Message::text(
+            agentverse::memory::MessageRole::User,
+            observation,
+        ));
 
         let skill_ctx: Option<SkillContext> = skill_ctx_json
             .as_deref()
@@ -345,11 +358,12 @@ mod tests {
                 "ToolApproval": {"tool_name": "echo", "args": {"text": "hi"}}
             })
             .to_string(),
-            history: vec![agentverse::memory::Message {
-                role: agentverse::memory::MessageRole::User,
-                content: "please call echo".to_string(),
-            }],
+            history: vec![agentverse::memory::Message::text(
+                agentverse::memory::MessageRole::User,
+                "please call echo",
+            )],
             pending_calls: vec![agentverse::ToolCall {
+                id: "call_1".to_string(),
                 name: "echo".to_string(),
                 args: serde_json::json!({"text": "hi"}),
             }],
@@ -394,7 +408,7 @@ mod tests {
                 let history: Vec<agentverse::memory::Message> =
                     serde_json::from_str(&history_json).unwrap();
                 assert_eq!(history.len(), 1);
-                assert_eq!(history[0].content, "please call echo");
+                assert_eq!(history[0].as_text(), "please call echo");
             }
             other => panic!("expected PendingToolCall, got {other:?}"),
         }

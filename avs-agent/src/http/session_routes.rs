@@ -133,6 +133,10 @@ pub async fn list_messages(
                     serde_json::json!({
                         "sequence_num": i,
                         "role": format!("{:?}", msg.role).to_lowercase(),
+                        // `content` is a `Vec<ContentBlock>` (tagged block objects: {"type":"text",...} /
+                        // {"type":"tool_use",...} / {"type":"tool_result",...}), not a flat string, as of
+                        // the native tool-calling refactor — a deliberate "clean break" API shape change,
+                        // not an oversight. See docs/superpowers/specs/2026-07-28-native-tool-calling-design.md.
                         "content": msg.content,
                     })
                 })

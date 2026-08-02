@@ -200,6 +200,7 @@ struct WireTransferStrategy {
 impl WireTransferStrategy {
     fn call() -> ToolCall {
         ToolCall {
+            id: "call_1".to_string(),
             name: "wire_transfer".into(),
             args: serde_json::json!({ "amount": 100 }),
         }
@@ -447,19 +448,13 @@ async fn append_turn_contract_preserves_user_then_assistant_order() {
     session_memory
         .append_turn(
             session.id,
-            Message {
-                role: MessageRole::User,
-                content: "hello".to_string(),
-            },
-            Message {
-                role: MessageRole::Assistant,
-                content: "hi".to_string(),
-            },
+            Message::text(MessageRole::User, "hello"),
+            Message::text(MessageRole::Assistant, "hi"),
         )
         .await
         .unwrap();
 
     let messages = session_memory.load_messages(session.id).await.unwrap();
-    assert_eq!(messages[0].content, "hello");
-    assert_eq!(messages[1].content, "hi");
+    assert_eq!(messages[0].as_text(), "hello");
+    assert_eq!(messages[1].as_text(), "hi");
 }

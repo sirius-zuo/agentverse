@@ -112,16 +112,10 @@ impl Agent {
     ) -> Vec<Message> {
         let mut msgs = Vec::new();
         if let Some(sys) = system {
-            msgs.push(Message {
-                role: MessageRole::System,
-                content: sys,
-            });
+            msgs.push(Message::text(MessageRole::System, sys));
         }
         msgs.extend(history);
-        msgs.push(Message {
-            role: MessageRole::User,
-            content: input.to_string(),
-        });
+        msgs.push(Message::text(MessageRole::User, input.to_string()));
         msgs
     }
 
@@ -140,16 +134,10 @@ impl Agent {
             (None, None) => None,
         };
         if let Some(content) = sys_content {
-            msgs.push(Message {
-                role: MessageRole::System,
-                content,
-            });
+            msgs.push(Message::text(MessageRole::System, content));
         }
         msgs.extend(history);
-        msgs.push(Message {
-            role: MessageRole::User,
-            content: input.to_string(),
-        });
+        msgs.push(Message::text(MessageRole::User, input.to_string()));
         msgs
     }
 
@@ -328,10 +316,7 @@ impl Agent {
             None
         };
 
-        let user_msg = Message {
-            role: MessageRole::User,
-            content: effective_input.clone(),
-        };
+        let user_msg = Message::text(MessageRole::User, effective_input.clone());
         let messages = self.assemble_messages_with_context(
             self.assemble_system(skill_ctx.as_ref(), summaries_block.as_deref()),
             long_term_text,
@@ -378,10 +363,7 @@ impl Agent {
             }
         };
 
-        let assistant_msg = Message {
-            role: MessageRole::Assistant,
-            content: response.clone(),
-        };
+        let assistant_msg = Message::text(MessageRole::Assistant, response.clone());
         self.sessions
             .append_turn(session_id, user_msg.clone(), assistant_msg.clone())
             .await?;
