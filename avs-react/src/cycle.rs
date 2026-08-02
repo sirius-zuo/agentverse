@@ -79,23 +79,31 @@ pub fn action_from_response(response: &GenerateResponse) -> CycleAction {
     }
 }
 
-/// Sort tool results into the order their originating calls were made.
-///
-/// `ToolRegistry::execute_many` returns results in **completion** order (via
-/// `tokio::task::JoinSet::join_next()`), not input order. Anthropic's wire
-/// format tolerates either order (it correlates purely by `tool_use_id`),
-/// but `OpenAICompatible` targets llama.cpp/vLLM-class local servers whose
-/// chat templates may zip a `Tool`-role message's results positionally
-/// against the preceding `tool_calls` array rather than keying strictly by
-/// `tool_call_id` — so results must be restored to call order before that
-/// message is built.
-pub fn sort_results_by_call_order(results: &mut [ToolCallResult], order: &[String]) {
-    results.sort_by_key(|r| {
-        order
-            .iter()
-            .position(|id| id == &r.id)
-            .unwrap_or(usize::MAX)
-    });
+/// Restore tool results to the order their originating calls were made in,
+/// backfilling a synthetic error result for any call `ToolRegistry::execute_many`
+/// silently dropped (its completion loop discards a call's result entirely if
+/// that call's task panicked). Without this, a panicking tool call among
+/// several would leave the `Tool`-role message with fewer `ToolResult` blocks
+/// than the assistant turn has `ToolUse` blocks — a wire-protocol violation
+/// Anthropic hard-rejects and some OpenAI-compatible backends silently misalign on.
+pub fn reconcile_and_order_results(
+    results: Vec<ToolCallResult>,
+    calls: &[(String, String)],
+) -> Vec<ToolCallResult> {
+    let mut by_id: std::collections::HashMap<String, ToolCallResult> =
+        results.into_iter().map(|r| (r.id.clone(), r)).collect();
+    calls
+        .iter()
+        .map(|(id, name)| {
+            by_id.remove(id).unwrap_or_else(|| ToolCallResult {
+                id: id.clone(),
+                name: name.clone(),
+                result: Err(agentverse::ToolError::Execution(
+                    "tool execution failed (no result returned)".to_string(),
+                )),
+            })
+        })
+        .collect()
 }
 
 /// Convert executed tool results into `ToolResult` content blocks for a
@@ -365,9 +373,12 @@ mod tests {
     }
 
     #[test]
-    fn sort_results_by_call_order_reorders_completion_order_results() {
-        let order = vec!["call_a".to_string(), "call_b".to_string()];
-        let mut results = vec![
+    fn reconcile_and_order_results_reorders_completion_order_results() {
+        let calls = vec![
+            ("call_a".to_string(), "double".to_string()),
+            ("call_b".to_string(), "double".to_string()),
+        ];
+        let results = vec![
             ToolCallResult {
                 id: "call_b".to_string(),
                 name: "double".to_string(),
@@ -379,9 +390,36 @@ mod tests {
                 result: Ok(serde_json::json!(2)),
             },
         ];
-        sort_results_by_call_order(&mut results, &order);
+        let results = reconcile_and_order_results(results, &calls);
         assert_eq!(results[0].id, "call_a");
         assert_eq!(results[1].id, "call_b");
+    }
+
+    #[test]
+    fn reconcile_and_order_results_backfills_dropped_call() {
+        let calls = vec![
+            ("call_a".to_string(), "double".to_string()),
+            ("call_b".to_string(), "double".to_string()),
+        ];
+        // Simulates `ToolRegistry::execute_many` silently dropping call_b's
+        // result (e.g. because its task panicked).
+        let results = vec![ToolCallResult {
+            id: "call_a".to_string(),
+            name: "double".to_string(),
+            result: Ok(serde_json::json!(2)),
+        }];
+        let results = reconcile_and_order_results(results, &calls);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].id, "call_a");
+        assert!(results[0].result.is_ok());
+        assert_eq!(results[1].id, "call_b");
+        match &results[1].result {
+            Err(e) => assert!(
+                e.to_string().contains("no result returned"),
+                "expected error message to mention the call was not returned, got: {e}"
+            ),
+            Ok(_) => panic!("expected backfilled call_b to be an error result"),
+        }
     }
 
     #[test]

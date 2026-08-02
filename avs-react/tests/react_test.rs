@@ -9,7 +9,7 @@ use agentverse_tools::ToolRegistry;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 // ─── Mock tool ────────────────────────────────────────────────────────────────
 
@@ -481,6 +481,14 @@ async fn react_run_recovers_from_tool_not_found_error() {
     }
 }
 
+// httpmock 0.7's `.matches()` takes a plain `fn(&HttpMockRequest) -> bool`
+// (type `MockMatcherFunction`), not a capturing closure, so the second-turn
+// matcher below (which needs to stash the request body for later assertion)
+// cannot close over a local `Arc<Mutex<..>>`. This module-level static is
+// the capture point instead — see `avs-react/tests/react_native_provider_test.rs`
+// for the same pattern.
+static SAME_TOOL_SECOND_TURN_BODY: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+
 #[tokio::test]
 async fn react_run_dispatches_two_calls_to_the_same_tool_in_one_turn() {
     use httpmock::prelude::*;
@@ -500,7 +508,15 @@ async fn react_run_dispatches_two_calls_to_the_same_tool_in_one_turn() {
             .as_ref()
             .map(|b| String::from_utf8_lossy(b).to_string())
             .unwrap_or_default();
-        body.contains("\"role\":\"tool\"")
+        if body.contains("\"role\":\"tool\"") {
+            *SAME_TOOL_SECOND_TURN_BODY
+                .get_or_init(|| Mutex::new(None))
+                .lock()
+                .unwrap() = Some(body);
+            true
+        } else {
+            false
+        }
     }
 
     let server = MockServer::start_async().await;
@@ -554,6 +570,23 @@ async fn react_run_dispatches_two_calls_to_the_same_tool_in_one_turn() {
         Ok(agentverse::StrategyOutcome::Interrupted(_)) => panic!("expected Done, got Interrupted"),
         Err(e) => panic!("expected Done, got Err: {e}"),
     }
+
+    let body = SAME_TOOL_SECOND_TURN_BODY
+        .get()
+        .and_then(|m| m.lock().unwrap().clone())
+        .expect("second turn request must have been captured");
+    let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let messages = parsed["messages"].as_array().unwrap();
+    let tool_call_ids: Vec<&str> = messages
+        .iter()
+        .filter(|m| m["role"] == "tool")
+        .map(|m| m["tool_call_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        tool_call_ids,
+        vec!["call_a", "call_b"],
+        "two calls to the same tool name must still be correlated and ordered by id"
+    );
 }
 
 // ─── run_hitl interrupt tests ──────────────────────────────────────────────

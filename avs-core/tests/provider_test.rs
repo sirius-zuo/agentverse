@@ -1,7 +1,7 @@
 use agentverse::memory::{Message, MessageRole};
 use agentverse::{
-    AnthropicProvider, ConnectionManager, GeminiProvider, GenerateRequest, ModelProvider,
-    OpenAICompatible, ProviderConfig, ToolDefinition,
+    AnthropicProvider, ConnectionManager, GeminiProvider, GenerateRequest, ModelError,
+    ModelProvider, OpenAICompatible, ProviderConfig, ToolDefinition,
 };
 use serde_json::json;
 
@@ -489,7 +489,10 @@ fn test_gemini_build_request_system_role_messages_filtered() {
 }
 
 #[test]
-fn test_gemini_build_request_with_tools() {
+fn test_gemini_build_request_with_tools_is_error() {
+    // GeminiProvider does not support native tool-calling: any request that
+    // offers tool schemas must hard-error rather than silently mapping them
+    // into a `functions` field the Gemini API doesn't use for tool calling.
     let provider = GeminiProvider::new();
     let req = GenerateRequest {
         system: None,
@@ -501,14 +504,8 @@ fn test_gemini_build_request_with_tools() {
         }]),
         ..Default::default()
     };
-    let body = provider.build_request("gemini-pro", req).unwrap();
-    let tools = body["tools"].as_array().unwrap();
-    assert_eq!(tools[0]["functions"][0]["name"], "calc");
-    assert_eq!(tools[0]["functions"][0]["description"], "Calculate");
-    assert_eq!(
-        tools[0]["functions"][0]["parameters"],
-        json!({"type": "object", "properties": {}})
-    );
+    let err = provider.build_request("gemini-pro", req).unwrap_err();
+    assert!(matches!(err, ModelError::InvalidResponse(_)));
 }
 
 #[test]

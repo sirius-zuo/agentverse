@@ -75,6 +75,14 @@ impl ModelProvider for GeminiProvider {
     ) -> Result<serde_json::Value, ModelError> {
         use crate::memory::{ContentBlock, MessageRole};
 
+        if request.tools.is_some() {
+            return Err(ModelError::InvalidResponse(
+                "GeminiProvider does not support native tool-calling (request.tools) — \
+                 Gemini is out of scope for this project's strict tool-calling support"
+                    .to_string(),
+            ));
+        }
+
         for m in &request.messages {
             if m.content
                 .iter()
@@ -199,6 +207,23 @@ mod tests {
                     is_error: false,
                 }],
             }],
+            ..Default::default()
+        };
+
+        let err = provider.build_request("gemini-pro", request).unwrap_err();
+        assert!(matches!(err, ModelError::InvalidResponse(_)));
+    }
+
+    #[test]
+    fn build_request_rejects_tools_even_with_text_only_messages() {
+        let provider = GeminiProvider::new();
+        let request = GenerateRequest {
+            messages: vec![Message::text(MessageRole::User, "hi")],
+            tools: Some(vec![crate::model::ToolDefinition {
+                name: "search".to_string(),
+                description: "search the web".to_string(),
+                parameters: serde_json::json!({}),
+            }]),
             ..Default::default()
         };
 

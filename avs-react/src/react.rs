@@ -5,7 +5,7 @@
 //! `ToolUse` blocks), dispatched directly with no free-text parsing.
 
 use super::cycle::{
-    action_from_response, results_to_tool_result_blocks, sort_results_by_call_order, CycleAction,
+    action_from_response, reconcile_and_order_results, results_to_tool_result_blocks, CycleAction,
     CycleSkeleton,
 };
 use agentverse::{
@@ -96,9 +96,12 @@ impl agentverse::RunStrategy for ReActStrategy {
                         role: MessageRole::Assistant,
                         content: response.content.clone(),
                     });
-                    let order: Vec<String> = calls.iter().map(|c| c.id.clone()).collect();
-                    let mut results = self.skeleton.execute_many(calls).await?;
-                    sort_results_by_call_order(&mut results, &order);
+                    let order: Vec<(String, String)> = calls
+                        .iter()
+                        .map(|c| (c.id.clone(), c.name.clone()))
+                        .collect();
+                    let results = self.skeleton.execute_many(calls).await?;
+                    let results = reconcile_and_order_results(results, &order);
                     info!(
                         iteration,
                         action = "tool_calls",
@@ -155,15 +158,18 @@ impl agentverse::RunStrategy for ReActStrategy {
                         role: MessageRole::Assistant,
                         content: response.content.clone(),
                     });
-                    let order: Vec<String> = calls.iter().map(|c| c.id.clone()).collect();
+                    let order: Vec<(String, String)> = calls
+                        .iter()
+                        .map(|c| (c.id.clone(), c.name.clone()))
+                        .collect();
                     match self
                         .skeleton
                         .tools
                         .execute_many_hitl(calls.clone(), &hook)
                         .await
                     {
-                        Ok(mut results) => {
-                            sort_results_by_call_order(&mut results, &order);
+                        Ok(results) => {
+                            let results = reconcile_and_order_results(results, &order);
                             info!(
                                 iteration,
                                 action = "tool_calls",
