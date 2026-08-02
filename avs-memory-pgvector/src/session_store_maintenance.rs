@@ -65,7 +65,7 @@ pub(crate) async fn load_messages_above_watermark(
                 seq,
                 Message {
                     role: PostgresSessionMemory::str_to_role(&role)?,
-                    content,
+                    content: crate::session_store::decode_content(&content),
                 },
             ))
         })

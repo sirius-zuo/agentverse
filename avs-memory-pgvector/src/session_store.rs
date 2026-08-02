@@ -184,6 +184,30 @@ impl PostgresSessionMemory {
     }
 }
 
+/// Encode a message's content blocks for storage in the `messages.content`
+/// TEXT column. `ContentBlock`'s `Serialize` impl is total (no error path
+/// that can occur for real content), so this cannot fail in practice.
+fn encode_content(content: &[agentverse::memory::ContentBlock]) -> String {
+    serde_json::to_string(content).expect("ContentBlock serialization is infallible")
+}
+
+/// Decode a `messages.content` column value back into `Vec<ContentBlock>`.
+///
+/// Rows written *before* this refactor hold a plain string (e.g. `"hello"`),
+/// not JSON — `serde_json::from_str::<Vec<ContentBlock>>` fails on those,
+/// since a bare string is not valid JSON for a sequence type. Rather than
+/// hard-failing every pre-existing session's first load after this deploy,
+/// fall back to wrapping the raw text in a single `Text` block: this is
+/// lossless (a legacy row only ever held plain text) and consistent with
+/// this project's "no migration for persisted session data" decision.
+pub(crate) fn decode_content(raw: &str) -> Vec<agentverse::memory::ContentBlock> {
+    serde_json::from_str(raw).unwrap_or_else(|_| {
+        vec![agentverse::memory::ContentBlock::Text {
+            text: raw.to_string(),
+        }]
+    })
+}
+
 #[async_trait]
 impl SessionMemory for PostgresSessionMemory {
     async fn create(&self, user_id: &str) -> Result<Session, SessionMemoryError> {
@@ -296,7 +320,7 @@ impl SessionMemory for PostgresSessionMemory {
         )
         .bind(&id_str)
         .bind(role)
-        .bind(&message.content)
+        .bind(encode_content(&message.content))
         .bind(next_sequence)
         .bind(now)
         .execute(&mut *tx)
@@ -343,7 +367,7 @@ impl SessionMemory for PostgresSessionMemory {
             )
             .bind(&id_str)
             .bind(Self::role_to_str(message.role))
-            .bind(&message.content)
+            .bind(encode_content(&message.content))
             .bind(next_sequence + offset as i64)
             .bind(now)
             .execute(&mut *tx)
@@ -374,7 +398,7 @@ impl SessionMemory for PostgresSessionMemory {
             .map(|(role, content)| {
                 Ok(Message {
                     role: Self::str_to_role(&role)?,
-                    content,
+                    content: decode_content(&content),
                 })
             })
             .collect::<Result<Vec<_>, SessionMemoryError>>()
