@@ -73,6 +73,8 @@ async fn react_tool_call_passes_judge() {
         agentverse::StrategyOutcome::Interrupted(_) => panic!("expected Done, got Interrupted"),
     };
 
+    assert_eq!(agent_output, "The echo tool returned: hello");
+
     let judge_server = MockServer::start_async().await;
     register_judge_turn(&judge_server, &recording).await;
     let judge_connection =
@@ -320,6 +322,8 @@ async fn hitl_interrupt_resume_passes_judge() {
         AgentOutput::Done(text) => text,
         other => panic!("expected Done after resume, got {other:?}"),
     };
+
+    assert_eq!(agent_output, "The ls command completed successfully.");
 
     let judge_server = MockServer::start_async().await;
     register_judge_turn(&judge_server, &recording).await;

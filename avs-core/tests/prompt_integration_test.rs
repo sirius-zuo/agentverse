@@ -120,4 +120,5 @@ fn test_default_system_prompt() {
 
     let result = registry.render("system", context).unwrap();
     assert!(result.contains("helpful AI assistant"));
+    assert!(!result.contains("Answer:"));
 }

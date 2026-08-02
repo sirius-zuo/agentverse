@@ -202,6 +202,15 @@ impl Agent {
             std::sync::Arc::clone(&self.tools)
         };
 
+        // Deliberately plain-text (`MessageRole::User`), not a native
+        // `ContentBlock::ToolResult`: `react.rs::run_hitl` excludes the
+        // assistant's `ToolUse` turn from the history snapshot captured in
+        // `HitlInterrupt`, so that turn is never in `history` above. A
+        // `ToolResult` block here would carry a `tool_use_id` referencing a
+        // `ToolUse` that was never resumed into history — an orphaned
+        // `tool_result` that Anthropic hard-rejects with a 400 on the next
+        // turn. Don't "modernize" this to match avs-react's native `Tool`-role
+        // path without also fixing that exclusion.
         let observation = match &decision {
             ApprovalDecision::Approved => {
                 if pending.is_empty() {

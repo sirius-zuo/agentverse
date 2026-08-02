@@ -55,6 +55,7 @@ fn test_prompt_registry_has_system_template() {
     assert!(result.is_ok());
     let rendered = result.unwrap();
     assert!(rendered.contains("helpful AI assistant"));
+    assert!(!rendered.contains("Answer:"));
 }
 
 #[test]

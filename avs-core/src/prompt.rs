@@ -18,21 +18,7 @@ struct ExampleFile {
 /// Default embedded templates shipped with the library.
 const DEFAULT_SYSTEM_TEMPLATE: &str = "You are a helpful AI assistant.\n\
      You are concise and accurate. Never claim to have done something you haven't.\n\
-     If you don't know something, say so.\
-     {% if tools %}\n\n\
-     Available tools:\n\
-     {{ tools }}\n\n\
-     Always respond in this exact format:\n\
-     Thought: <your reasoning>\n\
-     Action: <tool_name>\n\
-     Action Input: <json args>\n\n\
-     When you have the final answer:\n\
-     Thought: <your reasoning>\n\
-     Answer: <final answer>\
-     {% else %}\n\n\
-     Always end your response with:\n\
-     Answer: <your answer>\
-     {% endif %}";
+     If you don't know something, say so.";
 
 const DEFAULT_REACT_TEMPLATE: &str = "You solve tasks by reasoning step by step. When you need \
      information or need to take an action, call the appropriate tool directly — tool calls are \

@@ -125,7 +125,9 @@ async fn run_rejects_depth_exceeded() {
 async fn run_enforces_step_budget() {
     let server = MockServer::start();
     server.mock(|when, then| {
-        when.method("POST").path("/v1/messages");
+        when.method("POST")
+            .path("/v1/messages")
+            .body_contains("loop_tool");
         then.status(200).json_body(loop_tool_call_body(10, 5));
     });
 
