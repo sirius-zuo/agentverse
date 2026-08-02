@@ -24,7 +24,7 @@ fn test_prompt_rendering_with_examples() {
 
     let result = registry.render("strategies.react", context).unwrap();
     assert!(result.contains("Answer: 4"));
-    assert!(result.contains("ReAct pattern"));
+    assert!(result.contains("reasoning step by step"));
 }
 
 #[test]
@@ -36,9 +36,9 @@ fn test_prompt_rendering_without_examples() {
     context.insert("conversation".to_string(), json!(""));
 
     let result = registry.render("strategies.react", context).unwrap();
-    assert!(result.contains("ReAct pattern"));
-    // Should not contain "Here are some examples" since examples is empty
-    assert!(!result.contains("Here are some examples"));
+    assert!(result.contains("reasoning step by step"));
+    // Should not contain "Examples:" since examples is empty
+    assert!(!result.contains("Examples:"));
 }
 
 #[test]

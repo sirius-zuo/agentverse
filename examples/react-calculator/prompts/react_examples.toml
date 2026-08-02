@@ -1,7 +1,7 @@
 [[example]]
 input = "What is 6 plus 7?"
-output = "Thought: I need to add 6 and 7.\nAction: calculator\nAction Input: {\"operation\": \"add\", \"a\": 6, \"b\": 7}\nObservation: {\"result\": 13}\nThought: I have the result.\nAnswer: 6 plus 7 is 13."
+output = "I'll add 6 and 7 using the calculator. 6 plus 7 is 13."
 
 [[example]]
 input = "What is 12 times 5?"
-output = "Thought: I need to multiply 12 by 5.\nAction: calculator\nAction Input: {\"operation\": \"multiply\", \"a\": 12, \"b\": 5}\nObservation: {\"result\": 60}\nThought: I have the result.\nAnswer: 12 times 5 is 60."
+output = "I'll multiply 12 by 5 using the calculator. 12 times 5 is 60."

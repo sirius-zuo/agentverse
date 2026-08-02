@@ -1,13 +1,11 @@
-Available tools:
-{{ tools }}
+You solve tasks by reasoning step by step. When you need information or need to take an action, call the appropriate tool directly — tool calls are handled natively, you never need to describe them as text.
 
-Respond using this format:
+{% if examples %}
+Examples:
+{% for example in examples %}
+User: {{ example.input }}
+Assistant: {{ example.output }}
+{% endfor %}
+{% endif %}
 
-    Thought: <reasoning>
-    Action: <tool_name>
-    Action Input: <valid JSON matching the tool's input schema>
-
-When you have a final answer:
-
-    Thought: <summary of findings>
-    Answer: <your complete answer>
+When you have a complete answer, respond with it directly.
