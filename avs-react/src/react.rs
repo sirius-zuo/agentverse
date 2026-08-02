@@ -1,14 +1,18 @@
 //! ReAct strategy implementation.
 //!
-//! Implements the ReAct pattern: Think → Act → Observe → Think...
-//! Uses the CycleSkeleton for utility methods and the shared cycle loop.
+//! Implements the ReAct pattern using each provider's native structured tool
+//! calling: the model's response *is* the assistant turn (`Text` and/or
+//! `ToolUse` blocks), dispatched directly with no free-text parsing.
 
-use super::cycle::{CycleAction, CycleSkeleton};
-use super::parse::parse_response;
-use agentverse::{
-    AgentError, LlmRunner, Message, ModelError, PromptRegistry, StrategyOutcome, ToolCall,
+use super::cycle::{
+    action_from_response, results_to_tool_result_blocks, sort_results_by_call_order, CycleAction,
+    CycleSkeleton,
 };
-use agentverse_tools::{ActiveToolSet, HitlInterruptResult, ToolRegistry};
+use agentverse::{
+    AgentError, ConfigError, LlmRunner, Message, MessageRole, ModelError, PromptRegistry,
+    StrategyOutcome,
+};
+use agentverse_tools::{HitlInterruptResult, ToolRegistry};
 use std::sync::Arc;
 use tracing::info;
 
@@ -32,47 +36,20 @@ impl ReActStrategy {
         }
     }
 
-    fn prepare_buffer_with_active(
-        &self,
-        messages: Vec<Message>,
-        active: &ActiveToolSet,
-    ) -> Vec<Message> {
-        if !self.skeleton.prompts.has_react_template() {
-            return messages;
-        }
-        let tools_str = self.skeleton.build_tools_str_active(active);
-        let mut ctx = std::collections::HashMap::new();
-        ctx.insert("tools".to_string(), serde_json::Value::String(tools_str));
-        if let Some(examples) = self.skeleton.prompts.get_examples("react_examples") {
-            if let Ok(val) = serde_json::to_value(examples) {
-                ctx.insert("examples".to_string(), val);
-            }
-        }
-        let mut buf = messages;
-        if let Ok(preamble) = self.skeleton.prompts.render("react", ctx) {
-            if !preamble.trim().is_empty() {
-                let insert_pos = buf
-                    .iter()
-                    .position(|m| !matches!(m.role, agentverse::MessageRole::System))
-                    .unwrap_or(0);
-                buf.insert(
-                    insert_pos,
-                    Message {
-                        role: agentverse::MessageRole::User,
-                        content: preamble,
-                    },
-                );
-            }
-        }
-        buf
-    }
-
     async fn invoke_with_active_tools(
         &self,
         messages: Vec<Message>,
         active_tool_names: &[String],
     ) -> Result<agentverse::GenerateResponse, AgentError> {
-        let definitions = self.skeleton.tools.tool_definitions_for(active_tool_names);
+        let definitions = self
+            .skeleton
+            .tools
+            .tool_definitions_for(active_tool_names)
+            .map_err(|e| {
+                AgentError::Config(ConfigError::Invalid(format!(
+                    "invalid tool schema for active tools: {e}"
+                )))
+            })?;
         if definitions.is_empty() {
             self.skeleton.runner.invoke(messages).await
         } else {
@@ -96,16 +73,8 @@ impl agentverse::RunStrategy for ReActStrategy {
         messages: Vec<Message>,
         active_tool_names: &[String],
     ) -> Result<StrategyOutcome, AgentError> {
-        let mut active = ActiveToolSet::default();
-        active.activate(
-            &active_tool_names
-                .iter()
-                .map(|s| s.as_str())
-                .collect::<Vec<_>>(),
-        );
-        let mut buf = self.prepare_buffer_with_active(messages, &active);
+        let mut buf = self.skeleton.prepare_buffer(messages);
         let mut iteration = 0usize;
-        let mut pending_answer: Option<String> = None;
 
         loop {
             if iteration >= self.skeleton.max_iterations() {
@@ -119,72 +88,26 @@ impl agentverse::RunStrategy for ReActStrategy {
             let response = self
                 .invoke_with_active_tools(buf.clone(), active_tool_names)
                 .await?;
-            self.skeleton.check_output_guardrail(&response.content)?;
+            self.skeleton.check_output_guardrail(&response.as_text())?;
 
-            let action = parse_response(&response.content);
-
-            match action {
-                CycleAction::Continue { thought } => {
-                    if let Some(saved) = pending_answer.take() {
-                        info!(iteration, "Strategy completed (nudge fallback)");
-                        return Ok(StrategyOutcome::Done(saved));
-                    }
-                    info!(iteration, action = "continue", "Thought only, continuing");
-                    buf.push(Message {
-                        role: agentverse::MessageRole::Assistant,
-                        content: format!("Thought: {}", thought),
-                    });
-                    pending_answer = Some(thought);
-                    buf.push(Message {
-                        role: agentverse::MessageRole::User,
-                        content: "Either call a tool (Action: / Action Input:) or give your final answer (Answer: ...).".to_string(),
-                    });
-                }
-                CycleAction::ToolCall { tool_name, args } => {
-                    pending_answer = None;
-                    buf.push(Message {
-                        role: agentverse::MessageRole::Assistant,
-                        content: response.content.clone(),
-                    });
-                    let observation = match self.skeleton.execute_tool(&tool_name, args).await {
-                        Ok(result) => {
-                            info!(iteration, action = "tool_call", tool = %tool_name, "Tool executed");
-                            result
-                        }
-                        Err(e) => format!("Error: {e}"),
-                    };
-                    buf.push(Message {
-                        role: agentverse::MessageRole::User,
-                        content: format!("Tool: {}\nResult: {}", tool_name, observation),
-                    });
-                }
+            match action_from_response(&response) {
                 CycleAction::ToolCalls { calls } => {
-                    pending_answer = None;
                     buf.push(Message {
-                        role: agentverse::MessageRole::Assistant,
+                        role: MessageRole::Assistant,
                         content: response.content.clone(),
                     });
-                    let results = self.skeleton.execute_many(calls).await?;
+                    let order: Vec<String> = calls.iter().map(|c| c.id.clone()).collect();
+                    let mut results = self.skeleton.execute_many(calls).await?;
+                    sort_results_by_call_order(&mut results, &order);
                     info!(
                         iteration,
                         action = "tool_calls",
                         count = results.len(),
-                        "Parallel tools executed"
+                        "Tools executed"
                     );
-                    let observation = results
-                        .iter()
-                        .map(|r| {
-                            let v = match &r.result {
-                                Ok(v) => v.to_string(),
-                                Err(e) => format!("Error: {e}"),
-                            };
-                            format!("Tool: {}\nResult: {}", r.name, v)
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n\n");
                     buf.push(Message {
-                        role: agentverse::MessageRole::User,
-                        content: observation,
+                        role: MessageRole::Tool,
+                        content: results_to_tool_result_blocks(results),
                     });
                 }
                 CycleAction::Done { answer } => {
@@ -205,16 +128,8 @@ impl agentverse::RunStrategy for ReActStrategy {
         active_tool_names: &[String],
         hook: Arc<dyn agentverse::hitl::HitlHook>,
     ) -> Result<StrategyOutcome, AgentError> {
-        let mut active = ActiveToolSet::default();
-        active.activate(
-            &active_tool_names
-                .iter()
-                .map(|s| s.as_str())
-                .collect::<Vec<_>>(),
-        );
-        let mut buf = self.prepare_buffer_with_active(messages, &active);
+        let mut buf = self.skeleton.prepare_buffer(messages);
         let mut iteration = 0usize;
-        let mut pending_answer: Option<String> = None;
 
         loop {
             if iteration >= self.skeleton.max_iterations() {
@@ -228,99 +143,36 @@ impl agentverse::RunStrategy for ReActStrategy {
             let response = self
                 .invoke_with_active_tools(buf.clone(), active_tool_names)
                 .await?;
-            self.skeleton.check_output_guardrail(&response.content)?;
-            let action = parse_response(&response.content);
+            self.skeleton.check_output_guardrail(&response.as_text())?;
 
-            match action {
-                CycleAction::Continue { thought } => {
-                    if let Some(saved) = pending_answer.take() {
-                        info!(iteration, "Strategy completed (nudge fallback)");
-                        return Ok(StrategyOutcome::Done(saved));
-                    }
-                    info!(iteration, action = "continue", "Thought only, continuing");
-                    buf.push(Message {
-                        role: agentverse::MessageRole::Assistant,
-                        content: format!("Thought: {}", thought),
-                    });
-                    pending_answer = Some(thought);
-                    buf.push(Message {
-                        role: agentverse::MessageRole::User,
-                        content: "Either call a tool (Action: / Action Input:) or give your final answer (Answer: ...).".to_string(),
-                    });
-                }
-                CycleAction::ToolCall { tool_name, args } => {
-                    pending_answer = None;
-                    // Snapshot BEFORE pushing assistant message so history on suspend
-                    // does not contain a dangling tool-call with no observation.
-                    let history_snapshot = buf.clone();
-                    buf.push(Message {
-                        role: agentverse::MessageRole::Assistant,
-                        content: response.content.clone(),
-                    });
-                    let calls = vec![ToolCall {
-                        name: tool_name.clone(),
-                        args: args.clone(),
-                    }];
-                    match self.skeleton.tools.execute_many_hitl(calls, &hook).await {
-                        Ok(results) => {
-                            let r = &results[0];
-                            let v = match &r.result {
-                                Ok(v) => v.to_string(),
-                                Err(e) => format!("Error: {e}"),
-                            };
-                            buf.push(Message {
-                                role: agentverse::MessageRole::User,
-                                content: format!("Tool: {}\nResult: {}", tool_name, v),
-                            });
-                        }
-                        Err(HitlInterruptResult {
-                            approval_id,
-                            kind_json,
-                        }) => {
-                            return Ok(StrategyOutcome::Interrupted(
-                                agentverse::hitl::HitlInterrupt {
-                                    approval_id,
-                                    kind_json,
-                                    history: history_snapshot,
-                                    pending_calls: vec![ToolCall {
-                                        name: tool_name.clone(),
-                                        args: args.clone(),
-                                    }],
-                                    active_tool_names: active_tool_names.to_vec(),
-                                },
-                            ));
-                        }
-                    }
-                }
+            match action_from_response(&response) {
                 CycleAction::ToolCalls { calls } => {
-                    pending_answer = None;
-                    // Snapshot BEFORE pushing assistant message (same reason as ToolCall branch).
+                    // Snapshot BEFORE pushing the assistant message so history
+                    // on suspend does not contain a dangling tool-call turn
+                    // with no observation.
                     let history_snapshot = buf.clone();
                     buf.push(Message {
-                        role: agentverse::MessageRole::Assistant,
+                        role: MessageRole::Assistant,
                         content: response.content.clone(),
                     });
+                    let order: Vec<String> = calls.iter().map(|c| c.id.clone()).collect();
                     match self
                         .skeleton
                         .tools
                         .execute_many_hitl(calls.clone(), &hook)
                         .await
                     {
-                        Ok(results) => {
-                            let observation = results
-                                .iter()
-                                .map(|r| {
-                                    let v = match &r.result {
-                                        Ok(v) => v.to_string(),
-                                        Err(e) => format!("Error: {e}"),
-                                    };
-                                    format!("Tool: {}\nResult: {}", r.name, v)
-                                })
-                                .collect::<Vec<_>>()
-                                .join("\n\n");
+                        Ok(mut results) => {
+                            sort_results_by_call_order(&mut results, &order);
+                            info!(
+                                iteration,
+                                action = "tool_calls",
+                                count = results.len(),
+                                "Tools executed"
+                            );
                             buf.push(Message {
-                                role: agentverse::MessageRole::User,
-                                content: observation,
+                                role: MessageRole::Tool,
+                                content: results_to_tool_result_blocks(results),
                             });
                         }
                         Err(HitlInterruptResult {
@@ -332,7 +184,7 @@ impl agentverse::RunStrategy for ReActStrategy {
                                     approval_id,
                                     kind_json,
                                     history: history_snapshot,
-                                    pending_calls: calls.clone(),
+                                    pending_calls: calls,
                                     active_tool_names: active_tool_names.to_vec(),
                                 },
                             ));

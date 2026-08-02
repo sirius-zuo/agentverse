@@ -3,16 +3,15 @@
 //! Provides the fixed loop structure; each strategy only implements
 //! its own `step()` logic via a closure.
 
-use agentverse::{AgentError, LlmRunner, PromptRegistry, ToolCall, ToolCallResult};
+use agentverse::{
+    AgentError, ContentBlock, GenerateResponse, LlmRunner, PromptRegistry, ToolCall, ToolCallResult,
+};
 use agentverse_guardrails::check_output;
-use agentverse_tools::{ActiveToolSet, ToolRegistry};
+use agentverse_tools::ToolRegistry;
 use serde_json::Value;
 use std::sync::Arc;
 
 /// The fixed cycle skeleton that all strategies share.
-///
-/// Each strategy provides its own `step()` closure that decides
-/// what happens on each iteration.
 pub struct CycleSkeleton {
     pub runner: Arc<LlmRunner>,
     pub prompts: Arc<PromptRegistry>,
@@ -20,19 +19,102 @@ pub struct CycleSkeleton {
     max_iterations: usize,
 }
 
-/// Represents the strategy's decision for the next action.
+/// The strategy's decision for the next action, derived directly from a
+/// model response's structured content blocks. Native tool calling removes
+/// the free-text ambiguity that used to require a `Continue`/nudge-retry
+/// state and a separate single-call variant — a response either carries one
+/// or more tool calls, is a plain-text final answer, or is a malformed
+/// protocol violation.
 #[derive(Debug)]
 pub enum CycleAction {
-    /// LLM said "think" — continue the loop with a thought.
-    Continue { thought: String },
-    /// LLM decided to call a single tool.
-    ToolCall { tool_name: String, args: Value },
-    /// LLM decided to call multiple tools in parallel.
+    /// One or more tool calls, dispatched together (parallel-safe by
+    /// construction — this also covers the single-call case).
     ToolCalls { calls: Vec<ToolCall> },
-    /// LLM provided a final answer.
+    /// A text-only response — the final answer.
     Done { answer: String },
-    /// LLM indicated an error.
+    /// The response had neither a tool call nor any text — a protocol
+    /// violation, not a retryable ambiguity.
     Error { message: String },
+}
+
+/// Derive the next action from a model response's content blocks.
+///
+/// `ToolUse` blocks take priority: if the model both narrates in `Text` and
+/// calls tools in the same turn, the tools are still dispatched (mirrors the
+/// old free-text parser's "tool calls override a hallucinated answer" rule,
+/// now for free — there is no separate hallucination case once tool calls
+/// are structurally distinct from prose).
+pub fn action_from_response(response: &GenerateResponse) -> CycleAction {
+    let mut calls = Vec::new();
+    let mut text_parts = Vec::new();
+
+    for block in &response.content {
+        match block {
+            ContentBlock::ToolUse { id, name, input } => {
+                calls.push(ToolCall {
+                    id: id.clone(),
+                    name: name.clone(),
+                    args: input.clone(),
+                });
+            }
+            ContentBlock::Text { text } => {
+                if !text.trim().is_empty() {
+                    text_parts.push(text.clone());
+                }
+            }
+            ContentBlock::ToolResult { .. } => {}
+        }
+    }
+
+    if !calls.is_empty() {
+        CycleAction::ToolCalls { calls }
+    } else if !text_parts.is_empty() {
+        CycleAction::Done {
+            answer: text_parts.join("\n"),
+        }
+    } else {
+        CycleAction::Error {
+            message: "Empty response from model".to_string(),
+        }
+    }
+}
+
+/// Sort tool results into the order their originating calls were made.
+///
+/// `ToolRegistry::execute_many` returns results in **completion** order (via
+/// `tokio::task::JoinSet::join_next()`), not input order. Anthropic's wire
+/// format tolerates either order (it correlates purely by `tool_use_id`),
+/// but `OpenAICompatible` targets llama.cpp/vLLM-class local servers whose
+/// chat templates may zip a `Tool`-role message's results positionally
+/// against the preceding `tool_calls` array rather than keying strictly by
+/// `tool_call_id` — so results must be restored to call order before that
+/// message is built.
+pub fn sort_results_by_call_order(results: &mut [ToolCallResult], order: &[String]) {
+    results.sort_by_key(|r| {
+        order
+            .iter()
+            .position(|id| id == &r.id)
+            .unwrap_or(usize::MAX)
+    });
+}
+
+/// Convert executed tool results into `ToolResult` content blocks for a
+/// `Tool`-role message, in the order given.
+pub fn results_to_tool_result_blocks(results: Vec<ToolCallResult>) -> Vec<ContentBlock> {
+    results
+        .into_iter()
+        .map(|r| {
+            let (content, is_error) = match r.result {
+                Ok(v) => (v.to_string(), false),
+                Err(e) => (e.to_string(), true),
+            };
+            ContentBlock::ToolResult {
+                tool_use_id: r.id,
+                content,
+                is_error,
+            }
+        })
+        .collect()
 }
 
 impl CycleSkeleton {
@@ -61,62 +143,19 @@ impl CycleSkeleton {
         Ok(result.to_string())
     }
 
-    /// Render tool descriptions as a human-readable string for prompt injection.
-    pub fn build_tools_str(&self) -> String {
-        self.tools
-            .schema()
-            .into_iter()
-            .map(|schema| {
-                let name = schema["name"].as_str().unwrap_or("");
-                let description = schema["description"].as_str().unwrap_or("");
-                let input = &schema["input_schema"];
-                let props = input["properties"].as_object();
-                let required: Vec<&str> = input["required"]
-                    .as_array()
-                    .map(|r| r.iter().filter_map(|v| v.as_str()).collect())
-                    .unwrap_or_default();
-                if let Some(props) = props {
-                    let param_lines = props
-                        .iter()
-                        .map(|(k, v)| {
-                            let req = if required.contains(&k.as_str()) {
-                                "required"
-                            } else {
-                                "optional"
-                            };
-                            let desc = v["description"].as_str().unwrap_or("");
-                            format!("    - {} ({}): {}", k, req, desc)
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    format!(
-                        "- {}: {}\n  Parameters:\n{}",
-                        name, description, param_lines
-                    )
-                } else {
-                    format!("- {}: {}", name, description)
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n\n")
-    }
-
     /// Optionally insert the ReAct preamble into a message buffer.
     ///
-    /// If a `react.j2` template is registered, the rendered preamble (containing
-    /// tool descriptions and few-shot examples) is inserted before the first
-    /// non-system message.  When no template is present the buffer is returned
-    /// unchanged — this keeps the method safe for non-ReAct strategies.
+    /// If a `react.j2` template is registered, the rendered preamble
+    /// (few-shot examples only — tool schemas are sent natively via
+    /// `GenerateRequest.tools`, not as rendered text) is inserted before the
+    /// first non-system message. When no template is present the buffer is
+    /// returned unchanged.
     pub fn prepare_buffer(&self, messages: Vec<agentverse::Message>) -> Vec<agentverse::Message> {
         if !self.prompts.has_react_template() {
             return messages;
         }
 
-        let tools_str = self.build_tools_str();
         let mut ctx = std::collections::HashMap::new();
-        ctx.insert("tools".to_string(), serde_json::Value::String(tools_str));
-
-        // Inject "react_examples" set if present, under the key "examples".
         if let Some(examples) = self.prompts.get_examples("react_examples") {
             if let Ok(val) = serde_json::to_value(examples) {
                 ctx.insert("examples".to_string(), val);
@@ -132,10 +171,7 @@ impl CycleSkeleton {
                     .unwrap_or(0);
                 buf.insert(
                     insert_pos,
-                    agentverse::Message {
-                        role: agentverse::MessageRole::User,
-                        content: preamble,
-                    },
+                    agentverse::Message::text(agentverse::MessageRole::User, preamble),
                 );
             }
         }
@@ -169,46 +205,6 @@ impl CycleSkeleton {
         Ok(self.tools.execute_many(calls).await)
     }
 
-    /// Build tools string scoped to an ActiveToolSet.
-    pub fn build_tools_str_active(&self, active: &ActiveToolSet) -> String {
-        active
-            .schemas(&self.tools)
-            .into_iter()
-            .map(|schema| {
-                let name = schema["name"].as_str().unwrap_or("");
-                let description = schema["description"].as_str().unwrap_or("");
-                let input = &schema["input_schema"];
-                let props = input["properties"].as_object();
-                let required: Vec<&str> = input["required"]
-                    .as_array()
-                    .map(|r| r.iter().filter_map(|v| v.as_str()).collect())
-                    .unwrap_or_default();
-                if let Some(props) = props {
-                    let param_lines = props
-                        .iter()
-                        .map(|(k, v)| {
-                            let req = if required.contains(&k.as_str()) {
-                                "required"
-                            } else {
-                                "optional"
-                            };
-                            let desc = v["description"].as_str().unwrap_or("");
-                            format!("    - {} ({}): {}", k, req, desc)
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    format!(
-                        "- {}: {}\n  Parameters:\n{}",
-                        name, description, param_lines
-                    )
-                } else {
-                    format!("- {}: {}", name, description)
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n\n")
-    }
-
     /// Return max iterations.
     pub fn max_iterations(&self) -> usize {
         self.max_iterations
@@ -218,7 +214,7 @@ impl CycleSkeleton {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentverse::{Config, LlmRunner, PromptRegistry};
+    use agentverse::{Config, PromptRegistry, UsageStats};
     use agentverse_tools::ToolRegistry;
     use std::sync::Arc;
 
@@ -261,12 +257,170 @@ mod tests {
     #[test]
     fn skeleton_prepare_buffer_no_preamble() {
         let s = make_skeleton();
-        let msgs = vec![agentverse::Message {
-            role: agentverse::MessageRole::User,
-            content: "hi".to_string(),
-        }];
+        let msgs = vec![agentverse::Message::text(
+            agentverse::MessageRole::User,
+            "hi",
+        )];
         let buf = s.prepare_buffer(msgs);
         // Without a react prompt template, buffer is unchanged
         assert_eq!(buf.len(), 1);
+    }
+
+    fn response_with(content: Vec<ContentBlock>) -> GenerateResponse {
+        GenerateResponse {
+            content,
+            usage: UsageStats::default(),
+        }
+    }
+
+    #[test]
+    fn action_from_response_single_tool_call() {
+        let response = response_with(vec![ContentBlock::ToolUse {
+            id: "call_1".to_string(),
+            name: "search".to_string(),
+            input: serde_json::json!({"q": "test"}),
+        }]);
+        match action_from_response(&response) {
+            CycleAction::ToolCalls { calls } => {
+                assert_eq!(calls.len(), 1);
+                assert_eq!(calls[0].id, "call_1");
+                assert_eq!(calls[0].name, "search");
+                assert_eq!(calls[0].args["q"], "test");
+            }
+            other => panic!("expected ToolCalls, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn action_from_response_parallel_tool_calls_preserve_order() {
+        let response = response_with(vec![
+            ContentBlock::ToolUse {
+                id: "call_1".to_string(),
+                name: "calculator".to_string(),
+                input: serde_json::json!({}),
+            },
+            ContentBlock::ToolUse {
+                id: "call_2".to_string(),
+                name: "datetime".to_string(),
+                input: serde_json::json!({}),
+            },
+        ]);
+        match action_from_response(&response) {
+            CycleAction::ToolCalls { calls } => {
+                assert_eq!(calls.len(), 2);
+                assert_eq!(calls[0].id, "call_1");
+                assert_eq!(calls[1].id, "call_2");
+            }
+            other => panic!("expected ToolCalls, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn action_from_response_text_only_is_done() {
+        let response = response_with(vec![ContentBlock::Text {
+            text: "The answer is 42.".to_string(),
+        }]);
+        match action_from_response(&response) {
+            CycleAction::Done { answer } => assert_eq!(answer, "The answer is 42."),
+            other => panic!("expected Done, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn action_from_response_tool_calls_take_priority_over_text() {
+        let response = response_with(vec![
+            ContentBlock::Text {
+                text: "Let me check.".to_string(),
+            },
+            ContentBlock::ToolUse {
+                id: "call_1".to_string(),
+                name: "search".to_string(),
+                input: serde_json::json!({}),
+            },
+        ]);
+        match action_from_response(&response) {
+            CycleAction::ToolCalls { calls } => assert_eq!(calls.len(), 1),
+            other => panic!("expected ToolCalls, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn action_from_response_empty_content_is_error() {
+        let response = response_with(vec![]);
+        match action_from_response(&response) {
+            CycleAction::Error { message } => assert!(message.contains("Empty")),
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn action_from_response_blank_text_is_error() {
+        let response = response_with(vec![ContentBlock::Text {
+            text: "   ".to_string(),
+        }]);
+        match action_from_response(&response) {
+            CycleAction::Error { message } => assert!(message.contains("Empty")),
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sort_results_by_call_order_reorders_completion_order_results() {
+        let order = vec!["call_a".to_string(), "call_b".to_string()];
+        let mut results = vec![
+            ToolCallResult {
+                id: "call_b".to_string(),
+                name: "double".to_string(),
+                result: Ok(serde_json::json!(4)),
+            },
+            ToolCallResult {
+                id: "call_a".to_string(),
+                name: "double".to_string(),
+                result: Ok(serde_json::json!(2)),
+            },
+        ];
+        sort_results_by_call_order(&mut results, &order);
+        assert_eq!(results[0].id, "call_a");
+        assert_eq!(results[1].id, "call_b");
+    }
+
+    #[test]
+    fn results_to_tool_result_blocks_preserves_order_and_marks_errors() {
+        let results = vec![
+            ToolCallResult {
+                id: "call_a".to_string(),
+                name: "double".to_string(),
+                result: Ok(serde_json::json!(2)),
+            },
+            ToolCallResult {
+                id: "call_b".to_string(),
+                name: "missing".to_string(),
+                result: Err(agentverse::ToolError::NotFound("missing".to_string())),
+            },
+        ];
+        let blocks = results_to_tool_result_blocks(results);
+        match &blocks[0] {
+            ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+            } => {
+                assert_eq!(tool_use_id, "call_a");
+                assert_eq!(content, "2");
+                assert!(!is_error);
+            }
+            other => panic!("expected ToolResult, got {other:?}"),
+        }
+        match &blocks[1] {
+            ContentBlock::ToolResult {
+                tool_use_id,
+                is_error,
+                ..
+            } => {
+                assert_eq!(tool_use_id, "call_b");
+                assert!(is_error);
+            }
+            other => panic!("expected ToolResult, got {other:?}"),
+        }
     }
 }
