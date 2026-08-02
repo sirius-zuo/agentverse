@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 fn anthropic_answer_body(answer: &str) -> serde_json::Value {
     serde_json::json!({
-        "content": [{"type": "text", "text": format!("Answer: {answer}")}],
+        "content": [{"type": "text", "text": answer}],
         "usage": {
             "input_tokens": 50, "output_tokens": 10,
             "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0
@@ -27,6 +27,46 @@ fn make_executor(server_base_url: &str) -> SubAgentExecutor {
         Arc::clone(&ToolRegistry::new()),
         Arc::new(PromptRegistry::new()),
     )
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct LoopToolArgs {}
+
+struct LoopTool;
+
+#[async_trait::async_trait]
+impl agentverse::Tool for LoopTool {
+    type Args = LoopToolArgs;
+    fn name(&self) -> &str {
+        "loop_tool"
+    }
+    fn description(&self) -> &str {
+        "a tool that always succeeds, used to force the subagent loop to keep iterating so budget limits can be tested"
+    }
+    async fn execute(&self, _args: LoopToolArgs) -> agentverse::ToolResult {
+        Ok(serde_json::json!({"ok": true}))
+    }
+}
+
+fn make_executor_with_loop_tool(server_base_url: &str) -> SubAgentExecutor {
+    let cm = Arc::new(ConnectionManager::anthropic(
+        server_base_url,
+        "claude-sonnet-4-6",
+        "test-key",
+    ));
+    let tools = ToolRegistry::new();
+    tools.register(LoopTool);
+    SubAgentExecutor::new(cm, tools, Arc::new(PromptRegistry::new()))
+}
+
+fn loop_tool_call_body(input_tokens: u32, output_tokens: u32) -> serde_json::Value {
+    serde_json::json!({
+        "content": [{"type": "tool_use", "id": "call_1", "name": "loop_tool", "input": {}}],
+        "usage": {
+            "input_tokens": input_tokens, "output_tokens": output_tokens,
+            "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0
+        }
+    })
 }
 
 fn basic_spec() -> SubAgentSpec {
@@ -86,16 +126,13 @@ async fn run_enforces_step_budget() {
     let server = MockServer::start();
     server.mock(|when, then| {
         when.method("POST").path("/v1/messages");
-        then.status(200).json_body(serde_json::json!({
-            "content": [{"type": "text", "text": "Thought: still thinking..."}],
-            "usage": {"input_tokens": 10, "output_tokens": 5,
-                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
-        }));
+        then.status(200).json_body(loop_tool_call_body(10, 5));
     });
 
     let mut spec = basic_spec();
     spec.budget.max_steps = 2;
-    let executor = make_executor(&server.base_url());
+    spec.allowed_tools = vec!["loop_tool".to_string()];
+    let executor = make_executor_with_loop_tool(&server.base_url());
     let err = executor.run(&spec, basic_ctx()).await.unwrap_err();
     assert!(matches!(
         err,
@@ -108,16 +145,13 @@ async fn run_enforces_token_budget() {
     let server = MockServer::start();
     server.mock(|when, then| {
         when.method("POST").path("/v1/messages");
-        then.status(200).json_body(serde_json::json!({
-            "content": [{"type": "text", "text": "Thought: thinking..."}],
-            "usage": {"input_tokens": 900, "output_tokens": 200,
-                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
-        }));
+        then.status(200).json_body(loop_tool_call_body(900, 200));
     });
 
     let mut spec = basic_spec();
     spec.budget.max_tokens = 500;
-    let executor = make_executor(&server.base_url());
+    spec.allowed_tools = vec!["loop_tool".to_string()];
+    let executor = make_executor_with_loop_tool(&server.base_url());
     let err = executor.run(&spec, basic_ctx()).await.unwrap_err();
     assert!(matches!(err, SubAgentError::TokenBudgetExceeded { .. }));
 }
