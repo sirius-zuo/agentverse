@@ -109,10 +109,7 @@ mod tests {
     use uuid::Uuid;
 
     fn msg(role: MessageRole, content: &str) -> Message {
-        Message {
-            role,
-            content: content.to_string(),
-        }
+        Message::text(role, content)
     }
 
     #[tokio::test]
@@ -131,7 +128,7 @@ mod tests {
 
         let loaded = cache.load("alice", session_id).await.unwrap();
         assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded[0].content, "hi");
+        assert_eq!(loaded[0].as_text(), "hi");
     }
 
     #[tokio::test]
@@ -166,8 +163,8 @@ mod tests {
 
         let loaded = cache.load("alice", session_id).await.unwrap();
         assert_eq!(loaded.len(), 3);
-        assert_eq!(loaded[1].content, "second");
-        assert_eq!(loaded[2].content, "reply");
+        assert_eq!(loaded[1].as_text(), "second");
+        assert_eq!(loaded[2].as_text(), "reply");
     }
 
     #[tokio::test]
@@ -186,8 +183,8 @@ mod tests {
 
         let loaded = cache.load("alice", session_id).await.unwrap();
         assert_eq!(loaded.len(), 2);
-        assert_eq!(loaded[0].content, "hello");
-        assert_eq!(loaded[1].content, "hi there");
+        assert_eq!(loaded[0].as_text(), "hello");
+        assert_eq!(loaded[1].as_text(), "hi there");
     }
 
     #[tokio::test]

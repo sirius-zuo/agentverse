@@ -66,7 +66,7 @@ pub(crate) async fn load_messages_above_watermark(
                 seq,
                 Message {
                     role: SqliteSessionMemory::str_to_role(&role)?,
-                    content,
+                    content: super::sqlite::decode_content(&content),
                 },
             ))
         })
