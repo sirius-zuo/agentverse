@@ -136,9 +136,9 @@ impl agentverse::RunStrategy for PlanStrategy {
         );
 
         let synthesis_messages = vec![
-            Message::text(MessageRole::User, final_prompt),
+            Message::text(MessageRole::System, final_prompt),
             Message::text(
-                MessageRole::System,
+                MessageRole::User,
                 "Based on the executed plan, provide the final answer.".to_string(),
             ),
         ];
