@@ -1,10 +1,22 @@
 use httpmock::prelude::*;
 
 #[derive(Debug, Clone, serde::Deserialize)]
+pub struct RecordedToolCall {
+    pub id: String,
+    pub name: String,
+    /// JSON-encoded arguments string, exactly as the OpenAI-compatible wire
+    /// format's `function.arguments` expects — not a nested TOML table.
+    pub arguments: String,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct RecordedTurn {
     #[serde(default)]
     pub body_contains: String,
+    #[serde(default)]
     pub content: String,
+    #[serde(default)]
+    pub tool_calls: Vec<RecordedToolCall>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -23,9 +35,27 @@ pub fn load_recording(case_name: &str) -> Recording {
     toml::from_str(&content).unwrap_or_else(|e| panic!("failed to parse recording {path}: {e}"))
 }
 
-fn chat_completion_envelope(content: &str) -> serde_json::Value {
+fn chat_completion_envelope(turn: &RecordedTurn) -> serde_json::Value {
+    let tool_calls: Vec<serde_json::Value> = turn
+        .tool_calls
+        .iter()
+        .map(|tc| {
+            serde_json::json!({
+                "id": tc.id,
+                "function": {"name": tc.name, "arguments": tc.arguments}
+            })
+        })
+        .collect();
     serde_json::json!({
-        "choices": [{"message": {"role": "assistant", "content": content}}],
+        "choices": [{"message": {
+            "role": "assistant",
+            "content": if turn.content.is_empty() {
+                serde_json::Value::Null
+            } else {
+                serde_json::Value::String(turn.content.clone())
+            },
+            "tool_calls": tool_calls
+        }}],
         "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}
     })
 }
@@ -52,14 +82,13 @@ fn chat_completion_envelope(content: &str) -> serde_json::Value {
 pub async fn register_agent_turns(server: &MockServer, recording: &Recording) {
     for turn in &recording.agent_turns {
         let body_contains = turn.body_contains.clone();
-        let content = turn.content.clone();
+        let envelope = chat_completion_envelope(turn);
         server
             .mock_async(move |when, then| {
                 when.method(POST)
                     .path("/chat/completions")
                     .body_contains(body_contains.clone());
-                then.status(200)
-                    .json_body(chat_completion_envelope(&content));
+                then.status(200).json_body(envelope.clone());
             })
             .await;
     }
@@ -71,12 +100,11 @@ pub async fn register_agent_turns(server: &MockServer, recording: &Recording) {
 /// judge case makes exactly one judge call, so no `body_contains` filter
 /// is needed.
 pub async fn register_judge_turn(judge_server: &MockServer, recording: &Recording) {
-    let content = recording.judge_turn.content.clone();
+    let envelope = chat_completion_envelope(&recording.judge_turn);
     judge_server
         .mock_async(move |when, then| {
             when.method(POST).path("/chat/completions");
-            then.status(200)
-                .json_body(chat_completion_envelope(&content));
+            then.status(200).json_body(envelope.clone());
         })
         .await;
 }

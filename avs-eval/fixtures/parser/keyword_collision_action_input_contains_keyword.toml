@@ -1,2 +1,0 @@
-input = "Thought: logging.\nAction: log\nAction Input: {\"message\": \"Action: this is just data\"}"
-expected_debug = "ToolCall { tool_name: \"log\", args: Object {\"message\": String(\"Action: this is just data\")} }"

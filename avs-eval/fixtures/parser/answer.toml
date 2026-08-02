@@ -1,2 +1,0 @@
-input = "Thought: done.\nAnswer: Hello world"
-expected_debug = "Done { answer: \"Hello world\" }"

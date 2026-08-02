@@ -63,10 +63,10 @@ async fn react_tool_call_passes_judge() {
     tools.register(EchoTool);
     let strategy = ReActStrategy::new(runner, Arc::new(PromptRegistry::new()), tools, 5);
 
-    let messages = vec![agentverse::Message {
-        role: agentverse::MessageRole::User,
-        content: "please echo hello".to_string(),
-    }];
+    let messages = vec![agentverse::Message::text(
+        agentverse::MessageRole::User,
+        "please echo hello",
+    )];
     let outcome = strategy.run(messages).await.unwrap();
     let agent_output = match outcome {
         agentverse::StrategyOutcome::Done(answer) => answer,
@@ -118,10 +118,10 @@ async fn plan_multi_step_passes_judge() {
     tools.register(EchoTool);
     let strategy = PlanStrategy::new(runner, Arc::new(PromptRegistry::new()), tools, 10);
 
-    let messages = vec![agentverse::Message {
-        role: agentverse::MessageRole::User,
-        content: "what is the answer".to_string(),
-    }];
+    let messages = vec![agentverse::Message::text(
+        agentverse::MessageRole::User,
+        "what is the answer",
+    )];
     let outcome = strategy.run(messages).await.unwrap();
     let agent_output = match outcome {
         agentverse::StrategyOutcome::Done(answer) => answer,

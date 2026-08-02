@@ -1,10 +1,14 @@
 [[agent_turns]]
 body_contains = "echoed"
-content = "Thought: done.\nAnswer: The echo tool returned: hello"
+content = "The echo tool returned: hello"
 
 [[agent_turns]]
 body_contains = "please echo hello"
-content = "Thought: I'll echo it.\nAction: echo\nAction Input: {\"text\": \"hello\"}"
+
+[[agent_turns.tool_calls]]
+id = "call_1"
+name = "echo"
+arguments = "{\"text\": \"hello\"}"
 
 [judge_turn]
 content = "{\"verdict\": \"pass\", \"reasoning\": \"uses the tool's actual returned value\"}"

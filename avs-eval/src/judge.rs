@@ -59,10 +59,10 @@ pub async fn run_judge(
     let prompt = build_judge_prompt(rubric, agent_output);
     let request = agentverse::GenerateRequest {
         system: None,
-        messages: vec![agentverse::Message {
-            role: agentverse::MessageRole::User,
-            content: prompt,
-        }],
+        messages: vec![agentverse::Message::text(
+            agentverse::MessageRole::User,
+            prompt,
+        )],
         tools: None,
         ..Default::default()
     };
@@ -70,7 +70,7 @@ pub async fn run_judge(
         .generate(request)
         .await
         .map_err(|e| format!("judge model call failed: {e}"))?;
-    parse_judge_verdict(&response.content)
+    parse_judge_verdict(&response.as_text())
 }
 
 #[cfg(test)]
@@ -126,16 +126,16 @@ mod tests {
         let response = connection
             .generate(agentverse::GenerateRequest {
                 system: None,
-                messages: vec![agentverse::Message {
-                    role: agentverse::MessageRole::User,
-                    content: "hello".to_string(),
-                }],
+                messages: vec![agentverse::Message::text(
+                    agentverse::MessageRole::User,
+                    "hello",
+                )],
                 tools: None,
                 ..Default::default()
             })
             .await
             .unwrap();
-        assert_eq!(response.content, "Thought: done.\nAnswer: hi there");
+        assert_eq!(response.as_text(), "Thought: done.\nAnswer: hi there");
 
         let judge_server = MockServer::start_async().await;
         register_judge_turn(&judge_server, &recording).await;
