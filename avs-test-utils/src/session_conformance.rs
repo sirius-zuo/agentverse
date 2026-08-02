@@ -23,23 +23,17 @@ pub async fn run_conformance_suite<S: SessionMemory>(store: &S) {
         .is_none());
 
     // append_turn preserves order
-    let user_msg = Message {
-        role: MessageRole::User,
-        content: "hi".into(),
-    };
-    let asst_msg = Message {
-        role: MessageRole::Assistant,
-        content: "hello".into(),
-    };
+    let user_msg = Message::text(MessageRole::User, "hi");
+    let asst_msg = Message::text(MessageRole::Assistant, "hello");
     store
         .append_turn(session.id, user_msg, asst_msg)
         .await
         .expect("append_turn");
     let msgs = store.load_messages(session.id).await.expect("load");
     assert_eq!(msgs.len(), 2);
-    assert_eq!(msgs[0].content, "hi");
+    assert_eq!(msgs[0].as_text(), "hi");
     assert!(matches!(msgs[0].role, MessageRole::User));
-    assert_eq!(msgs[1].content, "hello");
+    assert_eq!(msgs[1].as_text(), "hello");
     assert!(matches!(msgs[1].role, MessageRole::Assistant));
 
     // watermark semantics
@@ -129,14 +123,8 @@ pub async fn run_conformance_suite<S: SessionMemory>(store: &S) {
     store
         .append_turn(
             ended_with_pending.id,
-            Message {
-                role: MessageRole::User,
-                content: "pending".into(),
-            },
-            Message {
-                role: MessageRole::Assistant,
-                content: "reply".into(),
-            },
+            Message::text(MessageRole::User, "pending"),
+            Message::text(MessageRole::Assistant, "reply"),
         )
         .await
         .expect("append_turn for ended session");
@@ -161,14 +149,8 @@ pub async fn run_conformance_suite<S: SessionMemory>(store: &S) {
     store
         .append_turn(
             fully_drained.id,
-            Message {
-                role: MessageRole::User,
-                content: "hi".into(),
-            },
-            Message {
-                role: MessageRole::Assistant,
-                content: "hello".into(),
-            },
+            Message::text(MessageRole::User, "hi"),
+            Message::text(MessageRole::Assistant, "hello"),
         )
         .await
         .expect("append_turn for drained session");
@@ -204,14 +186,8 @@ pub async fn run_conformance_suite<S: SessionMemory>(store: &S) {
     store
         .append_turn(
             to_delete.id,
-            Message {
-                role: MessageRole::User,
-                content: "will be deleted".into(),
-            },
-            Message {
-                role: MessageRole::Assistant,
-                content: "ok".into(),
-            },
+            Message::text(MessageRole::User, "will be deleted"),
+            Message::text(MessageRole::Assistant, "ok"),
         )
         .await
         .expect("append_turn before delete");
