@@ -71,7 +71,7 @@ impl agentverse::RunStrategy for HierarchicalStrategy {
             .iter()
             .rev()
             .find(|m| matches!(m.role, MessageRole::User))
-            .map(|m| m.content.clone())
+            .map(|m| m.as_text())
             .unwrap_or_default();
 
         let sub_goals = decompose_request(&self.runner, &self.prompts, &input).await?;
@@ -94,7 +94,7 @@ impl agentverse::RunStrategy for HierarchicalStrategy {
                         MessageRole::Assistant => "Assistant",
                         MessageRole::Tool => "Tool",
                     };
-                    format!("{}: {}", role, m.content)
+                    format!("{}: {}", role, m.as_text())
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
@@ -154,19 +154,13 @@ impl agentverse::RunStrategy for HierarchicalStrategy {
         );
 
         let synthesis_messages = vec![
-            Message {
-                role: MessageRole::System,
-                content: "You are a synthesis assistant. Combine the results of the completed sub-goals below into a single, comprehensive answer to the user's request.".to_string(),
-            },
-            Message {
-                role: MessageRole::User,
-                content: final_prompt,
-            },
+            Message::text(MessageRole::System, "You are a synthesis assistant. Combine the results of the completed sub-goals below into a single, comprehensive answer to the user's request.".to_string()),
+            Message::text(MessageRole::User, final_prompt),
         ];
 
         let answer = self.runner.invoke(synthesis_messages).await?;
 
-        check_output(&answer.content).map_err(|e| {
+        check_output(&answer.as_text()).map_err(|e| {
             AgentError::Guardrail(match e {
                 agentverse_guardrails::GuardrailError::OutputFiltered(msg) => {
                     agentverse::GuardrailError::OutputFiltered(msg)
@@ -178,6 +172,6 @@ impl agentverse::RunStrategy for HierarchicalStrategy {
             })
         })?;
 
-        Ok(agentverse::StrategyOutcome::Done(answer.content))
+        Ok(agentverse::StrategyOutcome::Done(answer.as_text()))
     }
 }

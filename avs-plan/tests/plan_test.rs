@@ -276,10 +276,10 @@ async fn plan_run_returns_error_on_bad_port() {
         ToolRegistry::new(),
         5,
     );
-    let messages = vec![agentverse::Message {
-        role: agentverse::memory::MessageRole::User,
-        content: "Search for rust".to_string(),
-    }];
+    let messages = vec![agentverse::Message::text(
+        agentverse::memory::MessageRole::User,
+        "Search for rust",
+    )];
     let result = strategy.run(messages).await;
     assert!(result.is_err());
 }
@@ -294,10 +294,10 @@ async fn hierarchical_run_returns_error_on_bad_port() {
         5,
         3,
     );
-    let messages = vec![agentverse::Message {
-        role: agentverse::memory::MessageRole::User,
-        content: "complex task".to_string(),
-    }];
+    let messages = vec![agentverse::Message::text(
+        agentverse::memory::MessageRole::User,
+        "complex task",
+    )];
     let result = strategy.run(messages).await;
     assert!(result.is_err());
 }

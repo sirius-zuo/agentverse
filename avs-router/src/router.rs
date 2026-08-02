@@ -113,18 +113,13 @@ impl StrategyRouter {
         };
 
         let messages = vec![
-            Message {
-                role: MessageRole::System,
-                content: system,
-            },
-            Message {
-                role: MessageRole::User,
-                content: format!("Request: {}", request),
-            },
+            Message::text(MessageRole::System, system),
+            Message::text(MessageRole::User, format!("Request: {}", request)),
         ];
 
         let response = self.runner.invoke(messages).await?;
-        let selected = response.content.trim().to_lowercase();
+        let response_text = response.as_text();
+        let selected = response_text.trim().to_lowercase();
 
         let selected = match selected.as_str() {
             "react" => StrategyName::ReAct,
@@ -132,7 +127,7 @@ impl StrategyRouter {
             "hierarchical" => StrategyName::Hierarchical,
             _ => {
                 return Err(AgentError::Model(agentverse::ModelError::InvalidResponse(
-                    format!("Unknown strategy: {}", response.content),
+                    format!("Unknown strategy: {}", response_text),
                 )))
             }
         };
