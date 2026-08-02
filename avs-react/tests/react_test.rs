@@ -1,10 +1,10 @@
 //! Tests for the agentverse-react crate.
 
 use agentverse::{
-    Config, ConnectionManager, GenerateRequest, GenerateResponse, LlmRunner, ModelError,
-    ModelProvider, PromptConfig, PromptRegistry, RunStrategy, Tool, ToolResult,
+    Config, ConnectionManager, GenerateRequest, GenerateResponse, LlmRunner, Message, MessageRole,
+    ModelError, ModelProvider, PromptConfig, PromptRegistry, RunStrategy, Tool, ToolResult,
 };
-use agentverse_react::{parse::parse_response, CycleAction, CycleSkeleton, ReActStrategy};
+use agentverse_react::{CycleSkeleton, ReActStrategy};
 use agentverse_tools::ToolRegistry;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -70,41 +70,6 @@ fn make_skeleton() -> CycleSkeleton {
     )
 }
 
-// ─── Parse tests ──────────────────────────────────────────────────────────────
-
-#[test]
-fn test_parse_response_answer() {
-    let result = parse_response("Thought: done.\nAnswer: Hello world");
-    match result {
-        CycleAction::Done { answer } => assert_eq!(answer, "Hello world"),
-        other => panic!("Expected Done, got {:?}", other),
-    }
-}
-
-#[test]
-fn test_parse_response_tool_call() {
-    let result =
-        parse_response("Thought: searching.\nAction: search\nAction Input: {\"q\": \"test\"}");
-    match result {
-        CycleAction::ToolCall { tool_name, args } => {
-            assert_eq!(tool_name, "search");
-            assert_eq!(args["q"], "test");
-        }
-        other => panic!("Expected ToolCall, got {:?}", other),
-    }
-}
-
-#[test]
-fn test_parse_response_thought_only() {
-    let result = parse_response("I need to think about this first");
-    match result {
-        CycleAction::Continue { thought } => {
-            assert_eq!(thought, "I need to think about this first");
-        }
-        other => panic!("Expected Continue, got {:?}", other),
-    }
-}
-
 // ─── CycleSkeleton tests ──────────────────────────────────────────────────────
 
 #[test]
@@ -146,10 +111,7 @@ fn test_cycle_skeleton_tool_count_nonzero() {
 #[test]
 fn test_cycle_skeleton_prepare_buffer_no_preamble() {
     let s = make_skeleton();
-    let msgs = vec![agentverse::Message {
-        role: agentverse::MessageRole::User,
-        content: "hi".to_string(),
-    }];
+    let msgs = vec![Message::text(MessageRole::User, "hi")];
     let buf = s.prepare_buffer(msgs);
     assert_eq!(buf.len(), 1);
 }
@@ -158,7 +120,7 @@ fn test_cycle_skeleton_prepare_buffer_no_preamble() {
 fn test_cycle_preamble_inserted_when_react_template_loaded() {
     let dir = tempfile::tempdir().unwrap();
     let react_path = dir.path().join("react.j2");
-    std::fs::write(&react_path, "Tools: {{ tools }}\nUse ReAct format.").unwrap();
+    std::fs::write(&react_path, "Follow the ReAct pattern.\n{{ examples }}").unwrap();
 
     let registry = PromptRegistry::from_config(&PromptConfig {
         prompts_dir: Some(dir.path().to_str().unwrap().to_string()),
@@ -187,13 +149,10 @@ fn test_cycle_preamble_inserted_when_react_template_loaded() {
 
     let s = CycleSkeleton::new(runner, Arc::new(registry), tools, 10);
 
-    let msgs = vec![agentverse::Message {
-        role: agentverse::MessageRole::User,
-        content: "hello".to_string(),
-    }];
+    let msgs = vec![Message::text(MessageRole::User, "hello")];
     let buf = s.prepare_buffer(msgs);
     assert_eq!(buf.len(), 2);
-    assert!(buf[0].content.contains("Tools:"));
+    assert!(buf[0].as_text().contains("Follow the ReAct pattern."));
 }
 
 #[test]
@@ -292,11 +251,8 @@ fn recording_strategy() -> (ReActStrategy, Arc<Mutex<Option<GenerateRequest>>>) 
     )
 }
 
-fn user_message() -> Vec<agentverse::Message> {
-    vec![agentverse::Message {
-        role: agentverse::MessageRole::User,
-        content: "hello".to_string(),
-    }]
+fn user_message() -> Vec<Message> {
+    vec![Message::text(MessageRole::User, "hello")]
 }
 
 #[tokio::test]
@@ -389,23 +345,72 @@ async fn react_run_returns_error_on_bad_port() {
         3,
     );
 
-    let messages = vec![agentverse::Message {
-        role: agentverse::MessageRole::User,
-        content: "What is 2+2?".to_string(),
-    }];
+    let messages = vec![Message::text(MessageRole::User, "What is 2+2?")];
 
     let result = strategy.run(messages).await;
     assert!(result.is_err(), "Expected error when LLM is unreachable");
 }
 
 #[tokio::test]
-async fn react_run_recovers_from_single_tool_call_error() {
+async fn react_run_text_only_first_response_is_immediate_done() {
     use httpmock::prelude::*;
 
-    fn chat_completion(content: &str) -> serde_json::Value {
+    let server = MockServer::start_async().await;
+    server
+        .mock_async(|when, then| {
+            when.method(POST).path("/chat/completions");
+            then.status(200).json_body(json!({
+                "choices": [{"message": {"role": "assistant", "content": "The answer is 4.", "tool_calls": []}}]
+            }));
+        })
+        .await;
+
+    let runner = Arc::new(
+        LlmRunner::from_config(Config {
+            provider: agentverse::ProviderConfig::openai(
+                "test".to_string(),
+                "sk-test".to_string(),
+                Some(server.base_url()),
+            ),
+            max_messages: 10,
+            tools: vec![],
+            prompts_dir: None,
+            system_prompt: None,
+        })
+        .unwrap(),
+    );
+
+    let strategy = ReActStrategy::new(
+        runner,
+        Arc::new(PromptRegistry::new()),
+        ToolRegistry::new(),
+        5,
+    );
+
+    let result = strategy.run(user_message()).await;
+
+    match result {
+        Ok(agentverse::StrategyOutcome::Done(answer)) => assert_eq!(answer, "The answer is 4."),
+        Ok(agentverse::StrategyOutcome::Interrupted(_)) => panic!("expected Done, got Interrupted"),
+        Err(e) => panic!("expected Done, got Err: {e}"),
+    }
+}
+
+#[tokio::test]
+async fn react_run_recovers_from_tool_not_found_error() {
+    use httpmock::prelude::*;
+
+    fn chat_completion_text(content: &str) -> serde_json::Value {
         json!({
-            "choices": [{"message": {"role": "assistant", "content": content}}],
-            "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}
+            "choices": [{"message": {"role": "assistant", "content": content, "tool_calls": []}}]
+        })
+    }
+
+    fn chat_completion_tool_call(id: &str, name: &str, arguments: &str) -> serde_json::Value {
+        json!({
+            "choices": [{"message": {"role": "assistant", "content": null, "tool_calls": [
+                {"id": id, "function": {"name": name, "arguments": arguments}}
+            ]}}]
         })
     }
 
@@ -415,7 +420,7 @@ async fn react_run_recovers_from_single_tool_call_error() {
             .as_ref()
             .map(|b| String::from_utf8_lossy(b).to_string())
             .unwrap_or_default();
-        !body.contains("Tool: missing_tool")
+        !body.contains("\"role\":\"tool\"")
     }
 
     fn is_second_turn(req: &HttpMockRequest) -> bool {
@@ -424,7 +429,7 @@ async fn react_run_recovers_from_single_tool_call_error() {
             .as_ref()
             .map(|b| String::from_utf8_lossy(b).to_string())
             .unwrap_or_default();
-        body.contains("Tool: missing_tool")
+        body.contains("\"role\":\"tool\"")
     }
 
     let server = MockServer::start_async().await;
@@ -433,9 +438,8 @@ async fn react_run_recovers_from_single_tool_call_error() {
             when.method(POST)
                 .path("/chat/completions")
                 .matches(is_first_turn);
-            then.status(200).json_body(chat_completion(
-                "Thought: try the tool.\nAction: missing_tool\nAction Input: {}",
-            ));
+            then.status(200)
+                .json_body(chat_completion_tool_call("call_1", "missing_tool", "{}"));
         })
         .await;
     server
@@ -443,8 +447,7 @@ async fn react_run_recovers_from_single_tool_call_error() {
             when.method(POST)
                 .path("/chat/completions")
                 .matches(is_second_turn);
-            then.status(200)
-                .json_body(chat_completion("Thought: recovered.\nAnswer: done"));
+            then.status(200).json_body(chat_completion_text("done"));
         })
         .await;
 
@@ -464,8 +467,8 @@ async fn react_run_recovers_from_single_tool_call_error() {
     );
 
     // "missing_tool" is intentionally not registered, so the first call fails
-    // with ToolError::NotFound — this must be fed back to the model as an
-    // observation, not propagated as a hard error.
+    // with ToolError::NotFound — this must come back as an `is_error` tool
+    // result the model can react to, not a hard error that aborts the loop.
     let tools = ToolRegistry::new();
     let strategy = ReActStrategy::new(runner, Arc::new(PromptRegistry::new()), tools, 5);
 
@@ -475,6 +478,81 @@ async fn react_run_recovers_from_single_tool_call_error() {
         Ok(agentverse::StrategyOutcome::Done(answer)) => assert_eq!(answer, "done"),
         Ok(agentverse::StrategyOutcome::Interrupted(_)) => panic!("expected Done, got Interrupted"),
         Err(e) => panic!("expected recovery via retry, got Err: {e}"),
+    }
+}
+
+#[tokio::test]
+async fn react_run_dispatches_two_calls_to_the_same_tool_in_one_turn() {
+    use httpmock::prelude::*;
+
+    fn is_first_turn(req: &HttpMockRequest) -> bool {
+        let body = req
+            .body
+            .as_ref()
+            .map(|b| String::from_utf8_lossy(b).to_string())
+            .unwrap_or_default();
+        !body.contains("\"role\":\"tool\"")
+    }
+
+    fn is_second_turn(req: &HttpMockRequest) -> bool {
+        let body = req
+            .body
+            .as_ref()
+            .map(|b| String::from_utf8_lossy(b).to_string())
+            .unwrap_or_default();
+        body.contains("\"role\":\"tool\"")
+    }
+
+    let server = MockServer::start_async().await;
+    server
+        .mock_async(|when, then| {
+            when.method(POST)
+                .path("/chat/completions")
+                .matches(is_first_turn);
+            then.status(200).json_body(json!({
+                "choices": [{"message": {"role": "assistant", "content": null, "tool_calls": [
+                    {"id": "call_a", "function": {"name": "echo", "arguments": "{}"}},
+                    {"id": "call_b", "function": {"name": "echo", "arguments": "{}"}}
+                ]}}]
+            }));
+        })
+        .await;
+    server
+        .mock_async(|when, then| {
+            when.method(POST)
+                .path("/chat/completions")
+                .matches(is_second_turn);
+            then.status(200).json_body(json!({
+                "choices": [{"message": {"role": "assistant", "content": "done", "tool_calls": []}}]
+            }));
+        })
+        .await;
+
+    let runner = Arc::new(
+        LlmRunner::from_config(Config {
+            provider: agentverse::ProviderConfig::openai(
+                "test".to_string(),
+                "sk-test".to_string(),
+                Some(server.base_url()),
+            ),
+            max_messages: 10,
+            tools: vec![],
+            prompts_dir: None,
+            system_prompt: None,
+        })
+        .unwrap(),
+    );
+
+    let tools = ToolRegistry::new();
+    tools.register(MockTool::new("echo", "Echo tool"));
+    let strategy = ReActStrategy::new(runner, Arc::new(PromptRegistry::new()), tools, 5);
+
+    let result = strategy.run(user_message()).await;
+
+    match result {
+        Ok(agentverse::StrategyOutcome::Done(answer)) => assert_eq!(answer, "done"),
+        Ok(agentverse::StrategyOutcome::Interrupted(_)) => panic!("expected Done, got Interrupted"),
+        Err(e) => panic!("expected Done, got Err: {e}"),
     }
 }
 
@@ -491,8 +569,9 @@ async fn run_hitl_returns_interrupted_with_typed_history_and_pending_calls() {
         .mock_async(|when, then| {
             when.method(POST).path("/chat/completions");
             then.status(200).json_body(json!({
-                "choices": [{"message": {"role": "assistant", "content": "Thought: need to call the tool.\nAction: echo\nAction Input: {\"text\": \"hi\"}"}}],
-                "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}
+                "choices": [{"message": {"role": "assistant", "content": null, "tool_calls": [
+                    {"id": "call_1", "function": {"name": "echo", "arguments": "{\"text\": \"hi\"}"}}
+                ]}}]
             }));
         })
         .await;
@@ -533,10 +612,7 @@ async fn run_hitl_returns_interrupted_with_typed_history_and_pending_calls() {
     }
     let hook: Arc<dyn HitlHook> = Arc::new(AlwaysBlockHook);
 
-    let messages = vec![agentverse::Message {
-        role: agentverse::MessageRole::User,
-        content: "please call echo".to_string(),
-    }];
+    let messages = vec![Message::text(MessageRole::User, "please call echo")];
 
     let result = strategy
         .run_hitl(messages, &["echo".to_string()], hook)
@@ -549,10 +625,11 @@ async fn run_hitl_returns_interrupted_with_typed_history_and_pending_calls() {
                 1,
                 "pending_calls must contain the intercepted call"
             );
+            assert_eq!(interrupt.pending_calls[0].id, "call_1");
             assert_eq!(interrupt.pending_calls[0].name, "echo");
             assert_eq!(interrupt.pending_calls[0].args, json!({"text": "hi"}));
             assert!(!interrupt.history.is_empty(), "history must be non-empty");
-            assert_eq!(interrupt.history[0].content, "please call echo");
+            assert_eq!(interrupt.history[0].as_text(), "please call echo");
             assert_eq!(interrupt.active_tool_names, vec!["echo".to_string()]);
         }
         Ok(StrategyOutcome::Done(text)) => panic!("expected Interrupted, got Done({text})"),
