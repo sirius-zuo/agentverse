@@ -113,13 +113,17 @@ orchestration strategies," `PlanStrategy` and `HierarchicalStrategy` do not
 use `CycleSkeleton` — they call `LlmRunner::invoke` and `ToolRegistry::execute`
 directly). `CycleSkeleton` holds the three resources every ReAct iteration
 needs (`Arc<LlmRunner>`, `Arc<PromptRegistry>`, `Arc<ToolRegistry>`) plus
-`max_iterations`, and exposes helpers (`execute_tool`, `execute_many`,
-`build_tools_str_active`, `check_output_guardrail`) that `ReActStrategy::run_with_active_tools`
-and `run_hitl` call from their loops. A shared ReAct helper also resolves the
-active names through `ToolRegistry::tool_definitions_for` and selects the
-appropriate `LlmRunner` entry point. `parse_response` (`avs-react/src/parse.rs`)
-turns raw model text into a `CycleAction` (`Continue`, `ToolCall`, `ToolCalls`,
-`Done`, `Error`) that the loop matches on. `PlanStrategy` and
+`max_iterations`, and exposes `execute_many` and `check_output_guardrail` for
+`ReActStrategy`'s loops; its `execute_tool` (singular) method has no
+remaining caller (see Implementation Notes). `ReActStrategy::invoke_with_active_tools`
+resolves the active names through `ToolRegistry::tool_definitions_for` and
+picks `invoke_with_tools` or `invoke` accordingly. `action_from_response`
+(`avs-react/src/cycle.rs`) replaces the deleted `parse_response`, deriving
+the now-3-variant `CycleAction` (`ToolCalls`, `Done`, `Error`) directly from
+a response's `Vec<ContentBlock>` (see [Core Runtime](core-runtime.md));
+`reconcile_and_order_results`/`results_to_tool_result_blocks` turn executed
+results back into a `Tool`-role message (Runtime Flows has the steps).
+`PlanStrategy` and
 `HierarchicalStrategy` share `planner::generate_plan`/`decompose_request`
 (`avs-plan/src/planner.rs`), which render a prompt, call `LlmRunner::invoke`,
 and parse the JSON response into a `Plan`/`Vec<PlanStep>` — neither strategy
@@ -156,40 +160,38 @@ strategy from its existing runner, prompts, and tools for each invocation.
    strategy.
 
 **ReAct loop (`ReActStrategy::run_with_active_tools`, `avs-react/src/react.rs`):**
-1. `prepare_buffer_with_active` inserts a one-time ReAct preamble (tool
-   descriptions rendered as prose by `CycleSkeleton::build_tools_str_active`,
-   plus few-shot examples from `PromptRegistry::get_examples("react_examples")`)
-   before the first non-system message, but only if a `react.j2` template is
-   registered (`PromptRegistry::has_react_template`).
-2. Each iteration resolves `active_tool_names` through
-   `ToolRegistry::tool_definitions_for`. A non-empty result is sent through
-   `LlmRunner::invoke_with_tools`; an empty result uses `LlmRunner::invoke`,
-   preserving `GenerateRequest.tools: None` instead of `Some([])`.
-3. The response path remains text-only: `check_output_guardrail` screens the
-   content and `parse_response` turns the existing
-   `Thought:`/`Action:`/`Action Input:`/`Answer:` format into a `CycleAction`.
-4. `CycleAction::Continue` appends the thought and a nudge message telling
-   the model to call a tool or answer; if a `Continue` follows another
-   `Continue`, the saved thought is returned as the answer (nudge fallback)
-   instead of looping forever.
-5. `CycleAction::ToolCall`/`ToolCalls` execute one tool (`CycleSkeleton::execute_tool`)
-   or many concurrently (`CycleSkeleton::execute_many`) and append the
-   result(s) as a `User`-role observation message.
-6. `CycleAction::Done` returns `StrategyOutcome::Done(answer)`;
-   `CycleAction::Error` (empty model output) returns `AgentError::Model`.
-7. The loop errors with `ModelError::Timeout` once `iteration` reaches
-   `max_iterations`.
+1. `CycleSkeleton::prepare_buffer` inserts a one-time ReAct preamble
+   (few-shot examples only — tool schemas go natively via
+   `GenerateRequest.tools`, not rendered as text) before the first
+   non-system message, only if a `react.j2` template is registered
+   (`PromptRegistry::has_react_template`).
+2. Each iteration calls `invoke_with_active_tools`, which resolves
+   `active_tool_names` through `ToolRegistry::tool_definitions_for`: a
+   non-empty result goes through `LlmRunner::invoke_with_tools`, an empty
+   result uses `LlmRunner::invoke`, preserving `tools: None` over `Some([])`.
+3. `check_output_guardrail` screens the response's flattened text, then
+   `action_from_response` derives a `CycleAction` directly from
+   `response.content: Vec<ContentBlock>` — no text parsing.
+4. `CycleAction::ToolCalls { calls }` pushes the assistant's response onto
+   the buffer, dispatches every call concurrently via `execute_many`,
+   reorders/backfills with `reconcile_and_order_results`, and appends one
+   `Tool`-role message from `results_to_tool_result_blocks` — a failed call
+   becomes an `is_error: true` observation, not an abort.
+5. `CycleAction::Done { answer }` returns `StrategyOutcome::Done(answer)`;
+   `CycleAction::Error { message }` returns `AgentError::Model`; the loop
+   errors with `ModelError::Timeout` once `iteration` reaches `max_iterations`.
 
-**ReAct loop with HITL (`ReActStrategy::run_hitl`):** uses the same active-tool
-request helper and text response parser as the plain loop, but tool dispatch
-goes through `ToolRegistry::execute_many_hitl(calls, &hook)`
-instead of `execute_tool`/`execute_many`. A history snapshot is taken
-*before* the assistant's tool-call message is pushed, so a suspended
+**ReAct loop with HITL (`ReActStrategy::run_hitl`):** same request helper and
+`action_from_response` dispatch as the plain loop, but tool dispatch always
+goes through `ToolRegistry::execute_many_hitl(calls, &hook)` — never
+`execute_tool`/`execute_many`, even for a single call. A history snapshot is
+taken *before* the assistant's tool-call message is pushed, so a suspended
 `HitlInterrupt.history` never contains a dangling tool call with no
-observation. If `execute_many_hitl` returns `Err(HitlInterruptResult)`, the
-loop returns `StrategyOutcome::Interrupted` immediately with the snapshot,
-the pending calls, and `active_tool_names`, so the exact same tool-call set
-can be re-submitted on resume.
+observation. `Ok` results go through the same `reconcile_and_order_results`/
+`results_to_tool_result_blocks` pair as the plain loop; `Err(HitlInterruptResult)`
+returns `StrategyOutcome::Interrupted` immediately with the snapshot, the
+pending calls, and `active_tool_names`, so the same tool-call set can be
+re-submitted on resume.
 
 **Plan-and-Execute (`PlanStrategy::run_with_active_tools`, `avs-plan/src/plan.rs`):**
 1. `planner::generate_plan` renders the `strategies.plan_and_execute` prompt
@@ -238,6 +240,31 @@ call answers the original request from all sub-goal results.
    silently discarding the interception hook.
 
 ## Key Decisions
+
+### Native tool-call dispatch replaces free-text `Thought:`/`Action:` parsing; `CycleAction` shrinks to 3 variants
+- **Decision** — `avs-react/src/parse.rs` (the free-text `Thought:`/`Action:`/
+  `Action Input:`/`Answer:` parser) is deleted; `action_from_response`
+  dispatches directly from a response's `Vec<ContentBlock>`, and
+  `CycleAction` shrinks from 5 variants (`Continue`, `ToolCall`, `ToolCalls`,
+  `Done`, `Error`) to 3 (`ToolCalls`, `Done`, `Error`).
+- **Context** — PR #35's root cause: the free-text convention never
+  dereferenced a tool schema's `$ref`/`definitions`, so a nested-object
+  parameter rendered a blank description — the direct cause of the
+  `business-report` example's crash. `CycleAction`'s doc comment: native tool
+  calling "removes the free-text ambiguity that used to require a
+  `Continue`/nudge-retry state and a separate single-call variant."
+- **Alternatives rejected** — a degraded free-text fallback for a provider
+  without native tool-calling support: "a hard requirement, no fallback... a
+  request-time error, not a degraded text-based mode" (PR body).
+- **Consequences** — `ToolUse` blocks take structural priority over `Text` in
+  the same turn (the old parser's override rule, "now for free").
+  `reconcile_and_order_results` (commit `aaf9679`) backfills a synthetic
+  error result for any call `execute_many` silently drops.
+  `CycleSkeleton::execute_tool` lost its only caller (see Implementation
+  Notes); `build_tools_str`/`build_tools_str_active` and
+  `DEFAULT_REACT_TEMPLATE`'s free-text instructions were removed as dead
+  weight (commit `840ed65`, see [Core Runtime](core-runtime.md)).
+- **Ref** — 2026-08-01, commit `33dceba`, PR #35 (Phase 5).
 
 ### Typed `StrategyOutcome`/`HitlInterrupt` transport replaces the base64 error-channel encoding
 - **Decision** — `RunStrategy::run`/`run_with_active_tools`/`run_hitl` return
@@ -330,29 +357,22 @@ call answers the original request from all sub-goal results.
 
 ## Implementation Notes
 
-- PR #31 verification follow-ups wire request-side native definitions into
-  both ReAct loops (`9b3e717`, `c06a94f`, `75cc734`) and make dynamic routing
-  opt-in, allow-listed, tool-scoped, resume-stable, and fail-closed under
-  unsupported HITL strategies (`9cbb02f`, `92fbf2a`).
-- **ReAct has request-side native tool definitions, not full native tool
-  calling.** Its normal and HITL loops send non-empty active registry
-  definitions through `LlmRunner::invoke_with_tools`, while empty or
-  all-unknown active sets use `invoke` and retain `tools: None`. The existing
-  prose schemas from `CycleSkeleton::build_tools_str_active` remain as a text
-  fallback, and replies still go through `parse_response`; native tool-call
-  response parsing is explicitly deferred. `PlanStrategy` and
-  `HierarchicalStrategy` still call `LlmRunner::invoke` and do not send native
-  definitions.
-- `CycleAction::ToolCalls` (plural) lets one model turn request several
-  tools at once; `CycleSkeleton::execute_many` runs them concurrently and the
-  observations are joined back into a single `User` message in call order —
-  this is the closest the current ReAct loop gets to "parallel tool calling,"
-  and it is still driven by parsing multiple `Action:`/`Action Input:` pairs
-  out of one text response, not a native tool-call array.
-- `parse_response` gives `ToolCall`/`ToolCalls` priority over `Answer:` even
-  when both appear in the same response, specifically to avoid returning a
-  hallucinated answer that a larger model sometimes emits alongside a
-  fabricated `Observation:` line.
+- PR #31 follow-ups wired request-side native definitions into both ReAct
+  loops (`9b3e717`, `c06a94f`, `75cc734`) and made dynamic routing opt-in,
+  allow-listed, tool-scoped, resume-stable, fail-closed under unsupported
+  HITL (`9cbb02f`, `92fbf2a`). PR #35 (Key Decisions) completed the response
+  side, so ReAct round-trips native tool calling both ways; `PlanStrategy`/
+  `HierarchicalStrategy` still call plain `invoke` and send no definitions.
+- **`CycleSkeleton::execute_tool` (singular) is dead code.** Both
+  `run_with_active_tools` and `run_hitl` dispatch through the plural
+  `execute_many`/`execute_many_hitl` path even for a single call, so nothing
+  calls it anymore. PR #35's "Known follow-ups": "left in place, not
+  deleted, since removing public API surface was out of scope." (`avs-tools`'s
+  `ActiveToolSet` is orphaned for the same reason — anchored on
+  [Tools](tools.md), not here.)
+- `avs-plan`/`avs-router` (`e467199`) moved from `Message.content: String` to
+  `Message::text`/`as_text` after Phase 1's content-shape change (see
+  [Core Runtime](core-runtime.md)); no algorithm changed.
 - `PlanStrategy`/`HierarchicalStrategy` drop any `PlanStep` whose `id`
   exceeds `max_iterations` silently (`break`, not an error) — a plan with
   more steps than the iteration budget just executes a truncated prefix.
@@ -369,7 +389,6 @@ call answers the original request from all sub-goal results.
 - `avs-strategy/src/lib.rs`
 - `avs-react/src/react.rs`
 - `avs-react/src/cycle.rs`
-- `avs-react/src/parse.rs`
 - `avs-plan/src/plan.rs`
 - `avs-plan/src/hierarchical.rs`
 - `avs-plan/src/planner.rs`
