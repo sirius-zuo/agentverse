@@ -142,7 +142,9 @@ construction unchanged. The resulting tool owns the executor `Arc`, so the
 feature and `.with_http_server()` — spawns the axum server from
 `avs-agent/src/http/mod.rs`. The crate's behavior is decomposed across small
 modules under `avs-agent/src/agent/`: `sessions.rs` (session lifecycle:
-`create_session`, `get_session`, `end_session`, `list_sessions`,
+`create_session`, `get_session`, `session_owner` — an unauthenticated
+owner lookup for the aether HTTP resume endpoint, see
+[HTTP Sidecar](http-sidecar.md) — `end_session`, `list_sessions`,
 `delete_all_user_data`, `load_messages`), `invoke.rs` (the main turn-taking
 path, `assemble_system`/`assemble_messages_with_context`,
 `get_cache_memory`/`update_cache_memory`), `routing.rs` (skill
@@ -346,6 +348,24 @@ rather than allowing un-intercepted tools to run.
 
 ## Implementation Notes
 
+- **`resume_tool_call_or_checkpoint`'s `Modified` branch now copies
+  `id: first.id.clone()`** into the reconstructed `ToolCall` (the field was
+  added in PR #35 Phase 4); previously a modified-and-resumed call carried no
+  id, desynchronizing `tool_use_id` correlation on the one path — HITL resume
+  — where that matters most (commit `a3ea41d`).
+- Two adjacent `resume.rs` doc comments record deliberate non-changes.
+  Deserializing a pre-Phase-4 `pending_calls_json`/`history_json` row is left
+  to hard-fail with `serde` rather than get a fallback like
+  [Memory](memory.md)'s legacy-string one: "a fabricated id would
+  desynchronize `tool_use_id` correlation for exactly the calls a human is
+  trying to resume, reproducing the bug this whole refactor exists to fix"
+  (`a3ea41d`) — such a session must be abandoned, not mis-resumed. And the
+  post-decision observation stays `MessageRole::User` plain text, not a
+  native `ContentBlock::ToolResult`, because `run_hitl`
+  ([Strategy](strategy.md)) excludes the assistant's `ToolUse` turn from the
+  `HitlInterrupt.history` snapshot — a `ToolResult` here would reference a
+  `ToolUse` never in history, which "Anthropic hard-rejects... with a 400"
+  (`0d675d4`); don't "modernize" this without first fixing that exclusion.
 - PR #31 verification follow-ups close the composition gaps for trusted HITL
   policy (`68140ed`), opt-in bounded strategy routing (`9cbb02f`, `92fbf2a`),
   removal of the dead outbound Aether client (`6420a3f`), and atomic
