@@ -5,8 +5,8 @@
 `avs-eval` (crate `agentverse-eval`) and `avs-test-utils` (crate
 `agentverse-test-utils`) are AgentVerse's own test infrastructure, not
 runtime code shipped to a deployed agent. `avs-eval` holds two regression
-harnesses for the reasoning stack: a deterministic scaffold harness (ReAct
-parser, skill router, prompt templates — zero LLM/network calls) and a
+harnesses for the reasoning stack: a deterministic scaffold harness (skill
+router, prompt templates — zero LLM/network calls) and a
 judge-based quality harness that runs the real `Agent`/`RunStrategy` stack
 against recorded LLM responses and scores the output against a rubric via
 a second, also-replayed model call. `avs-test-utils` holds a single
@@ -48,10 +48,6 @@ classDiagram
         <<module>>
         +load_toml_cases(dir) Vec~(String, T)~
     }
-    class ParserCase {
-        +input String
-        +expected_debug String
-    }
     class RouterCase {
         +message String
         +skill_id String
@@ -72,6 +68,12 @@ classDiagram
     class RecordedTurn {
         +body_contains String
         +content String
+        +tool_calls Vec~RecordedToolCall~
+    }
+    class RecordedToolCall {
+        +id String
+        +name String
+        +arguments String
     }
     class Recording {
         +agent_turns Vec~RecordedTurn~
@@ -103,11 +105,11 @@ classDiagram
         +unwrap_done(output) String
     }
 
-    runner ..> ParserCase
     runner ..> RouterCase
     runner ..> TemplateCase
     recording ..> RecordedTurn
     recording ..> Recording
+    RecordedTurn o-- RecordedToolCall
     judge ..> JudgeVerdict
     judge ..> recording
     JudgeVerdict o-- Verdict
@@ -115,15 +117,32 @@ classDiagram
 
 `avs-eval::runner` holds one function, `load_toml_cases<T: DeserializeOwned>`,
 that reads every `*.toml` file in a directory and deserializes each into a
-fixture type — `ParserCase`, `RouterCase`, or `TemplateCase` — panicking on
+fixture type — `RouterCase` or `TemplateCase` — panicking on
 any read/parse failure so a broken fixture is a hard error rather than a
-silently-skipped test. `avs-eval::recording` holds the judge harness's
+silently-skipped test. A third fixture type, `ParserCase`, was deleted
+outright (commit `185778a`) alongside the production-code parser deletion
+covered in [Strategy](strategy.md). `avs-eval::recording` holds the judge harness's
 replay machinery: `Recording` (deserialized from
 `fixtures/recordings/<case>.toml`) is a sequence of `RecordedTurn`s for the
 agent-under-test plus one `RecordedTurn` for the judge; `register_agent_turns`
 registers one `httpmock` mock per turn against a `MockServer`, matched by
 that turn's `body_contains` substring, and `register_judge_turn` registers
 the judge's single unconditional response against a second `MockServer`.
+Each `RecordedTurn` now also carries `tool_calls: Vec<RecordedToolCall>`
+alongside its `content` string, which became `#[serde(default)]` (previously
+required) — a recorded turn can now be tool-calls-only with no text, matching
+a real tool-calling response. `RecordedToolCall { id, name, arguments }`'s
+doc comment on `arguments` is precise: it's a "JSON-encoded arguments
+string, exactly as the OpenAI-compatible wire format's `function.arguments`
+expects — not a nested TOML table." `chat_completion_envelope` builds a real
+OpenAI-compatible response shape from a `RecordedTurn`: `content` serializes
+as JSON `null` when the turn's text is empty (matching how a real
+tool-calling response often carries no text alongside `tool_calls`), and a
+`tool_calls` array is always present (possibly empty), mapping each
+`RecordedToolCall` to `{id, function: {name, arguments}}`. For example,
+`react_tool_call.toml`'s tool-call turn replaced its free-text `content`
+line with an empty `content` plus a `[[agent_turns.tool_calls]]` table
+naming `echo` and its JSON arguments.
 `avs-eval::judge` holds `build_judge_prompt` (the fixed, non-configurable
 judge prompt template), `parse_judge_verdict` (strict JSON deserialization
 into `JudgeVerdict { verdict: Verdict, reasoning: String }`, where `Verdict`
@@ -141,19 +160,14 @@ infrastructure) and `unwrap_done` (unwraps `AgentOutput::Done`, panicking on
 
 ## Runtime Flows
 
-**Deterministic regression (parser/router/template fixtures):**
-1. `avs-eval/tests/deterministic_test.rs` calls `load_toml_cases::<ParserCase>("fixtures/parser")`
-   (and the `RouterCase`/`TemplateCase` equivalents for `fixtures/router` and
-   `fixtures/templates`), which panics immediately on any unparseable fixture
-   file or an empty directory.
-2. For each `ParserCase`, the test calls the real `agentverse_react::parse::parse_response`
-   on `case.input` and compares `format!("{:?}", actual)` against
-   `case.expected_debug` — a debug-string comparison, avoiding a
-   `PartialEq`/`Deserialize` requirement on `CycleAction` itself.
-3. For each `RouterCase`, the test constructs `KeywordOverlapRouter::with_threshold(case.threshold)`
+**Deterministic regression (router/template fixtures):**
+1. `avs-eval/tests/deterministic_test.rs` calls `load_toml_cases::<RouterCase>("fixtures/router")`
+   and `load_toml_cases::<TemplateCase>("fixtures/templates")`, which panics
+   immediately on any unparseable fixture file or an empty directory.
+2. For each `RouterCase`, the test constructs `KeywordOverlapRouter::with_threshold(case.threshold)`
    and a minimal `Skill`, then calls `RouteSkills::route` and compares the
-   debug-formatted `Option<String>` result the same way.
-4. For each `TemplateCase`, the test registers `case.template` into a fresh
+   debug-formatted `Option<String>` result against `case.expected_debug`.
+3. For each `TemplateCase`, the test registers `case.template` into a fresh
    `PromptRegistry` via `add_template`, converts the TOML context table to
    JSON, calls `render`, and asserts the exact rendered string against
    `case.expected`.
@@ -162,7 +176,12 @@ infrastructure) and `unwrap_done` (unwraps `AgentOutput::Done`, panicking on
 1. `avs-eval/tests/judge_test.rs` calls `load_recording(case_name)` to load
    `fixtures/recordings/<case>.toml`, then starts an `httpmock::MockServer`
    and calls `register_agent_turns` to register each recorded agent turn as
-   its own mock, matched by request-body content.
+   its own mock, matched by request-body content. Each mocked response's
+   JSON body now includes a `tool_calls` array built from that turn's
+   `RecordedToolCall`s, parsed by the same provider code a live call uses
+   into a real `ContentBlock::ToolUse`-bearing `Message` (see
+   [Strategy](strategy.md) and [Core Runtime](core-runtime.md) for the
+   parse/dispatch mechanics).
 2. The test constructs the real strategy or `Agent` under test (`ReActStrategy`,
    `PlanStrategy`, or an `Agent` built via `avs_strategy::build` plus
    `SkillConfig`/`HitlConfig`), pointed at the mock server by passing
@@ -201,6 +220,31 @@ infrastructure) and `unwrap_done` (unwraps `AgentOutput::Done`, panicking on
 ## Key Decisions
 
 Newest first.
+
+### Recorded-HTTP-fixture format upgraded to native `tool_calls`, replacing free-text `content`
+- **Decision** — `RecordedTurn` gained `tool_calls: Vec<RecordedToolCall>`
+  (each `{id, name, arguments}`) and its `content` field became
+  `#[serde(default)]` (previously required); `chat_completion_envelope` now
+  emits an OpenAI-compatible `tool_calls` array (always present, possibly
+  empty) and serializes `content` as JSON `null` when a turn's text is
+  empty, instead of always emitting a plain-text `content` field.
+- **Context** — PR #35 deleted the free-text ReAct parser from production
+  code in the same refactor (`avs-react/src/parse.rs`; see
+  [Strategy](strategy.md)); the PR body states this crate's change exists
+  "so eval tests exercise real tool calls instead of silently
+  misinterpreting free text" — a mock still returning old-style
+  `Thought:`/`Action:` text would drive every ReAct-tool-call judge case
+  through a code path production no longer has.
+- **Alternatives rejected** — none recorded; the commit message and PR body
+  present the format upgrade as a direct, necessary consequence of the
+  parser deletion, not a choice among options.
+- **Consequences** — recording authors write `[[agent_turns.tool_calls]]`
+  TOML tables instead of embedding `Action:`/`Action Input:` text in
+  `content` (see the `react_tool_call.toml` excerpt in Architecture). The
+  four `fixtures/parser/*.toml` fixtures and `ParserCase` were deleted
+  outright in the same commit, not superseded — the deterministic harness
+  no longer has a parser-testing path (see Architecture, Runtime Flows).
+- **Ref** — 2026-08-02, commit `185778a`, PR #35 (Phase 6).
 
 ### Single shared `run_conformance_suite` is the mechanism proving SQLite/Postgres parity
 - **Decision** — `avs-test-utils::session_conformance::run_conformance_suite<S: SessionMemory>`
@@ -304,6 +348,10 @@ Newest first.
 
 ## Implementation Notes
 
+- `judge_test.rs`'s judge-case tests now assert the actual agent output
+  text captured from the strategy run, not just an unconditional
+  judge-verdict mock pass — a test-quality hardening from PR #35's Phase 6
+  final review (commit `0d675d4`), not a structural change to the harness.
 - `register_agent_turns`' `body_contains` matching is order-sensitive in a
   documented, non-obvious way: `httpmock` resolves ties between two turns'
   matching substrings by registration order (first-registered match wins),
