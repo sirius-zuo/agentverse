@@ -140,7 +140,12 @@ checked against a fixed `ttl` on every `load`. `SessionMemory`
 (`avs-memory/src/session/sqlite.rs`, migrations under `avs-memory/migrations/`)
 is its bundled dev/default implementation, with retention/consolidation
 methods split into `sqlite_maintenance.rs` as free functions (Rust cannot
-split one trait `impl` block across two `impl` blocks). `Session`,
+split one trait `impl` block across two `impl` blocks). Both
+`SqliteSessionMemory` and `PostgresSessionMemory` JSON-encode each message's
+`content: Vec<ContentBlock>` (see [Core Runtime](core-runtime.md)) via a
+`pub(crate) encode_content`/`decode_content` pair; `decode_content` falls
+back to a single `Text` block for pre-refactor plain-string rows — see Key
+Decisions. `Session`,
 `SessionId`, `SessionStatus` (`session/types.rs`) are plain data types the
 trait's signatures depend on; despite living here, they are conceptually
 owned by [Session](session.md), which re-exports them. `InterruptedState`
@@ -163,7 +168,8 @@ sibling crates so `avs-memory` itself has no database/vector-engine
 dependency. `avs-memory-pgvector` additionally provides
 `PostgresSessionMemory` (`session_store.rs`), the production `SessionMemory`
 implementation, with its own maintenance functions in
-`session_store_maintenance.rs` mirroring `sqlite_maintenance.rs`'s split.
+`session_store_maintenance.rs` mirroring `sqlite_maintenance.rs`'s split, and
+its own `encode_content`/`decode_content` pair mirroring `sqlite.rs`'s.
 
 ## Runtime Flows
 
@@ -227,6 +233,29 @@ background workers — see agent.md's worker-tick flow):
    only by the per-user, on-demand deletion path, never a background worker.
 
 ## Key Decisions
+
+### Legacy plain-string session rows decode as a lossless `Text`-block fallback, not a hard error
+- **Decision** — `decode_content` (identical `pub(crate)` free function in
+  both backends) tries `serde_json::from_str::<Vec<ContentBlock>>` first,
+  falling back to a single `ContentBlock::Text` block on failure instead of
+  erroring.
+- **Context** — PR #35 Phase 1 changed `Message.content` from `String` to
+  `Vec<ContentBlock>` (see [Core Runtime](core-runtime.md)); every
+  pre-refactor `messages.content` row holds a bare plain string, which is
+  invalid JSON for a sequence type.
+- **Alternatives rejected** — hard-failing decode, the choice
+  [Agent](agent.md) documents for this PR's HITL-resume path, was rejected
+  here: the doc comment calls the fallback lossless ("a legacy row only ever
+  held plain text, so a single `Text` block is a faithful, complete
+  representation of it"), unlike a HITL row missing a `ToolCall.id`, which
+  would desynchronize correlation per [Agent](agent.md).
+- **Consequences** — old rows "keep working, they just aren't retroactively
+  upgraded to carry structure (ToolUse/ToolResult) they never had," per the
+  doc comment, which ties this to "this project's 'no migration for
+  persisted session data' decision" (also stated in PR #35's body). Each
+  backend keeps its own copy of `encode_content`/`decode_content` (see
+  Implementation Notes).
+- **Ref** — 2026-08-02, PR #35 (commits `70ba9f5`, `68cb4df`).
 
 ### All three memory tiers consolidated into `avs-memory`
 - **Decision** — `avs-memory` becomes the sole home for working (L1), session
@@ -357,6 +386,14 @@ background workers — see agent.md's worker-tick flow):
   as free functions rather than a second `impl SessionMemory for ...` block
   because Rust cannot split one trait implementation across multiple `impl`
   blocks.
+- `encode_content`/`decode_content` are separate `pub(crate)` free functions
+  in `avs-memory/src/session/sqlite.rs` and
+  `avs-memory-pgvector/src/session_store.rs` — parallel, independently-tested
+  copies of the same logic, not a shared helper; `930d2ac` added
+  `avs-memory`'s tests and `0d675d4`'s commit message says it "ported" them
+  "from avs-memory's tested equivalent." `encode_content`'s `.expect(...)` is
+  justified by its own doc comment: `ContentBlock`'s `Serialize` impl "is
+  total ... so this cannot fail in practice."
 - Open follow-ups, all deliberately deferred per PR #30's body (not yet
   implemented): (1) session-transcript compaction — LLM-summarize below the
   watermark and rewrite the durable transcript, needs its own design; (2)
