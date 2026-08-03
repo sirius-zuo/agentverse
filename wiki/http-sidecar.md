@@ -3,10 +3,14 @@
 ## Purpose
 
 `avs-agent`'s optional `http` feature is an axum-based HTTP surface that turns
-a running `Agent` into a network service: stateless single-turn invocation,
-per-user session CRUD and message history, health/readiness probes, and an
-inbound `/aether/invoke` endpoint that lets an external Aether-compatible
-caller trigger an invocation through a shared `Envelope` wire format. It
+a running `Agent` into a network service: stateless single-turn invocation
+(`POST /invoke`), per-user session CRUD and message history, health/readiness
+probes, and an inbound Aether adapter (`/aether/invoke`, `/aether/resume`)
+that lets an external Aether-compatible orchestrator drive a session through
+a shared `Envelope` wire format — including suspending on a HITL interrupt
+and resuming it later. `POST /invoke` remains genuinely stateless
+(`invoke_stateless`); `/aether/invoke` is not — it creates and drives a real
+session so that a `Suspended` envelope has a session to resume. It
 lives inside `avs-agent` rather than as a standalone crate or binary because
 it has nothing to serve without an already-constructed `Agent` —
 `AgentBuilder::with_http_server()` only sets a flag, and the axum listener is
@@ -61,8 +65,26 @@ classDiagram
         Invoke
         Result
         Error
+        Suspended
         Ping
         Pong
+    }
+    class SuspendPayload {
+        +session_id String
+        +approval_id String
+        +kind String
+        +prompt String
+    }
+    class AetherApprovalDecision {
+        <<enum>>
+        Approved
+        Rejected(reason)
+        Modified(payload)
+    }
+    class ResumeRequest {
+        +session_id String
+        +approval_id String
+        +decision AetherApprovalDecision
     }
     class CreateSessionRequest {
         +user_id String
@@ -77,8 +99,11 @@ classDiagram
         +before Option~i64~
     }
     Envelope o-- EnvelopeKind
+    Envelope o-- SuspendPayload : payload on Suspended
+    ResumeRequest o-- AetherApprovalDecision
     Agent <.. InvokeRequest : invoke_stateless()
-    Agent <.. Envelope : invoke_stateless() via aether_invoke
+    Agent <.. Envelope : create_session()+invoke() via aether_invoke
+    Agent <.. ResumeRequest : session_owner()+resume() via aether_resume
     Agent <.. SendMessageRequest : invoke()
     Agent <.. CreateSessionRequest : create_session()
     RateLimiter <.. InvokeRequest : checked first
@@ -86,7 +111,7 @@ classDiagram
     RateLimiter <.. ListMessagesQuery : checked first
 ```
 
-The module splits across seven files under `avs-agent/src/http/`. `mod.rs`
+The module splits across eight files under `avs-agent/src/http/`. `mod.rs`
 holds `build_router` (assembles the axum `Router`), `spawn_server` (the entry
 point `AgentBuilder::build` calls), and the startup security guard
 (`validate_bind_security`, `is_loopback_host`, `api_key_configured`).
@@ -94,10 +119,19 @@ point `AgentBuilder::build` calls), and the startup security guard
 env vars by `from_env`, defaulting to `0.0.0.0:3000`). `auth.rs` defines
 `auth_middleware`, an axum `middleware::from_fn` handler that gates every
 route behind a bearer token when one is configured. `envelope.rs` defines the
-`Envelope`/`EnvelopeKind` pair used only by the aether-facing route.
-`routes.rs` holds the non-session handlers — `health`, `ready`, `invoke`
-(stateless), `aether_invoke` (envelope-wrapped) — and their request types
-(`InvokeRequest`). `session_routes.rs` holds the five session-lifecycle
+`Envelope`/`EnvelopeKind` pair plus the aether suspend/resume wire types
+(`SuspendPayload`, `AetherApprovalDecision`, `ResumeRequest`). `routes.rs`
+holds the non-session, non-aether handlers — `health`, `ready`, `invoke`
+(stateless) — and `InvokeRequest`. `aether.rs` holds the Aether adapter:
+`aether_invoke` and `aether_resume` (the two route handlers), and their
+shared helpers `finish` (maps an `AgentOutput` to a response `Envelope`),
+`map_decision` (`AetherApprovalDecision` → `agentverse_hitl::ApprovalDecision`),
+`interrupt_to_kind_and_prompt` (renders an `InterruptKind` into the
+`SuspendPayload`'s `kind`/`prompt` strings), and `error_envelope`. Commit
+`69b7150` split this module out of `routes.rs` after a merge with main (PR
+#32's `aether_invoke` rework) pushed `routes.rs` past the workspace's 600-line
+file-size cap; the same commit made `finish`/`error_envelope` thread the
+caller's `metadata` onto every response envelope. `session_routes.rs` holds the five session-lifecycle
 handlers (`create_session`, `send_message`, `list_messages`, `get_session`,
 `end_session`) and their request/query types, plus `store_err_status`, which
 maps `SessionMemoryError` variants to HTTP status codes shared by several
@@ -109,8 +143,8 @@ handlers. `openapi.rs` holds `openapi_json`, a hand-written OpenAPI 3.1 document
 `axum::Extension` shared across the whole router. Routes are declared twice:
 once nested under `/v1` (`v1_router`, itself nesting `v1_session_router`
 under `/sessions`), and again at the router root for backward compatibility
-(`/health`, `/ready`, `/invoke`, `/aether/invoke`, plus `/openapi.json` which
-exists only at the root). Both trees share the same handler functions and
+(`/health`, `/ready`, `/invoke`, `/aether/invoke`, `/aether/resume`, plus
+`/openapi.json` which exists only at the root). Both trees share the same handler functions and
 both take `State<Arc<Agent>>` directly — there is no intermediate
 `AppState`/`SessionState` wrapper struct. Three layers wrap the whole router,
 applied in this order: `Extension(rate_limiter)`, then
@@ -155,13 +189,39 @@ applied in this order: `Extension(rate_limiter)`, then
 4. The stateless sibling (`POST /invoke` → `invoke` in `routes.rs`) runs the
    same rate-limit-then-empty-check sequence but calls
    `agent.invoke_stateless(&request.message)`, skipping session/memory/skill
-   context entirely. `POST /aether/invoke` (`aether_invoke`) wraps the same
-   `invoke_stateless` call but takes and returns an `Envelope`: it checks
-   `env.kind == EnvelopeKind::Invoke` (else `400`), reads
-   `env.payload["input"]`, and echoes the original `id`/`metadata` back
-   inside an `EnvelopeKind::Result` (success) or `EnvelopeKind::Error`
-   (failure) envelope — unlike `invoke` and `send_message`, `aether_invoke`
-   never consults the `RateLimiter`.
+   context entirely — this is the sidecar's only genuinely stateless request
+   path (see Key Decisions for why `/aether/invoke` is not another one).
+
+**Aether adapter: `/aether/invoke` → `Suspended` → `/aether/resume` (`aether.rs`):**
+1. `aether_invoke` rejects any envelope whose `kind != EnvelopeKind::Invoke`
+   with `400`, then derives the session owner from `env.metadata["user_id"]`
+   (default `"aether"`) — never a trusted caller identity, since the Aether
+   wire format carries no auth of its own. It never consults the
+   `RateLimiter` (unlike `invoke` and `send_message`).
+2. It calls `agent.create_session(&owner)`, then `agent.invoke(&owner,
+   session_id, &input)` — the full session-aware turn-taking path, not
+   `invoke_stateless`. A `create_session` failure short-circuits through
+   `error_envelope` before `invoke` is ever called.
+3. On `Ok(out)`, `finish` maps the `AgentOutput` to a response `Envelope`,
+   echoing the request's `id`/`metadata`: `Done(text)` best-effort ends the
+   session (`agent.end_session`, result ignored) and returns
+   `EnvelopeKind::Result{output: text}`; `Interrupted{approval_id, kind}`
+   leaves the session alive and returns `EnvelopeKind::Suspended` carrying a
+   `SuspendPayload` built by `interrupt_to_kind_and_prompt`. On `Err(e)`,
+   `aether_invoke` itself (not `finish`) best-effort ends the session and
+   returns an `EnvelopeKind::Error` via `error_envelope`.
+4. The Aether orchestrator surfaces the `Suspended` envelope's `prompt` for a
+   human decision, then `POST`s a `ResumeRequest` to `/aether/resume`.
+   `aether_resume` parses `session_id`/`approval_id` as UUIDs (`400` on
+   failure) and resolves the owner via `agent.session_owner` (`404` if the
+   session doesn't exist) rather than trusting any field on the request —
+   `ResumeRequest` carries no user field at all. `map_decision` converts the
+   wire-level `AetherApprovalDecision` to `agentverse_hitl::ApprovalDecision`,
+   and `agent.resume(&owner, session_id, approval_id, decision)` runs through
+   the same `finish` as step 3, so a resume can itself return another
+   `Suspended` envelope on a second interrupt. Unlike `aether_invoke`,
+   `aether_resume` has no request envelope to echo `metadata` from, so its
+   response carries an empty `metadata` map.
 
 **Auth decision: `API_KEY` / `ALLOW_INSECURE` / loopback rule:**
 1. At startup, `spawn_server` calls `validate_bind_security(host,
@@ -187,6 +247,53 @@ applied in this order: `Extension(rate_limiter)`, then
 ## Key Decisions
 
 Newest first.
+
+### `GET /sessions/:id/messages` returns `content: Vec<ContentBlock>`, not a flat string — a deliberate breaking change
+- **Decision** — `list_messages` now serializes `msg.content` directly, which
+  is a `Vec<ContentBlock>` (tagged block objects — `{"type":"text",...}` /
+  `{"type":"tool_use",...}` / `{"type":"tool_result",...}`, see
+  [Core Runtime](core-runtime.md)) — not the flat string the endpoint
+  returned before.
+- **Context** — the doc comment above the `content` field in
+  `session_routes.rs` states this directly: `content` "is a
+  `Vec<ContentBlock>`... not a flat string, as of the native tool-calling
+  refactor — a deliberate 'clean break' API shape change, not an oversight,"
+  citing the native-tool-calling HTTP design doc (untracked) for the full
+  rationale.
+- **Alternatives rejected** — none recorded in the cited source; the comment
+  states the break was chosen deliberately but does not enumerate rejected
+  alternatives.
+- **Consequences** — any client parsing this endpoint's `content` field as a
+  string breaks and must switch to reading the tagged block array; no
+  versioned route split or content-negotiation was added, so `/v1/sessions/:id/messages`
+  and its unversioned alias both return the new shape unconditionally.
+- **Ref** — 2026-08-02, commit `a3ea41d`, PR #35 (`avs-agent/src/http/session_routes.rs`).
+
+### Session-based Aether suspend/resume replaces the stateless `/aether/invoke` stub; new `/aether/resume`
+- **Decision** — `/aether/invoke` now calls `agent.create_session(&owner)`
+  then `agent.invoke(&owner, session_id, &input)` — the full HITL-capable
+  turn-taking path — instead of `invoke_stateless`; a new `POST /aether/resume`
+  accepts a `ResumeRequest` and calls `agent.resume`, closing the round-trip
+  for a `Suspended` envelope.
+- **Context** — per PR #34's summary, this "closes the HTTP-translation gap
+  in the Aether durable-executions design (§9.1)," exposing "AgentVerse's
+  existing agent-level HITL suspend/resume over the built-in HTTP server, so
+  an Aether orchestrator can drive a remote agent that pauses for human
+  approval and resumes from the exact checkpoint." The PR body describes the
+  prior `/aether/invoke` as "the old `invoke_stateless` stub that errored on
+  any interrupt."
+- **Alternatives rejected** — none recorded; the PR body describes the
+  rework directly rather than weighing alternatives.
+- **Consequences** — owner/security model, quoted from the PR body: "**Invoke**
+  owner = `metadata["user_id"]` if present, else `"aether"`." / "**Resume**
+  owner is resolved from the stored session via `session_owner`, so
+  `Agent::resume`'s internal `assert_owner` is a guaranteed-pass no-op — a
+  forged `session_id` for a session the caller doesn't own still fails the
+  existing not-found checks." A four-fixture golden-fixture drift guard under
+  `avs-agent/tests/fixtures/` keeps this crate's wire types byte-identical to
+  a separate `aether-core` repo's copies (Implementation Notes).
+- **Ref** — 2026-07-19, PR #34 (commits `9ee9833`, `dedc23a`; file layout
+  reconciled in `69b7150`).
 
 ### Fail-closed non-loopback bind; empty `API_KEY` counts as unset everywhere
 - **Decision** — `validate_bind_security` refuses to start the server on a
@@ -267,6 +374,7 @@ Newest first.
   available. A successful invocation returns an `EnvelopeKind::Result`; an
   agent failure returns `500` with an `EnvelopeKind::Error`.
 - **Ref** — `avs-agent/src/http/routes.rs` (`aether_invoke`).
+- **Superseded for session-based invoke by PR #34 — see the newer entry above.**
 
 ## Implementation Notes
 
@@ -298,6 +406,14 @@ Newest first.
   computed by `enumerate()` over the full history returned by
   `agent.load_messages`, not a persisted column — pagination correctness
   depends on that method returning a stable, gap-free ordering across calls.
+- PR #34's cross-repo wire-contract guard: four golden JSON fixtures under
+  `avs-agent/tests/fixtures/` (`suspend_payload.json`,
+  `resume_request_approved.json`, `resume_request_rejected.json`,
+  `resume_request_modified.json`) are round-tripped by `envelope.rs`'s tests
+  (`assert_fixture_roundtrip`) against `SuspendPayload`/`ResumeRequest`.
+  Byte-identical copies live in a separate `aether-core` repo's own test
+  suite, so a wire-shape change on either side fails that side's tests
+  without the two repos sharing a build or a schema crate.
 
 ## Source Anchors
 
@@ -306,6 +422,7 @@ Newest first.
 - `avs-agent/src/http/config.rs`
 - `avs-agent/src/http/envelope.rs`
 - `avs-agent/src/http/routes.rs`
+- `avs-agent/src/http/aether.rs`
 - `avs-agent/src/http/session_routes.rs`
 - `avs-agent/src/http/openapi.rs`
 - `avs-agent/src/agent/builder.rs`
