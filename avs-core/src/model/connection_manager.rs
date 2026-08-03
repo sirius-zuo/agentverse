@@ -264,7 +264,7 @@ impl ConnectionManager {
             tracing::debug!(content = %sys, "SYSTEM");
         }
         for (i, msg) in request.messages.iter().enumerate() {
-            tracing::debug!(index = i, role = ?msg.role, content = %msg.content, "MSG");
+            tracing::debug!(index = i, role = ?msg.role, content = %msg.as_text(), "MSG");
         }
         tracing::debug!(">>>>>>>>>> LLM PROMPT END <<<<<<<<<<");
 
@@ -391,7 +391,7 @@ impl ConnectionManager {
                                     "LLM call complete"
                                 );
                                 tracing::debug!(">>>>>>>>>> LLM RESPONSE BEGIN <<<<<<<<<<");
-                                tracing::debug!(content = %response.content, "RESPONSE");
+                                tracing::debug!(content = %response.as_text(), "RESPONSE");
                                 tracing::debug!(">>>>>>>>>> LLM RESPONSE END <<<<<<<<<<");
                                 crate::metrics::record_llm_call(
                                     provider_name,

@@ -182,10 +182,10 @@ mod tests {
             .store(
                 "alice",
                 session_id,
-                vec![agentverse::memory::Message {
-                    role: agentverse::memory::MessageRole::User,
-                    content: "cached turn".to_string(),
-                }],
+                vec![agentverse::memory::Message::text(
+                    agentverse::memory::MessageRole::User,
+                    "cached turn",
+                )],
             )
             .await;
 

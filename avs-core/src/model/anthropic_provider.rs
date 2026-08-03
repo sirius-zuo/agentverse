@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use super::ModelProvider;
 use crate::error::ModelError;
-use crate::memory::MessageRole;
+use crate::memory::{ContentBlock, MessageRole};
 use crate::model::{GenerateRequest, GenerateResponse, ToolDefinition, UsageStats};
 
 #[derive(Debug, Clone, Default)]
@@ -19,30 +19,91 @@ struct CacheControl {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct AnthropicContentBlock {
-    #[serde(rename = "type")]
-    block_type: &'static str, // "text"
-    text: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    cache_control: Option<CacheControl>,
+#[serde(tag = "type")]
+enum AnthropicContentBlock {
+    #[serde(rename = "text")]
+    Text {
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
+    #[serde(rename = "tool_use")]
+    ToolUse {
+        id: String,
+        name: String,
+        input: Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
+    #[serde(rename = "tool_result")]
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+        is_error: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
 }
 
 impl AnthropicContentBlock {
-    fn text(text: String) -> Self {
-        Self {
-            block_type: "text",
+    fn new_text(text: String) -> Self {
+        Self::Text {
             text,
             cache_control: None,
         }
     }
 
-    fn text_cached(text: String) -> Self {
-        Self {
-            block_type: "text",
+    fn new_text_cached(text: String) -> Self {
+        Self::Text {
             text,
             cache_control: Some(CacheControl {
                 cache_type: "ephemeral",
             }),
+        }
+    }
+
+    fn new_tool_use(id: String, name: String, input: Value) -> Self {
+        Self::ToolUse {
+            id,
+            name,
+            input,
+            cache_control: None,
+        }
+    }
+
+    fn new_tool_result(tool_use_id: String, content: String, is_error: bool) -> Self {
+        Self::ToolResult {
+            tool_use_id,
+            content,
+            is_error,
+            cache_control: None,
+        }
+    }
+
+    /// The text payload, if this is a `Text` block. Used only by tests that
+    /// pin down the system-prompt / plain-text wiring.
+    #[cfg(test)]
+    fn text(&self) -> Option<&str> {
+        match self {
+            Self::Text { text, .. } => Some(text),
+            _ => None,
+        }
+    }
+
+    #[cfg(test)]
+    fn cache_control(&self) -> Option<&CacheControl> {
+        match self {
+            Self::Text { cache_control, .. }
+            | Self::ToolUse { cache_control, .. }
+            | Self::ToolResult { cache_control, .. } => cache_control.as_ref(),
+        }
+    }
+
+    fn set_cache_control(&mut self, cc: CacheControl) {
+        match self {
+            Self::Text { cache_control, .. }
+            | Self::ToolUse { cache_control, .. }
+            | Self::ToolResult { cache_control, .. } => *cache_control = Some(cc),
         }
     }
 }
@@ -60,6 +121,7 @@ struct AnthropicTool {
     input_schema: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     cache_control: Option<CacheControl>,
+    strict: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -95,11 +157,13 @@ struct AnthropicResponse {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct AnthropicContent {
     #[serde(rename = "type")]
     content_type: String,
     text: Option<String>,
+    id: Option<String>,
+    name: Option<String>,
+    input: Option<Value>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -128,6 +192,7 @@ fn build_wire_request(model_name: &str, request: GenerateRequest) -> AnthropicRe
                 description: d.description,
                 input_schema: d.parameters,
                 cache_control: None,
+                strict: true,
             })
             .collect();
         if let Some(last) = tools.last_mut() {
@@ -141,25 +206,39 @@ fn build_wire_request(model_name: &str, request: GenerateRequest) -> AnthropicRe
     // 2. System — single block, always cached
     let system: Vec<AnthropicContentBlock> = request
         .system
-        .map(|s| vec![AnthropicContentBlock::text_cached(s)])
+        .map(|s| vec![AnthropicContentBlock::new_text_cached(s)])
         .unwrap_or_default();
 
-    // 3. Messages — filter System role; cache breakpoint on the penultimate
+    // 3. Messages — filter System role; map every content block 1:1;
+    //    cache breakpoint on the penultimate message's last block
     let mut messages: Vec<AnthropicMessage> = request
         .messages
         .into_iter()
         .filter_map(|m| {
-            map_role(m.role).map(|role| AnthropicMessage {
-                role,
-                content: vec![AnthropicContentBlock::text(m.content)],
-            })
+            let role = map_role(m.role)?;
+            let content = m
+                .content
+                .into_iter()
+                .map(|block| match block {
+                    ContentBlock::Text { text } => AnthropicContentBlock::new_text(text),
+                    ContentBlock::ToolUse { id, name, input } => {
+                        AnthropicContentBlock::new_tool_use(id, name, input)
+                    }
+                    ContentBlock::ToolResult {
+                        tool_use_id,
+                        content,
+                        is_error,
+                    } => AnthropicContentBlock::new_tool_result(tool_use_id, content, is_error),
+                })
+                .collect();
+            Some(AnthropicMessage { role, content })
         })
         .collect();
 
     if messages.len() >= 2 {
         let penultimate = messages.len() - 2;
         if let Some(block) = messages[penultimate].content.last_mut() {
-            block.cache_control = Some(CacheControl {
+            block.set_cache_control(CacheControl {
                 cache_type: "ephemeral",
             });
         }
@@ -220,14 +299,39 @@ impl ModelProvider for AnthropicProvider {
         let resp: AnthropicResponse =
             serde_json::from_str(body).map_err(|e| ModelError::InvalidResponse(e.to_string()))?;
 
-        let content = resp
-            .content
-            .into_iter()
-            .find(|c| c.content_type == "text")
-            .and_then(|c| c.text)
-            .ok_or_else(|| {
-                ModelError::InvalidResponse("No text content in response".to_string())
-            })?;
+        // A malformed tool_use block (missing id/name/input) is a hard error,
+        // not silently dropped — even when other usable blocks are present.
+        // Otherwise a model's real tool call could vanish with no signal,
+        // leaving only unrelated text as the (wrong) final answer.
+        let mut content: Vec<ContentBlock> = Vec::new();
+        for c in resp.content {
+            match c.content_type.as_str() {
+                "text" => {
+                    if let Some(text) = c.text {
+                        if !text.trim().is_empty() {
+                            content.push(ContentBlock::Text { text });
+                        }
+                    }
+                }
+                "tool_use" => match (c.id, c.name, c.input) {
+                    (Some(id), Some(name), Some(input)) => {
+                        content.push(ContentBlock::ToolUse { id, name, input });
+                    }
+                    _ => {
+                        return Err(ModelError::InvalidResponse(
+                            "tool_use content block missing id, name, or input".to_string(),
+                        ));
+                    }
+                },
+                _ => {}
+            }
+        }
+
+        if content.is_empty() {
+            return Err(ModelError::InvalidResponse(
+                "No text or tool_use content in response".to_string(),
+            ));
+        }
 
         Ok(GenerateResponse {
             content,
@@ -267,17 +371,11 @@ mod tests {
     use crate::memory::{Message, MessageRole};
 
     fn user(content: &str) -> Message {
-        Message {
-            role: MessageRole::User,
-            content: content.to_string(),
-        }
+        Message::text(MessageRole::User, content)
     }
 
     fn assistant(content: &str) -> Message {
-        Message {
-            role: MessageRole::Assistant,
-            content: content.to_string(),
-        }
+        Message::text(MessageRole::Assistant, content)
     }
 
     fn tool_def(name: &str) -> ToolDefinition {
@@ -300,9 +398,9 @@ mod tests {
             },
         );
         assert_eq!(wire.system.len(), 1);
-        assert_eq!(wire.system[0].text, "You are helpful.");
+        assert_eq!(wire.system[0].text().unwrap(), "You are helpful.");
         assert_eq!(
-            wire.system[0].cache_control.as_ref().unwrap().cache_type,
+            wire.system[0].cache_control().unwrap().cache_type,
             "ephemeral"
         );
     }
@@ -362,7 +460,7 @@ mod tests {
         );
         assert_eq!(wire.messages.len(), 1);
         assert!(
-            wire.messages[0].content[0].cache_control.is_none(),
+            wire.messages[0].content[0].cache_control().is_none(),
             "single message must not be cached"
         );
     }
@@ -383,20 +481,16 @@ mod tests {
         let msgs = &wire.messages;
         assert_eq!(msgs.len(), 3);
         assert!(
-            msgs[0].content[0].cache_control.is_none(),
+            msgs[0].content[0].cache_control().is_none(),
             "user1 not cached"
         );
         assert_eq!(
-            msgs[1].content[0]
-                .cache_control
-                .as_ref()
-                .unwrap()
-                .cache_type,
+            msgs[1].content[0].cache_control().unwrap().cache_type,
             "ephemeral",
             "assistant1 (penultimate) must be cached"
         );
         assert!(
-            msgs[2].content[0].cache_control.is_none(),
+            msgs[2].content[0].cache_control().is_none(),
             "user2 (current) must not be cached"
         );
     }
@@ -415,13 +509,12 @@ mod tests {
         );
         assert_eq!(
             wire.messages[0].content[0]
-                .cache_control
-                .as_ref()
+                .cache_control()
                 .unwrap()
                 .cache_type,
             "ephemeral"
         );
-        assert!(wire.messages[1].content[0].cache_control.is_none());
+        assert!(wire.messages[1].content[0].cache_control().is_none());
     }
 
     #[test]
@@ -430,13 +523,7 @@ mod tests {
             "m",
             GenerateRequest {
                 system: None,
-                messages: vec![
-                    Message {
-                        role: MessageRole::System,
-                        content: "ignored".to_string(),
-                    },
-                    user("hi"),
-                ],
+                messages: vec![Message::text(MessageRole::System, "ignored"), user("hi")],
                 tools: None,
                 ..Default::default()
             },
@@ -446,7 +533,7 @@ mod tests {
             1,
             "System-role message must be filtered"
         );
-        assert_eq!(wire.messages[0].content[0].text, "hi");
+        assert_eq!(wire.messages[0].content[0].text().unwrap(), "hi");
     }
 
     #[test]
@@ -454,10 +541,7 @@ mod tests {
         let provider = AnthropicProvider::new();
         let req = GenerateRequest {
             system: Some("You are helpful.".to_string()),
-            messages: vec![Message {
-                role: MessageRole::User,
-                content: "hi".into(),
-            }],
+            messages: vec![Message::text(MessageRole::User, "hi")],
             tools: None,
             ..Default::default()
         };
@@ -491,7 +575,7 @@ mod tests {
                       "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
         }"#;
         let resp = provider.parse_response(body).unwrap();
-        assert_eq!(resp.content, "Hello!");
+        assert_eq!(resp.as_text(), "Hello!");
         assert_eq!(resp.usage.input_tokens, 10);
     }
 
@@ -530,5 +614,290 @@ mod tests {
             )
             .unwrap();
         assert!(body.get("output_config").is_none());
+    }
+
+    #[test]
+    fn tools_are_sent_with_strict_true() {
+        let wire = build_wire_request(
+            "m",
+            GenerateRequest {
+                system: None,
+                messages: vec![user("hi")],
+                tools: Some(vec![tool_def("alpha")]),
+                ..Default::default()
+            },
+        );
+        let tools = wire.tools.unwrap();
+        assert!(tools[0].strict);
+    }
+
+    #[test]
+    fn parse_response_extracts_tool_use_block() {
+        let provider = AnthropicProvider::new();
+        let body = r#"{
+            "content": [{"type": "tool_use", "id": "call_1", "name": "milestone_scheduler", "input": {"start_date": "2026-01-01"}}],
+            "usage": {"input_tokens": 10, "output_tokens": 5,
+                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+        }"#;
+        let resp = provider.parse_response(body).unwrap();
+        assert_eq!(resp.content.len(), 1);
+        match &resp.content[0] {
+            ContentBlock::ToolUse { id, name, input } => {
+                assert_eq!(id, "call_1");
+                assert_eq!(name, "milestone_scheduler");
+                assert_eq!(input["start_date"], "2026-01-01");
+            }
+            other => panic!("expected ToolUse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_response_extracts_text_and_tool_use_together() {
+        let provider = AnthropicProvider::new();
+        let body = r#"{
+            "content": [
+                {"type": "text", "text": "Let me check the schedule."},
+                {"type": "tool_use", "id": "call_1", "name": "milestone_scheduler", "input": {}}
+            ],
+            "usage": {"input_tokens": 10, "output_tokens": 5,
+                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+        }"#;
+        let resp = provider.parse_response(body).unwrap();
+        assert_eq!(resp.content.len(), 2);
+        assert!(matches!(resp.content[0], ContentBlock::Text { .. }));
+        assert!(matches!(resp.content[1], ContentBlock::ToolUse { .. }));
+    }
+
+    #[test]
+    fn parse_response_extracts_multiple_tool_use_blocks() {
+        let provider = AnthropicProvider::new();
+        let body = r#"{
+            "content": [
+                {"type": "tool_use", "id": "call_1", "name": "milestone_scheduler", "input": {}},
+                {"type": "tool_use", "id": "call_2", "name": "risk_adjusted_schedule", "input": {}}
+            ],
+            "usage": {"input_tokens": 10, "output_tokens": 5,
+                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+        }"#;
+        let resp = provider.parse_response(body).unwrap();
+        assert_eq!(resp.content.len(), 2);
+        let ids: Vec<&str> = resp
+            .content
+            .iter()
+            .map(|c| match c {
+                ContentBlock::ToolUse { id, .. } => id.as_str(),
+                other => panic!("expected ToolUse, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(ids, ["call_1", "call_2"]);
+    }
+
+    #[test]
+    fn parse_response_malformed_tool_use_is_error() {
+        let provider = AnthropicProvider::new();
+        // A tool_use block missing "input" is malformed and must error
+        // loudly, not be silently dropped -- this is what keeps Anthropic
+        // consistent with the OpenAI-compatible provider's hard-error-on-
+        // malformed-arguments behavior.
+        let body = r#"{
+            "content": [{"type": "tool_use", "id": "x", "name": "fn"}],
+            "usage": {"input_tokens": 10, "output_tokens": 5,
+                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+        }"#;
+        let err = provider.parse_response(body).unwrap_err();
+        assert!(err.to_string().contains("missing id, name, or input"));
+    }
+
+    #[test]
+    fn parse_response_malformed_tool_use_errors_even_with_text_present() {
+        let provider = AnthropicProvider::new();
+        // The malformed tool_use must not be silently dropped just because
+        // a text block is also present -- that would surface as a wrong
+        // (text-only) final answer instead of a diagnosable error.
+        let body = r#"{
+            "content": [
+                {"type": "text", "text": "Let me look that up."},
+                {"type": "tool_use", "id": "x", "name": "fn"}
+            ],
+            "usage": {"input_tokens": 10, "output_tokens": 5,
+                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+        }"#;
+        let err = provider.parse_response(body).unwrap_err();
+        assert!(err.to_string().contains("missing id, name, or input"));
+    }
+
+    #[test]
+    fn parse_response_truly_empty_content_is_error() {
+        let provider = AnthropicProvider::new();
+        let body = r#"{
+            "content": [],
+            "usage": {"input_tokens": 10, "output_tokens": 5,
+                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+        }"#;
+        let err = provider.parse_response(body).unwrap_err();
+        assert!(err.to_string().contains("No text or tool_use content"));
+    }
+
+    #[test]
+    fn parse_response_skips_empty_text_blocks() {
+        let provider = AnthropicProvider::new();
+        let body = r#"{
+            "content": [
+                {"type": "text", "text": ""},
+                {"type": "tool_use", "id": "call_1", "name": "fn", "input": {}}
+            ],
+            "usage": {"input_tokens": 10, "output_tokens": 5,
+                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+        }"#;
+        let resp = provider.parse_response(body).unwrap();
+        assert_eq!(resp.content.len(), 1);
+        assert!(matches!(resp.content[0], ContentBlock::ToolUse { .. }));
+    }
+
+    #[test]
+    fn strict_field_is_serialized_in_wire_json() {
+        let provider = AnthropicProvider::new();
+        let body = provider
+            .build_request(
+                "m",
+                GenerateRequest {
+                    system: None,
+                    messages: vec![user("hi")],
+                    tools: Some(vec![tool_def("alpha")]),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(body["tools"][0]["strict"], true);
+    }
+
+    #[test]
+    fn build_wire_request_serializes_assistant_tool_use_block() {
+        let wire = build_wire_request(
+            "m",
+            GenerateRequest {
+                system: None,
+                messages: vec![Message {
+                    role: MessageRole::Assistant,
+                    content: vec![ContentBlock::ToolUse {
+                        id: "call_1".to_string(),
+                        name: "milestone_scheduler".to_string(),
+                        input: serde_json::json!({"start_date": "2026-01-01"}),
+                    }],
+                }],
+                tools: None,
+                ..Default::default()
+            },
+        );
+        assert_eq!(wire.messages.len(), 1);
+        assert_eq!(wire.messages[0].role, "assistant");
+        assert_eq!(wire.messages[0].content.len(), 1);
+        match &wire.messages[0].content[0] {
+            AnthropicContentBlock::ToolUse {
+                id, name, input, ..
+            } => {
+                assert_eq!(id, "call_1");
+                assert_eq!(name, "milestone_scheduler");
+                assert_eq!(input["start_date"], "2026-01-01");
+            }
+            other => panic!("expected ToolUse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_wire_request_serializes_tool_result_block() {
+        let wire = build_wire_request(
+            "m",
+            GenerateRequest {
+                system: None,
+                messages: vec![Message {
+                    role: MessageRole::Tool,
+                    content: vec![ContentBlock::ToolResult {
+                        tool_use_id: "call_1".to_string(),
+                        content: "42".to_string(),
+                        is_error: false,
+                    }],
+                }],
+                tools: None,
+                ..Default::default()
+            },
+        );
+        assert_eq!(wire.messages.len(), 1);
+        assert_eq!(wire.messages[0].role, "user");
+        match &wire.messages[0].content[0] {
+            AnthropicContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+                ..
+            } => {
+                assert_eq!(tool_use_id, "call_1");
+                assert_eq!(content, "42");
+                assert!(!is_error);
+            }
+            other => panic!("expected ToolResult, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_wire_request_serializes_mixed_text_and_tool_use_in_one_message() {
+        let wire = build_wire_request(
+            "m",
+            GenerateRequest {
+                system: None,
+                messages: vec![Message {
+                    role: MessageRole::Assistant,
+                    content: vec![
+                        ContentBlock::Text {
+                            text: "Let me check.".to_string(),
+                        },
+                        ContentBlock::ToolUse {
+                            id: "call_1".to_string(),
+                            name: "fn".to_string(),
+                            input: serde_json::json!({}),
+                        },
+                    ],
+                }],
+                tools: None,
+                ..Default::default()
+            },
+        );
+        assert_eq!(wire.messages[0].content.len(), 2);
+        assert!(matches!(
+            wire.messages[0].content[0],
+            AnthropicContentBlock::Text { .. }
+        ));
+        assert!(matches!(
+            wire.messages[0].content[1],
+            AnthropicContentBlock::ToolUse { .. }
+        ));
+    }
+
+    #[test]
+    fn build_request_tool_use_block_has_correct_wire_json_shape() {
+        let provider = AnthropicProvider::new();
+        let body = provider
+            .build_request(
+                "m",
+                GenerateRequest {
+                    system: None,
+                    messages: vec![Message {
+                        role: MessageRole::Assistant,
+                        content: vec![ContentBlock::ToolUse {
+                            id: "call_1".to_string(),
+                            name: "fn".to_string(),
+                            input: serde_json::json!({"x": 1}),
+                        }],
+                    }],
+                    tools: None,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let block = &body["messages"][0]["content"][0];
+        assert_eq!(block["type"], "tool_use");
+        assert_eq!(block["id"], "call_1");
+        assert_eq!(block["name"], "fn");
+        assert_eq!(block["input"]["x"], 1);
     }
 }

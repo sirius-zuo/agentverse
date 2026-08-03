@@ -96,7 +96,7 @@ impl ConsolidationWorker {
             }
             for (seq, msg) in &msgs {
                 // TODO: replace with LLM summarizer once wired in
-                let record = LongtermRecord::now(msg.content.clone(), 0.5);
+                let record = LongtermRecord::now(msg.as_text(), 0.5);
                 self.longterm_memory.write(&session.user_id, record).await?;
                 // Advance watermark after each successful write to prevent duplicate writes on retry
                 self.session_memory
@@ -247,14 +247,8 @@ mod tests {
         store
             .append_turn(
                 session.id,
-                Message {
-                    role: MessageRole::User,
-                    content: "hi".into(),
-                },
-                Message {
-                    role: MessageRole::Assistant,
-                    content: "hello".into(),
-                },
+                Message::text(MessageRole::User, "hi"),
+                Message::text(MessageRole::Assistant, "hello"),
             )
             .await
             .unwrap();

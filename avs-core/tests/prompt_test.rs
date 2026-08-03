@@ -10,9 +10,9 @@ fn test_prompt_registry_has_default_react_template() {
     let result = registry.render("react", ctx);
     assert!(result.is_ok());
     let rendered = result.unwrap();
-    assert!(rendered.contains("ReAct pattern"));
-    assert!(rendered.contains("Thought:"));
-    assert!(rendered.contains("Action:"));
+    assert!(rendered.contains("reasoning step by step"));
+    assert!(rendered.contains("call the appropriate tool directly"));
+    assert!(rendered.contains("respond with it directly"));
 }
 
 #[test]
@@ -55,6 +55,7 @@ fn test_prompt_registry_has_system_template() {
     assert!(result.is_ok());
     let rendered = result.unwrap();
     assert!(rendered.contains("helpful AI assistant"));
+    assert!(!rendered.contains("Answer:"));
 }
 
 #[test]

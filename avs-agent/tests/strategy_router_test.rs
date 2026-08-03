@@ -1,7 +1,7 @@
 use agentverse::memory::Message;
 use agentverse::{
     AgentError as CoreAgentError, Config, LlmRunner, PromptRegistry, RunStrategy, StrategyOutcome,
-    Tool, ToolError, ToolResult,
+    Tool, ToolResult,
 };
 use agentverse_agent::{agent::HitlConfig, Agent, AgentError, AgentOutput, SkillConfig, SkillMode};
 use agentverse_hitl::{ApprovalDecision, HitlPolicy, InMemoryQueue};
@@ -20,6 +20,15 @@ use std::sync::Arc;
 fn chat_completion(content: &str) -> serde_json::Value {
     json!({
         "choices": [{"message": {"role": "assistant", "content": content}}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}
+    })
+}
+
+fn chat_completion_tool_call(id: &str, name: &str, arguments: &str) -> serde_json::Value {
+    json!({
+        "choices": [{"message": {"role": "assistant", "content": null, "tool_calls": [
+            {"id": id, "function": {"name": name, "arguments": arguments}}
+        ]}}],
         "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}
     })
 }
@@ -264,9 +273,8 @@ async fn routed_strategy_cannot_execute_tools_excluded_by_active_tool_names() {
         .mock_async(|when, then| {
             when.method(POST)
                 .path("/chat/completions")
-                .body_contains("Tool: echo");
-            then.status(200)
-                .json_body(chat_completion("Thought: done\nAnswer: tool ran"));
+                .body_contains("\"role\":\"tool\"");
+            then.status(200).json_body(chat_completion("tool ran"));
         })
         .await;
     strategy_server
@@ -274,10 +282,10 @@ async fn routed_strategy_cannot_execute_tools_excluded_by_active_tool_names() {
             when.method(POST)
                 .path("/chat/completions")
                 .body_contains("attempt hidden tool");
-            then.status(200).json_body(chat_completion(
-                r#"Thought: call the hidden tool
-Action: echo
-Action Input: {"text":"secret"}"#,
+            then.status(200).json_body(chat_completion_tool_call(
+                "call_1",
+                "echo",
+                "{\"text\":\"secret\"}",
             ));
         })
         .await;
@@ -309,14 +317,19 @@ Action Input: {"text":"secret"}"#,
         .await
         .unwrap();
 
-    let error = agent
+    // The excluded tool is not found in the restricted registry, so the call
+    // fails internally and is fed back to the model as an observation (same
+    // recoverable-error handling as the HITL twin below), rather than
+    // aborting the whole invocation. The security property under test is
+    // that the real tool body never runs.
+    let output = agent
         .invoke("alice", session_id, "attempt hidden tool")
         .await
-        .unwrap_err();
+        .unwrap();
 
     assert!(matches!(
-        error,
-        AgentError::Llm(CoreAgentError::Tool(ToolError::NotFound(ref name))) if name == "echo"
+        output,
+        AgentOutput::Done(ref text) if text == "tool ran"
     ));
     assert_eq!(tool_calls.load(Ordering::SeqCst), 0);
     assert_eq!(fixed_calls.load(Ordering::SeqCst), 0);
@@ -339,7 +352,7 @@ async fn routed_strategy_cannot_execute_inactive_tool_after_hitl_approval() {
                 .path("/chat/completions")
                 .body_contains("Tool: echo");
             then.status(200)
-                .json_body(chat_completion("Thought: done\nAnswer: approval handled"));
+                .json_body(chat_completion("approval handled"));
         })
         .await;
     strategy_server
@@ -347,10 +360,10 @@ async fn routed_strategy_cannot_execute_inactive_tool_after_hitl_approval() {
             when.method(POST)
                 .path("/chat/completions")
                 .body_contains("attempt approved hidden tool");
-            then.status(200).json_body(chat_completion(
-                r#"Thought: call the hidden tool
-Action: echo
-Action Input: {"text":"secret"}"#,
+            then.status(200).json_body(chat_completion_tool_call(
+                "call_1",
+                "echo",
+                "{\"text\":\"secret\"}",
             ));
         })
         .await;
@@ -425,9 +438,8 @@ async fn routed_react_strategy_is_preserved_across_hitl_resume() {
             when.method(POST)
                 .path("/chat/completions")
                 .body_contains("Tool: echo");
-            then.status(200).json_body(chat_completion(
-                "Thought: done\nAnswer: routed react resumed",
-            ));
+            then.status(200)
+                .json_body(chat_completion("routed react resumed"));
         })
         .await;
     strategy_server
@@ -435,10 +447,10 @@ async fn routed_react_strategy_is_preserved_across_hitl_resume() {
             when.method(POST)
                 .path("/chat/completions")
                 .body_contains("call echo");
-            then.status(200).json_body(chat_completion(
-                r#"Thought: call the tool
-Action: echo
-Action Input: {"text":"hi"}"#,
+            then.status(200).json_body(chat_completion_tool_call(
+                "call_1",
+                "echo",
+                "{\"text\":\"hi\"}",
             ));
         })
         .await;

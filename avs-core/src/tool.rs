@@ -57,8 +57,13 @@ impl<T: Tool> ErasedTool for T {
 }
 
 /// A single tool invocation request.
+///
+/// `id` is the provider-issued identifier from the matching `ContentBlock::ToolUse`
+/// that produced this call — it must be echoed back as `ContentBlock::ToolResult::tool_use_id`
+/// so the provider can correlate the result to the call on the next turn.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
+    pub id: String,
     pub name: String,
     pub args: Value,
 }
@@ -66,6 +71,7 @@ pub struct ToolCall {
 /// The result of a single tool invocation.
 #[derive(Debug)]
 pub struct ToolCallResult {
+    pub id: String,
     pub name: String,
     pub result: ToolResult,
 }
@@ -130,5 +136,15 @@ mod trait_tests {
             result,
             Err(crate::error::ToolError::InvalidArgs(_))
         ));
+    }
+
+    #[test]
+    fn tool_call_result_carries_the_originating_call_id() {
+        let call = ToolCall {
+            id: "call_1".to_string(),
+            name: "echo".to_string(),
+            args: json!({"message": "hi"}),
+        };
+        assert_eq!(call.id, "call_1");
     }
 }

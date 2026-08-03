@@ -1,7 +1,7 @@
 use agentverse::memory::{Message, MessageRole};
 use agentverse::{
-    AnthropicProvider, ConnectionManager, GeminiProvider, GenerateRequest, ModelProvider,
-    OpenAICompatible, ProviderConfig, ToolDefinition,
+    AnthropicProvider, ConnectionManager, GeminiProvider, GenerateRequest, ModelError,
+    ModelProvider, OpenAICompatible, ProviderConfig, ToolDefinition,
 };
 use serde_json::json;
 
@@ -42,10 +42,7 @@ fn test_anthropic_build_request_system_prompt() {
     let provider = AnthropicProvider::new();
     let req = GenerateRequest {
         system: Some("Be helpful.".to_string()),
-        messages: vec![Message {
-            role: MessageRole::User,
-            content: "hello".to_string(),
-        }],
+        messages: vec![Message::text(MessageRole::User, "hello")],
         tools: None,
         ..Default::default()
     };
@@ -95,7 +92,9 @@ fn test_anthropic_parse_response_usage_maps_cache_tokens() {
 }
 
 #[test]
-fn test_anthropic_parse_response_no_text_content_is_error() {
+fn test_anthropic_parse_response_malformed_tool_use_with_no_text_is_error() {
+    // A tool_use block with no "input" field is malformed and must error
+    // loudly, not be silently dropped.
     let provider = AnthropicProvider::new();
     let body = json!({
         "content": [{"type": "tool_use", "id": "x", "name": "fn"}],
@@ -104,7 +103,20 @@ fn test_anthropic_parse_response_no_text_content_is_error() {
     })
     .to_string();
     let err = provider.parse_response(&body).unwrap_err();
-    assert!(err.to_string().contains("No text content"));
+    assert!(err.to_string().contains("missing id, name, or input"));
+}
+
+#[test]
+fn test_anthropic_parse_response_extracts_tool_use() {
+    let provider = AnthropicProvider::new();
+    let body = json!({
+        "content": [{"type": "tool_use", "id": "call_1", "name": "calculate", "input": {"a": 1}}],
+        "usage": {"input_tokens": 10, "output_tokens": 5,
+                  "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+    })
+    .to_string();
+    let result = provider.parse_response(&body).unwrap();
+    assert_eq!(result.content.len(), 1);
 }
 
 // ── GeminiProvider tests ──────────────────────────────────────────────────────
@@ -114,10 +126,7 @@ fn test_openai_build_request_with_tools_serializes_chat_tools() {
     let provider = OpenAICompatible::new();
     let request = GenerateRequest {
         system: None,
-        messages: vec![Message {
-            role: MessageRole::User,
-            content: "hello".to_string(),
-        }],
+        messages: vec![Message::text(MessageRole::User, "hello")],
         tools: Some(vec![ToolDefinition {
             name: "calculate".to_string(),
             description: "Perform arithmetic".to_string(),
@@ -137,6 +146,289 @@ fn test_openai_build_request_with_tools_serializes_chat_tools() {
         body["tools"][0]["function"]["parameters"],
         json!({"type": "object", "properties": {"expression": {"type": "string"}}})
     );
+    assert_eq!(body["tools"][0]["function"]["strict"], true);
+}
+
+#[test]
+fn test_openai_build_request_serializes_assistant_tool_calls() {
+    let provider = OpenAICompatible::new();
+    let request = GenerateRequest {
+        system: None,
+        messages: vec![Message {
+            role: MessageRole::Assistant,
+            content: vec![agentverse::ContentBlock::ToolUse {
+                id: "call_1".to_string(),
+                name: "calculate".to_string(),
+                input: json!({"a": 1, "b": 2}),
+            }],
+        }],
+        tools: None,
+        ..Default::default()
+    };
+    let body = provider.build_request("gpt", request).unwrap();
+    let message = &body["messages"][0];
+    assert_eq!(message["role"], "assistant");
+    assert!(
+        message.get("content").is_none(),
+        "content must be omitted when there is no text"
+    );
+    let tool_call = &message["tool_calls"][0];
+    assert_eq!(tool_call["id"], "call_1");
+    assert_eq!(tool_call["type"], "function");
+    assert_eq!(tool_call["function"]["name"], "calculate");
+    let arguments: serde_json::Value =
+        serde_json::from_str(tool_call["function"]["arguments"].as_str().unwrap()).unwrap();
+    assert_eq!(arguments, json!({"a": 1, "b": 2}));
+}
+
+#[test]
+fn test_openai_build_request_serializes_tool_results_as_separate_messages() {
+    let provider = OpenAICompatible::new();
+    let request = GenerateRequest {
+        system: None,
+        messages: vec![Message {
+            role: MessageRole::Tool,
+            content: vec![
+                agentverse::ContentBlock::ToolResult {
+                    tool_use_id: "call_1".to_string(),
+                    content: "3".to_string(),
+                    is_error: false,
+                },
+                agentverse::ContentBlock::ToolResult {
+                    tool_use_id: "call_2".to_string(),
+                    content: "boom".to_string(),
+                    is_error: true,
+                },
+            ],
+        }],
+        tools: None,
+        ..Default::default()
+    };
+    let body = provider.build_request("gpt", request).unwrap();
+    let messages = body["messages"].as_array().unwrap();
+    assert_eq!(
+        messages.len(),
+        2,
+        "each ToolResult must become its own message"
+    );
+    assert_eq!(messages[0]["role"], "tool");
+    assert_eq!(messages[0]["tool_call_id"], "call_1");
+    assert_eq!(messages[0]["content"], "3");
+    assert_eq!(messages[1]["role"], "tool");
+    assert_eq!(messages[1]["tool_call_id"], "call_2");
+    assert_eq!(messages[1]["content"], "Error: boom");
+}
+
+#[test]
+fn test_openai_build_request_text_only_message_unaffected() {
+    let provider = OpenAICompatible::new();
+    let request = GenerateRequest {
+        system: None,
+        messages: vec![Message::text(MessageRole::User, "hello")],
+        tools: None,
+        ..Default::default()
+    };
+    let body = provider.build_request("gpt", request).unwrap();
+    assert_eq!(body["messages"][0]["role"], "user");
+    assert_eq!(body["messages"][0]["content"], "hello");
+    assert!(body["messages"][0].get("tool_calls").is_none());
+    assert!(body["messages"][0].get("tool_call_id").is_none());
+}
+
+#[test]
+fn test_openai_build_request_tool_role_message_with_non_tool_result_block_is_error() {
+    let provider = OpenAICompatible::new();
+    let request = GenerateRequest {
+        system: None,
+        messages: vec![Message {
+            role: MessageRole::Tool,
+            content: vec![agentverse::ContentBlock::Text {
+                text: "stray tool text".to_string(),
+            }],
+        }],
+        tools: None,
+        ..Default::default()
+    };
+    let err = provider.build_request("gpt", request).unwrap_err();
+    assert!(err.to_string().contains("Tool-role message"));
+}
+
+#[test]
+fn test_openai_build_request_prefixes_error_tool_result_content() {
+    let provider = OpenAICompatible::new();
+    let request = GenerateRequest {
+        system: None,
+        messages: vec![Message {
+            role: MessageRole::Tool,
+            content: vec![agentverse::ContentBlock::ToolResult {
+                tool_use_id: "call_1".to_string(),
+                content: "boom".to_string(),
+                is_error: true,
+            }],
+        }],
+        tools: None,
+        ..Default::default()
+    };
+    let body = provider.build_request("gpt", request).unwrap();
+    assert_eq!(body["messages"][0]["content"], "Error: boom");
+}
+
+#[test]
+fn test_openai_build_request_assistant_message_with_no_content_serializes_empty_string() {
+    let provider = OpenAICompatible::new();
+    let request = GenerateRequest {
+        system: None,
+        messages: vec![Message {
+            role: MessageRole::Assistant,
+            content: vec![],
+        }],
+        tools: None,
+        ..Default::default()
+    };
+    let body = provider.build_request("gpt", request).unwrap();
+    assert_eq!(body["messages"][0]["content"], "");
+    assert!(body["messages"][0].get("tool_calls").is_none());
+}
+
+#[test]
+fn test_openai_parse_response_extracts_tool_calls() {
+    let provider = OpenAICompatible::new();
+    let body = json!({
+        "choices": [{"message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "calculate", "arguments": "{\"a\":1,\"b\":2}"}
+            }]
+        }}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 3}
+    })
+    .to_string();
+    let result = provider.parse_response(&body).unwrap();
+    assert_eq!(result.content.len(), 1);
+    match &result.content[0] {
+        agentverse::ContentBlock::ToolUse { id, name, input } => {
+            assert_eq!(id, "call_1");
+            assert_eq!(name, "calculate");
+            assert_eq!(input["a"], 1);
+            assert_eq!(input["b"], 2);
+        }
+        other => panic!("expected ToolUse, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_openai_parse_response_extracts_text_and_tool_calls_together() {
+    let provider = OpenAICompatible::new();
+    let body = json!({
+        "choices": [{"message": {
+            "role": "assistant",
+            "content": "Let me check.",
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "calculate", "arguments": "{}"}
+            }]
+        }}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 3}
+    })
+    .to_string();
+    let result = provider.parse_response(&body).unwrap();
+    assert_eq!(result.content.len(), 2);
+}
+
+#[test]
+fn test_openai_parse_response_extracts_multiple_tool_calls() {
+    let provider = OpenAICompatible::new();
+    let body = json!({
+        "choices": [{"message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "milestone_scheduler", "arguments": "{}"}
+                },
+                {
+                    "id": "call_2",
+                    "type": "function",
+                    "function": {"name": "risk_adjusted_schedule", "arguments": "{}"}
+                }
+            ]
+        }}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 3}
+    })
+    .to_string();
+    let result = provider.parse_response(&body).unwrap();
+    assert_eq!(result.content.len(), 2);
+    let ids: Vec<&str> = result
+        .content
+        .iter()
+        .map(|c| match c {
+            agentverse::ContentBlock::ToolUse { id, .. } => id.as_str(),
+            other => panic!("expected ToolUse, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(ids, ["call_1", "call_2"]);
+}
+
+#[test]
+fn test_openai_parse_response_malformed_tool_call_arguments_is_error() {
+    let provider = OpenAICompatible::new();
+    let body = json!({
+        "choices": [{"message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "calculate", "arguments": "not valid json"}
+            }]
+        }}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 3}
+    })
+    .to_string();
+    let err = provider.parse_response(&body).unwrap_err();
+    assert!(err.to_string().contains("invalid tool_call arguments JSON"));
+}
+
+#[test]
+fn test_openai_parse_response_skips_empty_text_block_alongside_tool_calls() {
+    let provider = OpenAICompatible::new();
+    let body = json!({
+        "choices": [{"message": {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "calculate", "arguments": "{}"}
+            }]
+        }}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 3}
+    })
+    .to_string();
+    let result = provider.parse_response(&body).unwrap();
+    assert_eq!(result.content.len(), 1);
+    assert!(matches!(
+        result.content[0],
+        agentverse::ContentBlock::ToolUse { .. }
+    ));
+}
+
+#[test]
+fn test_openai_parse_response_no_content_or_tool_calls_is_error() {
+    let provider = OpenAICompatible::new();
+    let body = json!({
+        "choices": [{"message": {"role": "assistant", "content": null}}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 3}
+    })
+    .to_string();
+    let err = provider.parse_response(&body).unwrap_err();
+    assert!(err.to_string().contains("No content"));
 }
 
 #[test]
@@ -167,10 +459,7 @@ fn test_gemini_build_request_system_instruction() {
     let provider = GeminiProvider::new();
     let req = GenerateRequest {
         system: Some("System instruction".to_string()),
-        messages: vec![Message {
-            role: MessageRole::User,
-            content: "hello".to_string(),
-        }],
+        messages: vec![Message::text(MessageRole::User, "hello")],
         tools: None,
         ..Default::default()
     };
@@ -187,14 +476,8 @@ fn test_gemini_build_request_system_role_messages_filtered() {
     let req = GenerateRequest {
         system: Some("System instruction".to_string()),
         messages: vec![
-            Message {
-                role: MessageRole::System,
-                content: "this should be filtered".to_string(),
-            },
-            Message {
-                role: MessageRole::User,
-                content: "hello".to_string(),
-            },
+            Message::text(MessageRole::System, "this should be filtered"),
+            Message::text(MessageRole::User, "hello"),
         ],
         tools: None,
         ..Default::default()
@@ -206,14 +489,14 @@ fn test_gemini_build_request_system_role_messages_filtered() {
 }
 
 #[test]
-fn test_gemini_build_request_with_tools() {
+fn test_gemini_build_request_with_tools_is_error() {
+    // GeminiProvider does not support native tool-calling: any request that
+    // offers tool schemas must hard-error rather than silently mapping them
+    // into a `functions` field the Gemini API doesn't use for tool calling.
     let provider = GeminiProvider::new();
     let req = GenerateRequest {
         system: None,
-        messages: vec![Message {
-            role: MessageRole::User,
-            content: "hello".to_string(),
-        }],
+        messages: vec![Message::text(MessageRole::User, "hello")],
         tools: Some(vec![ToolDefinition {
             name: "calc".to_string(),
             description: "Calculate".to_string(),
@@ -221,14 +504,8 @@ fn test_gemini_build_request_with_tools() {
         }]),
         ..Default::default()
     };
-    let body = provider.build_request("gemini-pro", req).unwrap();
-    let tools = body["tools"].as_array().unwrap();
-    assert_eq!(tools[0]["functions"][0]["name"], "calc");
-    assert_eq!(tools[0]["functions"][0]["description"], "Calculate");
-    assert_eq!(
-        tools[0]["functions"][0]["parameters"],
-        json!({"type": "object", "properties": {}})
-    );
+    let err = provider.build_request("gemini-pro", req).unwrap_err();
+    assert!(matches!(err, ModelError::InvalidResponse(_)));
 }
 
 #[test]
@@ -244,7 +521,7 @@ fn test_gemini_parse_response_ok() {
     })
     .to_string();
     let result = provider.parse_response(&body).unwrap();
-    assert_eq!(result.content, "Hello from Gemini!");
+    assert_eq!(result.as_text(), "Hello from Gemini!");
 }
 
 #[test]
@@ -282,10 +559,7 @@ fn connection_manager_with_model_uses_new_model_name() {
         .expect("known provider");
     let req = agentverse::GenerateRequest {
         system: None,
-        messages: vec![Message {
-            role: MessageRole::User,
-            content: "hi".into(),
-        }],
+        messages: vec![Message::text(MessageRole::User, "hi")],
         tools: None,
         ..Default::default()
     };
@@ -303,10 +577,7 @@ fn connection_manager_with_model_openai_uses_new_model_name() {
         .expect("known provider");
     let req = agentverse::GenerateRequest {
         system: None,
-        messages: vec![Message {
-            role: MessageRole::User,
-            content: "hi".into(),
-        }],
+        messages: vec![Message::text(MessageRole::User, "hi")],
         tools: None,
         ..Default::default()
     };
@@ -338,10 +609,7 @@ fn connection_manager_with_model_gemini_uses_new_model_name() {
         .expect("known provider");
     let req = agentverse::GenerateRequest {
         system: None,
-        messages: vec![Message {
-            role: MessageRole::User,
-            content: "hi".into(),
-        }],
+        messages: vec![Message::text(MessageRole::User, "hi")],
         tools: None,
         ..Default::default()
     };

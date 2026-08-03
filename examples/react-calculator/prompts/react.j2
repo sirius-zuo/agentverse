@@ -1,16 +1,4 @@
-Available tools:
-{{ tools }}
-
-Always respond in this exact format:
-
-    Thought: <your reasoning about what to retrieve or do next>
-    Action: <tool_name>
-    Action Input: <json arguments>
-
-When you have enough information to answer:
-
-    Thought: <summary of what you found>
-    Answer: <final answer grounded in retrieved documents>
+You solve tasks by reasoning step by step. When you need information or need to take an action, call the appropriate tool directly — tool calls are handled natively, you never need to describe them as text.
 
 {% if examples %}
 Examples:
@@ -19,3 +7,5 @@ User: {{ example.input }}
 Assistant: {{ example.output }}
 {% endfor %}
 {% endif %}
+
+When you have a complete answer, respond with it directly.

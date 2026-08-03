@@ -63,15 +63,17 @@ async fn react_tool_call_passes_judge() {
     tools.register(EchoTool);
     let strategy = ReActStrategy::new(runner, Arc::new(PromptRegistry::new()), tools, 5);
 
-    let messages = vec![agentverse::Message {
-        role: agentverse::MessageRole::User,
-        content: "please echo hello".to_string(),
-    }];
+    let messages = vec![agentverse::Message::text(
+        agentverse::MessageRole::User,
+        "please echo hello",
+    )];
     let outcome = strategy.run(messages).await.unwrap();
     let agent_output = match outcome {
         agentverse::StrategyOutcome::Done(answer) => answer,
         agentverse::StrategyOutcome::Interrupted(_) => panic!("expected Done, got Interrupted"),
     };
+
+    assert_eq!(agent_output, "The echo tool returned: hello");
 
     let judge_server = MockServer::start_async().await;
     register_judge_turn(&judge_server, &recording).await;
@@ -118,10 +120,10 @@ async fn plan_multi_step_passes_judge() {
     tools.register(EchoTool);
     let strategy = PlanStrategy::new(runner, Arc::new(PromptRegistry::new()), tools, 10);
 
-    let messages = vec![agentverse::Message {
-        role: agentverse::MessageRole::User,
-        content: "what is the answer".to_string(),
-    }];
+    let messages = vec![agentverse::Message::text(
+        agentverse::MessageRole::User,
+        "what is the answer",
+    )];
     let outcome = strategy.run(messages).await.unwrap();
     let agent_output = match outcome {
         agentverse::StrategyOutcome::Done(answer) => answer,
@@ -320,6 +322,8 @@ async fn hitl_interrupt_resume_passes_judge() {
         AgentOutput::Done(text) => text,
         other => panic!("expected Done after resume, got {other:?}"),
     };
+
+    assert_eq!(agent_output, "The ls command completed successfully.");
 
     let judge_server = MockServer::start_async().await;
     register_judge_turn(&judge_server, &recording).await;

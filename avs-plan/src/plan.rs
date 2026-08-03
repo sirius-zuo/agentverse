@@ -72,7 +72,7 @@ impl agentverse::RunStrategy for PlanStrategy {
             .iter()
             .rev()
             .find(|m| matches!(m.role, MessageRole::User))
-            .map(|m| m.content.clone())
+            .map(|m| m.as_text())
             .unwrap_or_default();
 
         let tool_summaries = self.tools.tool_summaries_for(active_tool_names);
@@ -86,7 +86,7 @@ impl agentverse::RunStrategy for PlanStrategy {
                     MessageRole::Assistant => "Assistant",
                     MessageRole::Tool => "Tool",
                 };
-                format!("{}: {}", role, m.content)
+                format!("{}: {}", role, m.as_text())
             })
             .collect::<Vec<_>>()
             .join("\n");
@@ -136,19 +136,16 @@ impl agentverse::RunStrategy for PlanStrategy {
         );
 
         let synthesis_messages = vec![
-            Message {
-                role: MessageRole::System,
-                content: final_prompt,
-            },
-            Message {
-                role: MessageRole::User,
-                content: "Based on the executed plan, provide the final answer.".to_string(),
-            },
+            Message::text(MessageRole::System, final_prompt),
+            Message::text(
+                MessageRole::User,
+                "Based on the executed plan, provide the final answer.".to_string(),
+            ),
         ];
 
         let answer = self.runner.invoke(synthesis_messages).await?;
 
-        check_output(&answer.content).map_err(|e| {
+        check_output(&answer.as_text()).map_err(|e| {
             AgentError::Guardrail(match e {
                 agentverse_guardrails::GuardrailError::OutputFiltered(msg) => {
                     agentverse::GuardrailError::OutputFiltered(msg)
@@ -160,7 +157,7 @@ impl agentverse::RunStrategy for PlanStrategy {
             })
         })?;
 
-        Ok(agentverse::StrategyOutcome::Done(answer.content))
+        Ok(agentverse::StrategyOutcome::Done(answer.as_text()))
     }
 }
 
@@ -197,10 +194,10 @@ mod tests {
     #[tokio::test]
     async fn plan_run_returns_error_on_bad_port() {
         let strategy = make_plan_strategy();
-        let messages = vec![agentverse::Message {
-            role: agentverse::memory::MessageRole::User,
-            content: "Search for rust".to_string(),
-        }];
+        let messages = vec![agentverse::Message::text(
+            agentverse::memory::MessageRole::User,
+            "Search for rust",
+        )];
         let result = strategy.run(messages).await;
         assert!(result.is_err());
     }

@@ -64,7 +64,7 @@ impl LlmRunner {
 
         for msg in messages {
             if matches!(msg.role, MessageRole::System) {
-                system_parts.push(msg.content);
+                system_parts.push(msg.as_text());
             } else {
                 conv.push(msg);
             }
@@ -150,10 +150,7 @@ mod tests {
 
         let result = runner
             .invoke_with_tools(
-                vec![Message {
-                    role: MessageRole::User,
-                    content: "What is 2 + 2?".to_string(),
-                }],
+                vec![Message::text(MessageRole::User, "What is 2 + 2?")],
                 tools,
             )
             .await;

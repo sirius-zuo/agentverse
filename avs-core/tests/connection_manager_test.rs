@@ -3,10 +3,7 @@ use agentverse::{ConnectionManager, GenerateRequest};
 use httpmock::prelude::*;
 
 fn user_msg(s: &str) -> Message {
-    Message {
-        role: MessageRole::User,
-        content: s.to_string(),
-    }
+    Message::text(MessageRole::User, s)
 }
 
 fn anthropic_ok_body() -> serde_json::Value {
@@ -37,7 +34,7 @@ async fn generate_succeeds_on_200() {
         })
         .await;
     assert!(result.is_ok(), "got error: {:?}", result.err());
-    assert_eq!(result.unwrap().content, "Hi there!");
+    assert_eq!(result.unwrap().as_text(), "Hi there!");
 }
 
 #[tokio::test]

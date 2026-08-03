@@ -11,7 +11,7 @@ impl RunStrategy for EchoStrategy {
             .iter()
             .rev()
             .find(|m| matches!(m.role, MessageRole::User))
-            .map(|m| m.content.clone())
+            .map(|m| m.as_text())
             .unwrap_or_default();
         Ok(StrategyOutcome::Done(last))
     }
@@ -27,10 +27,7 @@ fn unwrap_done(outcome: StrategyOutcome) -> String {
 #[tokio::test]
 async fn run_strategy_echo_returns_last_user_message() {
     let strategy = EchoStrategy;
-    let messages = vec![Message {
-        role: MessageRole::User,
-        content: "hello world".to_string(),
-    }];
+    let messages = vec![Message::text(MessageRole::User, "hello world")];
     let result = strategy.run(messages).await.unwrap();
     assert_eq!(unwrap_done(result), "hello world");
 }
@@ -38,10 +35,7 @@ async fn run_strategy_echo_returns_last_user_message() {
 #[tokio::test]
 async fn run_strategy_is_object_safe() {
     let strategy: Box<dyn RunStrategy> = Box::new(EchoStrategy);
-    let messages = vec![Message {
-        role: MessageRole::User,
-        content: "test".to_string(),
-    }];
+    let messages = vec![Message::text(MessageRole::User, "test")];
     let result = strategy.run(messages).await.unwrap();
     assert_eq!(unwrap_done(result), "test");
 }

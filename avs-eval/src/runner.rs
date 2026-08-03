@@ -30,15 +30,6 @@ pub fn load_toml_cases<T: DeserializeOwned>(dir: &str) -> Vec<(String, T)> {
     cases
 }
 
-/// A parser regression case: raw ReAct-format LLM output text, and the
-/// expected parsed action, compared as a debug-string (avoids requiring
-/// `CycleAction` to implement `PartialEq`/`Deserialize` itself).
-#[derive(serde::Deserialize)]
-pub struct ParserCase {
-    pub input: String,
-    pub expected_debug: String,
-}
-
 /// A router regression case: a message, one target skill's id/description
 /// (used to build a minimal `Skill` candidate), a threshold, and the
 /// expected `Option<String>` match result (as a debug string).

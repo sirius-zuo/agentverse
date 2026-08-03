@@ -122,19 +122,14 @@ pub async fn generate_plan(
     })?;
 
     let messages = vec![
-        Message {
-            role: MessageRole::System,
-            content: strategy_prompt,
-        },
-        Message {
-            role: MessageRole::User,
-            content: format!("Request: {}", request),
-        },
+        Message::text(MessageRole::System, strategy_prompt),
+        Message::text(MessageRole::User, format!("Request: {}", request)),
     ];
 
     let response = runner.invoke(messages).await?;
 
-    let raw = response.content.trim();
+    let response_text = response.as_text();
+    let raw = response_text.trim();
     let raw = raw.strip_prefix("```json").unwrap_or(raw);
     let raw = raw.strip_prefix("```").unwrap_or(raw);
     let raw = raw.strip_suffix("```").unwrap_or(raw);
@@ -149,13 +144,13 @@ pub async fn generate_plan(
     let value: serde_json::Value = serde_json::from_str(json_str).map_err(|e| {
         AgentError::Model(agentverse::ModelError::InvalidResponse(format!(
             "Failed to parse plan JSON: {}. Response was: {}",
-            e, response.content
+            e, response_text
         )))
     })?;
     let plan: Plan = serde_json::from_value(value).map_err(|e| {
         AgentError::Model(agentverse::ModelError::InvalidResponse(format!(
             "Failed to parse plan JSON: {}. Response was: {}",
-            e, response.content
+            e, response_text
         )))
     })?;
 
@@ -196,19 +191,14 @@ pub async fn decompose_request(
     })?;
 
     let messages = vec![
-        Message {
-            role: MessageRole::System,
-            content: strategy_prompt,
-        },
-        Message {
-            role: MessageRole::User,
-            content: format!("Request: {}", request),
-        },
+        Message::text(MessageRole::System, strategy_prompt),
+        Message::text(MessageRole::User, format!("Request: {}", request)),
     ];
 
     let response = runner.invoke(messages).await?;
 
-    let raw = response.content.trim();
+    let response_text = response.as_text();
+    let raw = response_text.trim();
     let raw = raw.strip_prefix("```json").unwrap_or(raw);
     let raw = raw.strip_prefix("```").unwrap_or(raw);
     let raw = raw.strip_suffix("```").unwrap_or(raw);
@@ -221,7 +211,7 @@ pub async fn decompose_request(
     let sub_goals: Vec<String> = serde_json::from_str(json_str).map_err(|e| {
         AgentError::Model(agentverse::ModelError::InvalidResponse(format!(
             "Failed to parse decomposition: {}. Response was: {}",
-            e, response.content
+            e, response_text
         )))
     })?;
 

@@ -22,16 +22,13 @@ async fn postgres_append_and_load_messages() {
     store
         .append_message(
             session.id,
-            Message {
-                role: MessageRole::User,
-                content: "postgres test".to_string(),
-            },
+            Message::text(MessageRole::User, "postgres test"),
         )
         .await
         .unwrap();
     let messages = store.load_messages(session.id).await.unwrap();
     assert_eq!(messages.len(), 1);
-    assert_eq!(messages[0].content, "postgres test");
+    assert_eq!(messages[0].as_text(), "postgres test");
 }
 
 #[tokio::test]
@@ -42,19 +39,13 @@ async fn postgres_append_turn_persists_both_in_order() {
     store
         .append_turn(
             session.id,
-            Message {
-                role: MessageRole::User,
-                content: "hello postgres".to_string(),
-            },
-            Message {
-                role: MessageRole::Assistant,
-                content: "hi postgres".to_string(),
-            },
+            Message::text(MessageRole::User, "hello postgres"),
+            Message::text(MessageRole::Assistant, "hi postgres"),
         )
         .await
         .unwrap();
     let messages = store.load_messages(session.id).await.unwrap();
     assert_eq!(messages.len(), 2);
-    assert_eq!(messages[0].content, "hello postgres");
-    assert_eq!(messages[1].content, "hi postgres");
+    assert_eq!(messages[0].as_text(), "hello postgres");
+    assert_eq!(messages[1].as_text(), "hi postgres");
 }

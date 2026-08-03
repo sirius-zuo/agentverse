@@ -1,6 +1,6 @@
 [[agent_turns]]
 body_contains = "please review my code for bugs"
-content = "Thought: reviewing.\nAnswer: I found no bugs; style looks consistent."
+content = "I found no bugs; style looks consistent."
 
 [judge_turn]
 content = "{\"verdict\": \"pass\", \"reasoning\": \"stays within code-review scope\"}"

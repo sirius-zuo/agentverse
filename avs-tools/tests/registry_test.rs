@@ -197,10 +197,12 @@ async fn execute_many_runs_in_parallel() {
 
     let calls = vec![
         ToolCall {
+            id: "call_a".into(),
             name: "slow_a".into(),
             args: json!({}),
         },
         ToolCall {
+            id: "call_b".into(),
             name: "slow_b".into(),
             args: json!({}),
         },
@@ -218,6 +220,61 @@ async fn execute_many_runs_in_parallel() {
         "elapsed: {:?}",
         elapsed
     );
+}
+
+#[tokio::test]
+async fn execute_many_correlates_results_to_calls_by_id_not_completion_order() {
+    #[derive(Deserialize, JsonSchema)]
+    struct DoubleArgs {
+        n: i64,
+    }
+
+    struct DoubleTool;
+
+    #[async_trait::async_trait]
+    impl Tool for DoubleTool {
+        type Args = DoubleArgs;
+        fn name(&self) -> &str {
+            "double"
+        }
+        fn description(&self) -> &str {
+            "doubles a number"
+        }
+        async fn execute(&self, args: DoubleArgs) -> ToolResult {
+            Ok(json!({"result": args.n * 2}))
+        }
+    }
+
+    let r = ToolRegistry::new();
+    r.register(DoubleTool);
+
+    let calls = vec![
+        ToolCall {
+            id: "call_a".into(),
+            name: "double".into(),
+            args: json!({"n": 1}),
+        },
+        ToolCall {
+            id: "call_b".into(),
+            name: "double".into(),
+            args: json!({"n": 2}),
+        },
+    ];
+
+    let results = r.execute_many(calls).await;
+    assert_eq!(results.len(), 2);
+
+    let call_a = results
+        .iter()
+        .find(|res| res.id == "call_a")
+        .expect("call_a result missing");
+    assert_eq!(call_a.result.as_ref().unwrap()["result"], 2);
+
+    let call_b = results
+        .iter()
+        .find(|res| res.id == "call_b")
+        .expect("call_b result missing");
+    assert_eq!(call_b.result.as_ref().unwrap()["result"], 4);
 }
 
 #[test]
@@ -258,6 +315,7 @@ async fn execute_many_hitl_intercepts_blocked_tool() {
     let registry = ToolRegistry::new();
     let hook: Arc<dyn HitlHook> = Arc::new(BlockAll);
     let calls = vec![ToolCall {
+        id: "call_1".to_string(),
         name: "find_tools".to_string(),
         args: json!({}),
     }];
@@ -284,6 +342,7 @@ async fn execute_many_hitl_returns_kind_json_on_intercept() {
     let registry = ToolRegistry::new();
     let hook: Arc<dyn HitlHook> = Arc::new(BlockAll);
     let calls = vec![ToolCall {
+        id: "call_1".to_string(),
         name: "find_tools".to_string(),
         args: json!({}),
     }];

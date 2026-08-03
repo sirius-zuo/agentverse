@@ -6,8 +6,8 @@ use agentverse::{
     AgentError, ConnectionManager, LlmRunner, Message, MessageRole, ModelError, PromptRegistry,
     UsageStats,
 };
-use agentverse_react::parse::parse_response;
-use agentverse_react::{CycleAction, CycleSkeleton};
+use agentverse_react::cycle::CycleAction;
+use agentverse_react::CycleSkeleton;
 use agentverse_tools::ToolRegistry;
 use std::sync::Arc;
 use std::time::Instant;
@@ -150,10 +150,7 @@ fn resolve_model_name(override_: &ModelOverride) -> String {
 fn build_initial_messages(spec: &SubAgentSpec, ctx: &SubAgentContext) -> Vec<Message> {
     let mut msgs = Vec::new();
     if let Some(sys) = &spec.system_prompt {
-        msgs.push(Message {
-            role: MessageRole::System,
-            content: sys.clone(),
-        });
+        msgs.push(Message::text(MessageRole::System, sys.clone()));
     }
     let mut user_content = format!("Objective: {}", spec.objective);
     if !ctx.resources.is_empty() {
@@ -162,10 +159,7 @@ fn build_initial_messages(spec: &SubAgentSpec, ctx: &SubAgentContext) -> Vec<Mes
             user_content.push_str(&format!("\n### {}\n{}\n", r.label, r.content));
         }
     }
-    msgs.push(Message {
-        role: MessageRole::User,
-        content: user_content,
-    });
+    msgs.push(Message::text(MessageRole::User, user_content));
     msgs
 }
 
@@ -177,6 +171,7 @@ async fn run_cycle(
     let mut buf = skeleton.prepare_buffer(messages);
     let mut total_usage = UsageStats::default();
     let mut steps = 0usize;
+    let active_tool_names = skeleton.tools.tool_names();
 
     loop {
         let tokens_used = total_usage.input_tokens + total_usage.output_tokens;
@@ -191,82 +186,60 @@ async fn run_cycle(
         }
         steps += 1;
 
+        let definitions = skeleton
+            .tools
+            .tool_definitions_for(&active_tool_names)
+            .map_err(|e| {
+                SubAgentError::Llm(AgentError::Config(agentverse::ConfigError::Invalid(
+                    format!("invalid tool schema for active tools: {e}"),
+                )))
+            })?;
         // buf.clone() is O(n) in the message history. For realistic budgets
         // (≤20 steps) this is negligible; revisit if budgets grow large.
-        let response = skeleton
-            .runner
-            .invoke(buf.clone())
-            .await
-            .map_err(SubAgentError::Llm)?;
+        let response = if definitions.is_empty() {
+            skeleton.runner.invoke(buf.clone()).await
+        } else {
+            skeleton
+                .runner
+                .invoke_with_tools(buf.clone(), definitions)
+                .await
+        }
+        .map_err(SubAgentError::Llm)?;
 
         total_usage += response.usage;
         skeleton
-            .check_output_guardrail(&response.content)
+            .check_output_guardrail(&response.as_text())
             .map_err(SubAgentError::Llm)?;
 
         tracing::debug!(step = steps, "subagent step");
 
-        match parse_response(&response.content) {
+        match agentverse_react::cycle::action_from_response(&response) {
+            CycleAction::ToolCalls { calls } => {
+                buf.push(Message {
+                    role: MessageRole::Assistant,
+                    content: response.content.clone(),
+                });
+                let order: Vec<(String, String)> = calls
+                    .iter()
+                    .map(|c| (c.id.clone(), c.name.clone()))
+                    .collect();
+                let results = skeleton
+                    .execute_many(calls)
+                    .await
+                    .map_err(SubAgentError::Llm)?;
+                let results = agentverse_react::cycle::reconcile_and_order_results(results, &order);
+                tracing::debug!(count = results.len(), "subagent tool calls executed");
+                buf.push(Message {
+                    role: MessageRole::Tool,
+                    content: agentverse_react::cycle::results_to_tool_result_blocks(results),
+                });
+            }
             CycleAction::Done { answer } => {
                 tracing::info!(steps, "subagent completed");
                 return Ok(SubAgentResult {
                     answer,
                     usage: total_usage,
                     steps,
-                });
-            }
-            CycleAction::Continue { thought } => {
-                buf.push(Message {
-                    role: MessageRole::Assistant,
-                    content: format!("Thought: {thought}"),
-                });
-                buf.push(Message {
-                    role: MessageRole::User,
-                    content: "Either call a tool or give your final answer (Answer: ...).".into(),
-                });
-            }
-            CycleAction::ToolCall { tool_name, args } => {
-                buf.push(Message {
-                    role: MessageRole::Assistant,
-                    content: response.content.clone(),
-                });
-                let result = skeleton
-                    .execute_tool(&tool_name, args)
-                    .await
-                    .map_err(SubAgentError::Llm)?;
-                tracing::debug!(tool = %tool_name, "subagent tool call");
-                buf.push(Message {
-                    role: MessageRole::User,
-                    content: format!("Tool: {tool_name}\nResult: {result}"),
-                });
-            }
-            CycleAction::ToolCalls { calls } => {
-                buf.push(Message {
-                    role: MessageRole::Assistant,
-                    content: response.content.clone(),
-                });
-                let results = skeleton
-                    .execute_many(calls)
-                    .await
-                    .map_err(SubAgentError::Llm)?;
-                // Individual tool errors are soft-degraded into observation strings
-                // rather than aborting the cycle. This asymmetry vs ToolCall (which
-                // aborts) is intentional: parallel tool calls shouldn't fail the
-                // entire step if only one tool errors; the LLM can adapt.
-                let obs = results
-                    .iter()
-                    .map(|r| {
-                        let v = match &r.result {
-                            Ok(v) => v.to_string(),
-                            Err(e) => format!("Error: {e}"),
-                        };
-                        format!("Tool: {}\nResult: {v}", r.name)
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n\n");
-                buf.push(Message {
-                    role: MessageRole::User,
-                    content: obs,
                 });
             }
             CycleAction::Error { message } => {

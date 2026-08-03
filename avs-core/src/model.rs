@@ -1,4 +1,5 @@
 use crate::error::ModelError;
+use crate::memory::ContentBlock;
 
 mod anthropic_provider;
 mod connection_manager;
@@ -51,8 +52,15 @@ pub struct GenerateRequest {
 /// Response from a model provider, including usage statistics.
 #[derive(Debug, Clone)]
 pub struct GenerateResponse {
-    pub content: String,
+    pub content: Vec<ContentBlock>,
     pub usage: UsageStats,
+}
+
+impl GenerateResponse {
+    /// Flatten content to plain text — see `Message::as_text`.
+    pub fn as_text(&self) -> String {
+        crate::memory::content_as_text(&self.content)
+    }
 }
 
 /// Final output of a strategy loop: the answer plus accumulated token usage.
@@ -126,5 +134,16 @@ mod tests {
         };
         assert_eq!(r.answer, "done");
         assert_eq!(r.total_usage.cache_read_tokens, 40);
+    }
+
+    #[test]
+    fn generate_response_as_text_flattens_content() {
+        let resp = GenerateResponse {
+            content: vec![crate::memory::ContentBlock::Text {
+                text: "42".to_string(),
+            }],
+            usage: UsageStats::default(),
+        };
+        assert_eq!(resp.as_text(), "42");
     }
 }

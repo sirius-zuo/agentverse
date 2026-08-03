@@ -1,11 +1,11 @@
 [[example]]
 input = "What is 2+2?"
-output = "Thought: I can calculate this.\nAction: calculator\nAction Input: {\"operation\": \"add\", \"a\": 2, \"b\": 2}\nObservation: 4\nThought: I have the result.\nAnswer: 2 + 2 is 4."
+output = "I'll use the calculator tool to compute this. 2 + 2 is 4."
 
 [[example]]
 input = "What time is it?"
-output = "Thought: I can get the current time.\nAction: datetime\nAction Input: {}\nObservation: 2026-01-01 12:00:00\nThought: I have the time.\nAnswer: The current time is 2026-01-01 12:00:00 UTC."
+output = "I'll check the current time. The current time is 2026-01-01 12:00:00 UTC."
 
 [[example]]
 input = "What can you do?"
-output = "Thought: The user wants to know my capabilities. I can answer this directly without a tool.\nAnswer: I can help with math using the Calculator tool, and tell the current date and time using the DateTime tool. Just ask!"
+output = "I can help with math using the Calculator tool, and tell the current date and time using the DateTime tool. Just ask!"

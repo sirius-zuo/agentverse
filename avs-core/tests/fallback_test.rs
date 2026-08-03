@@ -32,10 +32,7 @@ async fn fallback_provider_is_tried_when_primary_circuit_open() {
 
     let req = GenerateRequest {
         system: None,
-        messages: vec![Message {
-            role: MessageRole::User,
-            content: "test".into(),
-        }],
+        messages: vec![Message::text(MessageRole::User, "test")],
         tools: None,
         ..Default::default()
     };
@@ -45,5 +42,5 @@ async fn fallback_provider_is_tried_when_primary_circuit_open() {
 
     // Second call: primary circuit is open → circuit-open fallback path kicks in
     let resp = cm.generate(req).await.expect("fallback should succeed");
-    assert_eq!(resp.content, "fallback reply");
+    assert_eq!(resp.as_text(), "fallback reply");
 }

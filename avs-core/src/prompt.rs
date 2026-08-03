@@ -18,41 +18,19 @@ struct ExampleFile {
 /// Default embedded templates shipped with the library.
 const DEFAULT_SYSTEM_TEMPLATE: &str = "You are a helpful AI assistant.\n\
      You are concise and accurate. Never claim to have done something you haven't.\n\
-     If you don't know something, say so.\
-     {% if tools %}\n\n\
-     Available tools:\n\
-     {{ tools }}\n\n\
-     Always respond in this exact format:\n\
-     Thought: <your reasoning>\n\
-     Action: <tool_name>\n\
-     Action Input: <json args>\n\n\
-     When you have the final answer:\n\
-     Thought: <your reasoning>\n\
-     Answer: <final answer>\
-     {% else %}\n\n\
-     Always end your response with:\n\
-     Answer: <your answer>\
-     {% endif %}";
+     If you don't know something, say so.";
 
-const DEFAULT_REACT_TEMPLATE: &str = "You are using the ReAct pattern: Think → Act → Observe.\n\n\
-     Current conversation:\n\
-     {{ conversation }}\n\n\
-     Available tools:\n\
-     {{ tools }}\n\n\
+const DEFAULT_REACT_TEMPLATE: &str = "You solve tasks by reasoning step by step. When you need \
+     information or need to take an action, call the appropriate tool directly — tool calls are \
+     handled natively, you never need to describe them as text.\n\n\
      {% if examples %}\n\
-     Here are some examples:\n\
+     Examples:\n\
      {% for example in examples %}\n\
      User: {{ example.input }}\n\
      Assistant: {{ example.output }}\n\
      {% endfor %}\n\
      {% endif %}\n\n\
-     Respond in this format:\n\
-     Thought: [your reasoning]\n\
-     Action: [tool name]\n\
-     Action Input: [tool arguments as JSON]\n\n\
-     Or if you have the final answer:\n\
-     Thought: [your reasoning]\n\
-     Answer: [final answer]";
+     When you have a complete answer, respond with it directly.";
 
 const DEFAULT_PLAN_AND_EXECUTE_TEMPLATE: &str =
     "You are a planning assistant. Generate a step-by-step plan.\n\n\

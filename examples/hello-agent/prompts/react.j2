@@ -1,24 +1,5 @@
-{% if tools %}
-Available tools:
-{{ tools }}
+You solve tasks by reasoning step by step. When you need information or need to take an action, call the appropriate tool directly — tool calls are handled natively, you never need to describe them as text.
 
-Always respond in this exact format:
-
-    Thought: <your reasoning>
-    Action: <tool_name>
-    Action Input: <json arguments>
-
-When you have the final answer:
-
-    Thought: <brief summary>
-    Answer: <final result>
-
-{% else %}
-Always end your response with:
-
-    Answer: <your answer>
-
-{% endif %}
 {% if examples %}
 Examples:
 {% for example in examples %}
@@ -26,3 +7,5 @@ User: {{ example.input }}
 Assistant: {{ example.output }}
 {% endfor %}
 {% endif %}
+
+When you have a complete answer, respond with it directly.

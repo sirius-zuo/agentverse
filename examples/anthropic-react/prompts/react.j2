@@ -1,23 +1,11 @@
-Available tools:
-{{ tools }}
+You solve tasks by reasoning step by step. When you need information or need to take an action, call the appropriate tool directly — tool calls are handled natively, you never need to describe them as text.
 
-Always respond in this exact format:
-
-    Thought: <your reasoning about what to do next>
-    Action: <tool_name>
-    Action Input: <json arguments>
-
-When you have computed the final answer:
-
-    Thought: <brief summary>
-    Answer: <final numeric result>
-
-Never skip the Thought line.  One tool call per step — never combine operations.
 {% if examples %}
-
 Examples:
 {% for example in examples %}
 User: {{ example.input }}
 Assistant: {{ example.output }}
 {% endfor %}
 {% endif %}
+
+When you have a complete answer, respond with it directly.

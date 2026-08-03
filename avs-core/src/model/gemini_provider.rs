@@ -73,7 +73,28 @@ impl ModelProvider for GeminiProvider {
         _model: &str,
         request: GenerateRequest,
     ) -> Result<serde_json::Value, ModelError> {
-        use crate::memory::MessageRole;
+        use crate::memory::{ContentBlock, MessageRole};
+
+        if request.tools.is_some() {
+            return Err(ModelError::InvalidResponse(
+                "GeminiProvider does not support native tool-calling (request.tools) — \
+                 Gemini is out of scope for this project's strict tool-calling support"
+                    .to_string(),
+            ));
+        }
+
+        for m in &request.messages {
+            if m.content
+                .iter()
+                .any(|b| !matches!(b, ContentBlock::Text { .. }))
+            {
+                return Err(ModelError::InvalidResponse(
+                    "GeminiProvider does not support native tool-calling content blocks \
+                     (ToolUse/ToolResult) — only Text blocks are supported"
+                        .to_string(),
+                ));
+            }
+        }
 
         let system_instruction = request.system.map(|s| GeminiSystemInstruction {
             parts: vec![GeminiPart::Text { text: s }],
@@ -83,6 +104,7 @@ impl ModelProvider for GeminiProvider {
             .messages
             .into_iter()
             .filter_map(|m| {
+                let text = m.as_text();
                 let role = match m.role {
                     MessageRole::User => "user",
                     MessageRole::Assistant => "model",
@@ -91,7 +113,7 @@ impl ModelProvider for GeminiProvider {
                 };
                 Some(GeminiContent {
                     role: role.to_string(),
-                    parts: vec![GeminiPart::Text { text: m.content }],
+                    parts: vec![GeminiPart::Text { text }],
                 })
             })
             .collect();
@@ -134,7 +156,7 @@ impl ModelProvider for GeminiProvider {
             .ok_or_else(|| ModelError::InvalidResponse("No content in response".to_string()))?;
 
         Ok(GenerateResponse {
-            content,
+            content: vec![crate::memory::ContentBlock::Text { text: content }],
             usage: UsageStats::default(), // Gemini context caching is a separate API
         })
     }
@@ -146,5 +168,83 @@ impl ModelProvider for GeminiProvider {
 
     fn endpoint_path(&self, model: &str) -> String {
         format!("/v1beta/models/{}:generateContent", model)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memory::{ContentBlock, Message, MessageRole};
+
+    #[test]
+    fn build_request_rejects_tool_use_block() {
+        let provider = GeminiProvider::new();
+        let request = GenerateRequest {
+            messages: vec![Message {
+                role: MessageRole::Assistant,
+                content: vec![ContentBlock::ToolUse {
+                    id: "call_1".to_string(),
+                    name: "calculate".to_string(),
+                    input: serde_json::json!({}),
+                }],
+            }],
+            ..Default::default()
+        };
+
+        let err = provider.build_request("gemini-pro", request).unwrap_err();
+        assert!(matches!(err, ModelError::InvalidResponse(_)));
+    }
+
+    #[test]
+    fn build_request_rejects_tool_result_block() {
+        let provider = GeminiProvider::new();
+        let request = GenerateRequest {
+            messages: vec![Message {
+                role: MessageRole::Tool,
+                content: vec![ContentBlock::ToolResult {
+                    tool_use_id: "call_1".to_string(),
+                    content: "42".to_string(),
+                    is_error: false,
+                }],
+            }],
+            ..Default::default()
+        };
+
+        let err = provider.build_request("gemini-pro", request).unwrap_err();
+        assert!(matches!(err, ModelError::InvalidResponse(_)));
+    }
+
+    #[test]
+    fn build_request_rejects_tools_even_with_text_only_messages() {
+        let provider = GeminiProvider::new();
+        let request = GenerateRequest {
+            messages: vec![Message::text(MessageRole::User, "hi")],
+            tools: Some(vec![crate::model::ToolDefinition {
+                name: "search".to_string(),
+                description: "search the web".to_string(),
+                parameters: serde_json::json!({}),
+            }]),
+            ..Default::default()
+        };
+
+        let err = provider.build_request("gemini-pro", request).unwrap_err();
+        assert!(matches!(err, ModelError::InvalidResponse(_)));
+    }
+
+    #[test]
+    fn build_request_accepts_text_only_messages() {
+        let provider = GeminiProvider::new();
+        let request = GenerateRequest {
+            system: Some("Be helpful.".to_string()),
+            messages: vec![Message::text(MessageRole::User, "hi")],
+            ..Default::default()
+        };
+
+        let body = provider.build_request("gemini-pro", request).unwrap();
+        assert_eq!(body["contents"][0]["parts"][0]["text"], "hi");
+        assert_eq!(
+            body["system_instruction"]["parts"][0]["text"],
+            "Be helpful."
+        );
     }
 }
