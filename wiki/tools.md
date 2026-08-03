@@ -8,38 +8,40 @@ search, shell execution, and meta-discovery over the tool set itself — is
 implemented and exposed through one registry. It turns `avs-core`'s
 `Tool`/`ErasedTool` trait pair into a concrete runtime: `ToolRegistry` is the
 single place a `Tool` implementation becomes callable by name and describable
-to an LLM as a JSON schema or native `ToolDefinition`, with async dispatch
-(single and parallel), BM25
-keyword search for on-demand discovery via `FindToolsTool`, per-invocation
-schema filtering via `ActiveToolSet`, and (with `avs-hitl`) approval
-interception before a risky call executes. It sits in Layer 2 alongside
-`avs-guardrails` and `avs-mcp`, so every reasoning strategy above it shares
-one tool-calling contract regardless of which loop drives it.
+to an LLM as a JSON schema or a strict-mode native `ToolDefinition`, with
+async dispatch (single and parallel), BM25 keyword search for on-demand
+discovery via `FindToolsTool`, and (with `avs-hitl`) approval interception
+before a risky call executes. It sits in Layer 2 alongside `avs-guardrails`
+and `avs-mcp`, so every reasoning strategy above it shares one tool-calling
+contract regardless of which loop drives it.
 
 ## Position in the System
 
 `avs-tools` consumes [Core Runtime](core-runtime.md) (`avs-core`) for the
 `Tool`/`ErasedTool` trait pair, `ToolError`/`ToolResult`,
-`ToolCall`/`ToolCallResult`/`ToolHandle`, and the `metrics` facade it records
-tool-call outcomes through, and [HITL](hitl.md) (`avs-hitl`, via
-`agentverse::hitl::HitlHook`) for the approval hook `execute_many_hitl` checks
-before dispatch. It depends on nothing else in the workspace.
+`ToolCall`/`ToolCallResult`/`ToolHandle`/`ToolDefinition`, and the `metrics`
+facade it records tool-call outcomes through, and [HITL](hitl.md) (`avs-hitl`,
+via `agentverse::hitl::HitlHook`) for the approval hook `execute_many_hitl`
+checks before dispatch. It depends on nothing else in the workspace.
 
 It is consumed by: [Strategy](strategy.md) (`avs-react`'s `CycleSkeleton`/
-`ReActStrategy` and `avs-plan` hold an `Arc<ToolRegistry>` and construct an
-`ActiveToolSet` per invocation to scope which schemas reach the prompt);
-[SubAgent](subagent.md) (`SubAgentExecutor` calls `ToolRegistry::filter_by_names`
-to build a scoped registry per run, and registers `SubAgentTool` under the
-`SPAWN_SUBAGENT_TOOL_NAME` constant this crate defines); [MCP](mcp.md)
-(`avs-mcp`'s `McpToolAdapter` implements `ErasedTool` directly and registers
-via `register_erased`, and `McpServer` serves a registry's `schema()`/
-`execute()` back out over the MCP protocol); and [Agent](agent.md)
-(`avs-agent`, the top-level holder of the `Arc<ToolRegistry>` built at
-`AgentBuilder` time). [Skill](skill.md) documents the other half of
-`ActiveToolSet`'s story — how a `Skill`'s `tools: Vec<String>` field becomes
-the `active_tool_names` slice `avs-agent`'s `invoke` passes into
-`RunStrategy::run_with_active_tools`; this page covers only the type itself
-and how it filters `schema()`.
+`ReActStrategy` and `avs-plan` each hold an `Arc<ToolRegistry>`; ReAct resolves
+`active_tool_names` per invocation through `tool_definitions_for` for the
+provider request, while `PlanStrategy`/`HierarchicalStrategy` call
+`tool_summaries_for` for a text hint — see Runtime Flows); [Agent](agent.md)
+(`avs-agent`, top-level holder of the `Arc<ToolRegistry>` built at
+`AgentBuilder` time, and caller of `restricted_to_names` to scope a routed
+strategy's registry to one invocation's `active_tool_names`);
+[SubAgent](subagent.md) (`SubAgentExecutor` calls `filter_by_names` to build
+a scoped registry per run, and `register_if_absent` to register
+`SubAgentTool` under `SPAWN_SUBAGENT_TOOL_NAME`, exactly once even under
+concurrent construction); and [MCP](mcp.md) (`avs-mcp`'s `McpToolAdapter`
+implements `ErasedTool` directly and registers via `register_erased`, and
+`McpServer` serves a registry's `schema()`/`execute()` back out over the MCP
+protocol). [Skill](skill.md) documents how a `Skill`'s `tools: Vec<String>`
+field becomes the `active_tool_names` slice `avs-agent`'s `invoke` passes
+into `RunStrategy::run_with_active_tools`; this page covers only what
+`avs-tools` does with that slice once received.
 
 ## Architecture
 
@@ -64,15 +66,17 @@ classDiagram
         +register(tool)
         +register_with_options(tool, ToolOptions)
         +register_erased(Arc~dyn ErasedTool~, ToolOptions)
+        +register_if_absent(tool) bool
         +execute(name, args) ToolResult
         +execute_many(Vec~ToolCall~) Vec~ToolCallResult~
         +execute_many_hitl(calls, hook) Result
         +spawn_tool(ToolCall) ToolHandle
         +schema() Vec~Value~
-        +tool_definitions_for(names) Vec~ToolDefinition~
+        +tool_definitions_for(names) Result~Vec~ToolDefinition~, StrictSchemaError~
         +search(query, limit) Vec~ToolInfo~
         +filter_category(category) Arc~ToolRegistry~
         +filter_by_names(names) Arc~ToolRegistry~
+        +restricted_to_names(names) Arc~ToolRegistry~
         +tool_summaries() String
         +tool_summaries_for(names) String
     }
@@ -84,6 +88,11 @@ classDiagram
         <<enum>>
         Inline
         Background
+    }
+    class StrictSchemaError {
+        <<enum>>
+        OpenDictionary
+        AmbiguousOptionalRef
     }
     class ActiveToolSet {
         -names HashSet~String~
@@ -124,6 +133,7 @@ classDiagram
     ToolRegistry o-- ToolOptions
     ToolRegistry ..> BM25Index
     ToolRegistry ..> ErasedTool : Arc~dyn~
+    ToolRegistry ..> StrictSchemaError : tool_definitions_for()
     ActiveToolSet ..> ToolRegistry : schemas()
     FindToolsTool --> ToolRegistry : search()
 ```
@@ -145,35 +155,44 @@ already registered against that same `Arc`, so `find_tools` is present in
 every registry without caller action. `register`/`register_with_options`
 accept any `T: Tool`, erase it, and index `"{name} {description}"` into the
 BM25 index; `register_erased` takes a pre-erased `Arc<dyn ErasedTool>` for
-non-`Tool` implementors such as `avs-mcp`'s `McpToolAdapter`. `ToolOptions`
+non-`Tool` implementors such as `avs-mcp`'s `McpToolAdapter`; `register_if_absent`
+does the same insert as a single map-write-lock check-and-insert, returning
+whether it actually inserted — `avs-subagent`'s `SubAgentExecutor` uses it so
+the root `SubAgentTool` can't be double-registered by a race. `ToolOptions`
 carries an optional `category` string (consumed only by `filter_category`)
 and an `ExecutionMode` (`Inline` or `Background`) attached at registration
 time, not on the tool implementation — the same tool type can be registered
 inline in one registry and background in another. `execute` looks up one
 tool and calls `execute_raw`; `execute_many` fans a `Vec<ToolCall>` out over
-a `tokio::task::JoinSet` and collects `ToolCallResult`s in completion order;
+a `tokio::task::JoinSet` and collects `ToolCallResult`s in completion order,
+each result carrying the originating call's `id` — the provider-issued
+identifier `ToolCall`/`ToolCallResult` gained in `avs-core::tool` to
+correlate a result back to its `ToolUse` block (see [Core Runtime](core-runtime.md));
 `execute_many_hitl` layers a `HitlHook::check_tool` pre-check in front of
 `execute_many` (see [HITL](hitl.md)) and returns `Err(HitlInterruptResult)`
 before executing anything if any call in the batch needs approval.
-`filter_category` and `filter_by_names` both build a fresh `ToolRegistry`
-sharing the same `Arc<dyn ErasedTool>` instances — `filter_by_names`
-additionally always excludes `SPAWN_SUBAGENT_TOOL_NAME`, which is how
-`avs-subagent` guarantees a SubAgent can never spawn a nested SubAgent.
-`tool_definitions_for(names)` walks the requested names in caller-provided
-order, ignores unknown names, and structurally maps each selected
-`ErasedTool::schema()` object's `name`, `description`, and `input_schema` into
-an `avs-core` `ToolDefinition`. ReAct's normal and HITL request paths pass
-these definitions to `LlmRunner::invoke_with_tools` when at least one active
-name resolves. `tool_summaries_for` remains available to text-only callers,
-and ReAct retains its existing `build_tools_str_active` prose fallback and
-text response parser; native tool-call response parsing is deferred.
+`filter_category`, `filter_by_names`, and `restricted_to_names` all build a
+fresh `ToolRegistry` sharing the same `Arc<dyn ErasedTool>` instances through
+a shared private `copy_named_tools` helper; `filter_by_names` always excludes
+`SPAWN_SUBAGENT_TOOL_NAME` (how `avs-subagent` guarantees a SubAgent can never
+spawn a nested SubAgent), while `restricted_to_names` — `avs-agent`'s tool
+for scoping a routed strategy's registry to exactly one invocation's active
+tool set — does not. `tool_definitions_for(names)` walks the requested names
+in caller-provided order, ignores unknown names, and for each selected tool
+runs `ErasedTool::schema()["input_schema"]` through
+`strict_schema::to_strict_schema` before mapping the result into an
+`avs-core` `ToolDefinition`; it returns `Result<Vec<ToolDefinition>,
+StrictSchemaError>` rather than skipping an unstrictifiable tool, "since
+silently dropping a tool from the list offered to the model is its own kind
+of silent failure" (doc comment). `avs-react`'s `ReActStrategy` maps an `Err`
+here to `AgentError::Config(ConfigError::Invalid(..))` (see Key Decisions).
 
 `ActiveToolSet` (`active.rs`) is a plain `HashSet<String>` wrapper independent
 of `ToolRegistry`'s own storage: `schemas(&registry)` calls
-`registry.schema()` (every registered tool's schema) and filters it down to
-names in the set. `ToolRegistry::execute`/`execute_many` do not consult
-`ActiveToolSet` at all — it only controls what the LLM *sees* in its next
-prompt, not what it is allowed to call.
+`registry.schema()` and filters it to names in the set. **It is now
+orphaned** — PR #35 moved this prompt-shaping job to `tool_definitions_for`/
+`tool_summaries_for` (below); see Implementation Notes for the verification
+and PR body wording.
 
 `BM25Index` (`search.rs`) is a from-scratch BM25 implementation (`k1=1.5`,
 `b=0.75`) over tokenized `"{name} {description}"` text, with no external
@@ -189,10 +208,11 @@ to reject an empty command and check the first token against a
 caller-supplied `blocked` list. The other five built-ins —
 `Calculator` (`calculator.rs`), `DateTimeTool` (`datetime.rs`), `FileSearch`
 (`file_search.rs`, glob-based), `HttpClient` (`http_client.rs`, scheme-checked
-async reqwest), and `WebSearch` (`web_search.rs`, DuckDuckGo HTML scrape plus
-page-text fetch via `scraper`) — are each a single `struct` plus a
-`#[derive(Deserialize, JsonSchema)] Args` struct, no shared base type beyond
-`Tool` itself.
+async reqwest; its `headers` argument is `Vec<HeaderPair>`, not a `HashMap`
+— see Key Decisions), and `WebSearch` (`web_search.rs`, DuckDuckGo HTML
+scrape plus page-text fetch via `scraper`) — are each a single `struct` plus
+a `#[derive(Deserialize, JsonSchema)] Args` struct, no shared base type
+beyond `Tool` itself.
 
 ## Runtime Flows
 
@@ -210,25 +230,29 @@ page-text fetch via `scraper`) — are each a single `struct` plus a
    a batch, dispatched concurrently through a `JoinSet` rather than routing
    through `execute` at all.
 
-**`ActiveToolSet` filtering per invocation:**
-1. A strategy builds an `ActiveToolSet` fresh for each call —
-   `ActiveToolSet::all(&registry)` for the full set, or `default()` plus
-   `activate(&active_tool_names)` for a name-restricted set (this is how
-   `avs-react`'s `run_with_active_tools` turns the `Vec<String>` `avs-agent`
-   passes in — ultimately a skill's `tools` field, see [Skill](skill.md) —
-   into a schema filter).
-2. `ActiveToolSet::schemas(&registry)` computes the registry's full
-   `schema()` list and filters it to names present in the set; only those
-   schemas are rendered into the text prompt. ReAct also calls
-   `tool_definitions_for(active_tool_names)` for the provider request.
-3. When at least one requested name resolves, ReAct sends the definitions via
-   `LlmRunner::invoke_with_tools`. An empty or all-unknown set uses
-   `LlmRunner::invoke`, so `GenerateRequest.tools` remains `None`.
-4. This is a prompt-shaping filter only: `ToolRegistry::execute`/
-   `execute_many` accept any registered tool name regardless of whether it is
-   in the caller's `ActiveToolSet`. Restricting what the LLM can actually
-   *do* — as opposed to what it is shown — is `filter_by_names`'s job
-   (building a smaller registry), not `ActiveToolSet`'s.
+**Native tool-definition resolution per invocation** (replaces the pre-PR-#35
+`ActiveToolSet` filtering flow that occupied this slot — `ActiveToolSet` is
+now orphaned, see Implementation Notes):
+1. `avs-react`'s `ReActStrategy::invoke_with_active_tools` calls
+   `ToolRegistry::tool_definitions_for(active_tool_names)` fresh on every
+   iteration — the names come from `avs-agent`'s `invoke`, ultimately a
+   skill's `tools` field (see [Skill](skill.md)).
+2. For each requested name that resolves, `tool_definitions_for` runs its
+   `input_schema` through `strict_schema::to_strict_schema`, which forces
+   `additionalProperties: false` and a complete `required` list onto every
+   object node, rejecting the schema with `StrictSchemaError::OpenDictionary`
+   or `AmbiguousOptionalRef` rather than guessing (see Key Decisions).
+3. On `Ok`, ReAct sends the definitions via `LlmRunner::invoke_with_tools`
+   when non-empty, or `LlmRunner::invoke` when empty — preserving
+   `GenerateRequest.tools: None` over `Some([])`. On `Err`, `ReActStrategy`
+   maps it to `AgentError::Config(ConfigError::Invalid(..))`.
+4. `PlanStrategy`/`HierarchicalStrategy` never call `tool_definitions_for`;
+   they call `tool_summaries_for(active_tool_names)` for a text hint instead
+   (see [Strategy](strategy.md)) — strict-mode native definitions are a
+   ReAct-only path today. Either way, `ToolRegistry::execute`/`execute_many`
+   accept any registered tool name regardless of what was offered to the
+   model: restricting what is *shown* is separate from restricting what can
+   be *called* (`filter_by_names`/`restricted_to_names`).
 
 **`find_tools` progressive discovery:**
 1. `ToolRegistry::new()` registers `FindToolsTool` against the registry it
@@ -240,14 +264,49 @@ page-text fetch via `scraper`) — are each a single `struct` plus a
    `register` call.
 3. Results come back as `ToolInfo` (`name`, `description`, `score`) in the
    tool's `ToolResult` — the LLM reads them from its next observation and can
-   call a newly-learned tool name by name in a subsequent turn.
-   `find_tools`'s results do not automatically add anything to the caller's
-   `ActiveToolSet`; execution succeeds regardless, since `execute` never
-   consults it.
+   call a newly-learned tool name by name in a subsequent turn. `find_tools`'s
+   results are not automatically folded into any active-tool-name list a
+   strategy is using; execution succeeds regardless, since `execute` never
+   checks what was offered to the model in the first place.
 
 ## Key Decisions
 
 Newest first.
+
+### Tool schemas are strictified into a fail-closed native format; open dictionaries and ambiguous optional refs are rejected, not guessed
+- **Decision** — `strict_schema::to_strict_schema` recursively transforms a
+  `schemars`-generated JSON Schema into the strict dialect both Anthropic and
+  OpenAI-compatible native tool-calling require — `additionalProperties:
+  false` and a complete `required` list on every object node, including
+  nodes reachable only via `definitions` or a `oneOf`/`anyOf`/`allOf`
+  combinator — returning `StrictSchemaError` rather than a best-effort schema
+  when a shape can't be made strict without changing its meaning:
+  `OpenDictionary` for an arbitrary-key object, since "forcing
+  `additionalProperties: false` onto it would collapse it to one that can
+  only ever produce `{}`"; `AmbiguousOptionalRef` for an optional bare-`$ref`/
+  `allOf`-wrapped field with no null signal, since `schemars` produces "this
+  identical shape" for a genuine `Option<T>` and a non-nullable
+  `#[serde(default)]` field alike, so "the two are indistinguishable from the
+  schema alone" and it's "rejected rather than guessed" (module doc comment).
+- **Context** — PR #35's root cause: the old free-text tool-listing renderer
+  "only rendered one level of a tool's `input_schema.properties` and never
+  dereferenced `$ref`/`definitions`, so any tool with a nested-object
+  parameter... rendered a **blank** parameter description" that the model
+  then guessed at — the direct cause of the `business-report` example's
+  crash. Native tool-calling sends the schema itself, but every provider's
+  strict mode additionally requires the closed-object shape this produces.
+- **Alternatives rejected** — guessing nullability for an ambiguous bare-`$ref`
+  field instead of rejecting it (per the doc comment quoted above); a
+  fallback to the old free-text rendering for an unstrictifiable schema
+  (PR #35: native tool-calling is "a hard requirement, no fallback").
+- **Consequences** — `http_client`'s `headers` argument was redesigned from
+  `HashMap<String, String>` to `Vec<HeaderPair>` (commit `69111ad`) because an
+  arbitrary-key map is exactly the `OpenDictionary` shape this rejects; any
+  future dictionary-shaped tool argument needs the same redesign.
+  `tool_definitions_for` is fallible as a direct result (see Architecture) —
+  an unstrictifiable `Args` type surfaces as a `StrictSchemaError` on first
+  request, not a schema silently rendered wrong.
+- **Ref** — 2026-07-28, PR #35 (Phase 2), commit `5adb1de`.
 
 ### `ToolRegistry` instrumented at three sites, not one, after discovering `execute_many` bypasses `execute`
 - **Decision** — `ToolRegistry::execute`, `execute_many`, and the HITL
@@ -357,24 +416,37 @@ Newest first.
 - `filter_category` has no call site outside `avs-tools/tests/` — examples
   pass a `category` into `ToolOptions`, but nothing in `avs-agent`,
   `avs-react`, or `avs-plan` calls `filter_category` to act on it.
-  `filter_by_names` (used by `avs-subagent`) is the filtering path actually
-  exercised in production code.
+  `filter_by_names` (used by `avs-subagent`) and `restricted_to_names` (used
+  by `avs-agent` for routed-strategy construction) are the filtering paths
+  actually exercised in production code.
 - `ExecutionMode::Background` and `ToolRegistry::spawn_tool`/`ToolHandle`
   exist as a defined-but-unused fire-and-forget interface — the tools
   design spec (untracked) describes this as "defined now, implemented
   later"; no strategy in the workspace currently dispatches through
   `spawn_tool` or checks `ExecutionMode` before calling `execute`/
   `execute_many`.
+- **`ActiveToolSet` (`active.rs`) is orphaned dead code.** PR #35 moved its
+  prompt-shaping job to `tool_definitions_for`/`tool_summaries_for`; a
+  workspace grep for `ActiveToolSet`/`.schemas(` finds no caller outside this
+  crate's own `lib.rs` re-export and a doc comment in `avs-skill/src/types.rs`.
+  PR #35's "Known follow-ups": "left in place, not deleted, since removing
+  public API surface was out of scope." (`avs-react`'s
+  `CycleSkeleton::execute_tool` is orphaned for the same reason — anchored on
+  [Strategy](strategy.md), not here.)
 - `tool_summaries`/`tool_summaries_for` build a required-args hint string by
   reading `schema()["input_schema"]["properties"]`/`["required"]` directly
-  rather than through a typed schema model — this is the format
-  `avs-react`'s non-templated prompt path renders into the system prompt
-  when no `react` Jinja template is configured.
+  rather than through a typed schema model. Since PR #35, this is
+  `avs-plan`'s format only (`PlanStrategy`/`HierarchicalStrategy`'s
+  per-active-tool-set prompts, see [Strategy](strategy.md)) — `avs-react`'s
+  ReAct loop no longer renders a text tool summary at all; it sends
+  `tool_definitions_for`'s native, strict-mode definitions instead.
+
 ## Source Anchors
 
 - `avs-tools/src/lib.rs`
 - `avs-tools/src/registry.rs`
 - `avs-tools/src/active.rs`
+- `avs-tools/src/strict_schema.rs`
 - `avs-tools/src/search.rs`
 - `avs-tools/src/find_tools.rs`
 - `avs-tools/src/shell.rs`
