@@ -27,3 +27,4 @@ target/
 # Runtime data
 *.db
 data/
+.generate-wiki/
