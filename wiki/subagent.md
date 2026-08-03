@@ -18,11 +18,14 @@ into the parent's context or its `RunStrategy`.
 
 `avs-subagent` consumes [Core Runtime](core-runtime.md) (`avs-core`, for
 `ConnectionManager`, `LlmRunner`, `PromptRegistry`, `Message`, `UsageStats`,
-`AgentError`), [Tools](tools.md) (`avs-tools`, for `ToolRegistry` and the
-`SPAWN_SUBAGENT_TOOL_NAME` constant it registers under), and
+`AgentError`), [Tools](tools.md) (`avs-tools`, for `ToolRegistry`, the
+`SPAWN_SUBAGENT_TOOL_NAME` constant it registers under, and
+`tool_definitions_for`/its strict-schema adapter), and
 [Strategy](strategy.md)'s ReAct building blocks (`avs-react`'s
-`CycleSkeleton` and `parse_response`/`CycleAction`) to drive its own inner
-loop. It depends on nothing from `avs-skill` or `avs-agent`.
+`CycleSkeleton` plus the same `action_from_response`/
+`reconcile_and_order_results`/`results_to_tool_result_blocks` trio that page
+documents for `avs-react`'s own loop) to drive its own inner loop. It
+depends on nothing from `avs-skill` or `avs-agent`.
 
 `avs-agent` carries a real, non-dev `Cargo.toml` dependency on
 `agentverse-subagent` and exposes a high-level integration point:
@@ -166,13 +169,23 @@ own `Skill`/`SkillRegistry` types.
 5. `run_cycle` executes inside `tokio::time::timeout(spec.budget.timeout,
    ...)`; a timeout produces `SubAgentError::Timeout`.
 6. Inside `run_cycle`, each iteration first checks the accumulated
-   `UsageStats` against `budget.max_tokens` (`TokenBudgetExceeded` if over)
-   and the step counter against `budget.max_steps`
-   (`StepBudgetExceeded` if at the limit) *before* invoking the LLM, then
-   calls `skeleton.runner.invoke`, accumulates `response.usage`, and
-   dispatches on `parse_response`'s `CycleAction` (`Done` returns
-   `SubAgentResult`; `Continue` and `ToolCall`/`ToolCalls` append to the
-   buffer and loop; `Error` maps to `SubAgentError::Llm`).
+   `UsageStats` against `budget.max_tokens` and the step counter against
+   `budget.max_steps` *before* invoking the LLM (`TokenBudgetExceeded`/
+   `StepBudgetExceeded` if either is over). It then resolves
+   `skeleton.tools.tool_definitions_for(&active_tool_names)` (the scoped
+   registry's full name list, computed once before the loop — a SubAgent has
+   no caller-supplied allow-list narrower than `spec.allowed_tools`) and
+   dispatches `invoke_with_tools`/`invoke` the same non-empty/`None`-preserving
+   way [Strategy](strategy.md) documents for
+   `ReActStrategy::invoke_with_active_tools`. It accumulates `response.usage`
+   and dispatches `action_from_response(&response)`'s 3-variant `CycleAction`
+   exactly as [Strategy](strategy.md) describes for `avs-react`'s own loop:
+   `ToolCalls { calls }` runs `execute_many`, reconciles/reorders with
+   `reconcile_and_order_results`, and appends one `Tool`-role message from
+   `results_to_tool_result_blocks`; `Done { answer }` returns
+   `SubAgentResult`; `Error { message }` maps to `SubAgentError::Llm`. There
+   is no HITL path here — `run_cycle` always dispatches directly, unlike
+   `ReActStrategy::run_hitl`'s `execute_many_hitl`.
 
 **`run_many()` — concurrent fan-out:**
 1. `SubAgentExecutor::run_many` takes `Vec<(SubAgentSpec, SubAgentContext)>`
@@ -203,10 +216,12 @@ own `Skill`/`SkillRegistry` types.
    registration wins. Callers that manage a registry independently can instead
    call the lower-level `register_tool` replacement method directly; both paths
    construct a root-depth `SubAgentTool`.
-2. The parent's ReAct loop calls it like any other tool: `Action:
-   spawn_subagent` with a `SubAgentArgs` JSON body (`name`, `objective`,
-   optional `system_prompt`/`model`/`max_steps`/`max_tokens`/`timeout_secs`,
-   `allowed_tools`, `resources`).
+2. The parent's ReAct loop calls it like any other native tool call: a
+   `ToolUse` block naming `spawn_subagent` with a `SubAgentArgs` JSON
+   argument body (`name`, `objective`, optional
+   `system_prompt`/`model`/`max_steps`/`max_tokens`/`timeout_secs`,
+   `allowed_tools`, `resources`) — see [Strategy](strategy.md) for the
+   parent's own dispatch.
 3. `SubAgentTool::execute` builds a `SubAgentSpec` (defaulting `max_steps` to
    10, `max_tokens` to 20000, `timeout_secs` to 120 when omitted) and a
    `SubAgentContext` at `self.current_depth`, then calls `executor.run`.
@@ -220,6 +235,45 @@ own `Skill`/`SkillRegistry` types.
 ## Key Decisions
 
 Newest first.
+
+### Native tool-call dispatch reaches `avs-subagent` too: `run_cycle` reuses `avs-react`'s cycle helpers directly
+- **Decision** — `run_cycle` no longer has its own parser or hand-rolled
+  action shape: it imports `avs-react`'s `action_from_response`/
+  `reconcile_and_order_results`/`results_to_tool_result_blocks`
+  (`avs-react/src/cycle.rs`) directly, replacing the deleted
+  `agentverse_react::parse::parse_response`, and calls
+  `LlmRunner::invoke_with_tools` when `tool_definitions_for` returns a
+  non-empty list, `invoke` otherwise — the same pattern
+  [Strategy](strategy.md) documents for
+  `ReActStrategy::invoke_with_active_tools` (cross-link, not re-derived
+  here). `run_cycle`'s own dispatch match shrinks from 5 arms (`Continue`,
+  `ToolCall`, `ToolCalls`, `Done`, `Error`) to 3 (`ToolCalls`, `Done`,
+  `Error`), mirroring `avs-react`'s own loop shape exactly.
+- **Context** — PR #35's Phase 6 description names this crate specifically:
+  `avs-subagent` "had its own hand-rolled ReAct loop that never even offered
+  tool schemas to the model" (PR #35 body — not in commit `07dce57`'s own
+  message, which reads only "rewrite run_cycle to native tool dispatch, wire
+  tool schemas to the model"). Before this fix, every SubAgent iteration
+  called only `skeleton.runner.invoke`, so its LLM had to guess tool-call
+  shapes from prose the same way the parent loop did before Phase 5 —
+  [Strategy](strategy.md)'s Key Decision on the same root cause (blank
+  nested-parameter descriptions in the free-text listing) applies
+  identically here.
+- **Alternatives rejected** — none recorded specific to this call site; PR
+  #35 treats it as Phase 6 ripple from the Phase 5 rewrite, not an
+  independent design decision with its own rejected alternatives.
+- **Consequences** — the old `Continue` arm and the old singular `ToolCall`
+  arm are both gone with no successor behavior (see Implementation Notes for
+  the corrected asymmetry claim this replaces); `tests/executor_test.rs`'s
+  fixture helper and its two budget-enforcement tests were rewritten in the
+  same commit to post real `tool_use` responses instead of free-text
+  `Thought:`/`Answer:` bodies, and a same-day follow-up (`0d675d4`) pins the
+  schema-wiring fix with a `body_contains("loop_tool")` assertion instead of
+  an unconditional mock. `build_initial_messages` and
+  `check_output_guardrail`'s call site also moved to `Message::text`/
+  `response.as_text()` in the same commit — mechanical fallout from
+  [Core Runtime](core-runtime.md)'s Phase 1 content-shape change.
+- **Ref** — 2026-08-02, commit `07dce57`, PR #35 (Phase 6).
 
 ### Multi-agent examples added: `run_many` pipelines and `spawn_subagent` orchestration
 - **Decision** — three new crates (`agentverse-demo-tools`,
@@ -312,11 +366,18 @@ Newest first.
   documented in the source as acceptable for realistic budgets
   (`max_steps` in the tens) and flagged as future work if budgets grow much
   larger.
-- `CycleAction::ToolCalls` (parallel tool calls in one step) soft-degrades
-  individual tool errors into observation text rather than aborting the
-  step, while `CycleAction::ToolCall` (a single call) aborts the whole cycle
-  on error — an intentional asymmetry: a batch of parallel calls shouldn't
-  fail entirely because one tool in the batch errored.
+- **Corrected:** this page previously described an intentional asymmetry
+  between `CycleAction::ToolCalls` (soft-degrading individual tool errors
+  into observation text) and a singular `CycleAction::ToolCall` (aborting
+  the whole cycle on error). That variant, and the asymmetry itself, no
+  longer exist: PR #35 (Key Decisions, above) removed the singular
+  `ToolCall` arm, so `run_cycle` has only one dispatch arm left
+  (`ToolCalls`, covering both cardinalities), always routed through
+  `reconcile_and_order_results` — which backfills a synthetic error result
+  for any dropped or panicking call rather than aborting (mechanics in
+  [Strategy](strategy.md)). The asymmetry is resolved by construction: no
+  remaining code path can produce the two different behaviors the original
+  bullet described.
 - `run_many`'s results are in completion order, not input order — callers
   needing to correlate a result to its originating spec must encode an
   identifier into `SubAgentSpec.name` or `.objective` themselves; there is no
