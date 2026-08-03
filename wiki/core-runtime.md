@@ -91,9 +91,16 @@ classDiagram
         +response_format Option~Value~
     }
     class GenerateResponse {
-        +content String
+        +content Vec~ContentBlock~
         +usage UsageStats
     }
+    class ContentBlock {
+        <<enum>>
+        Text
+        ToolUse
+        ToolResult
+    }
+    GenerateResponse ..> ContentBlock : content
     ModelProvider ..> GenerateRequest : consumes
     ModelProvider ..> GenerateResponse : produces
 ```
@@ -113,8 +120,21 @@ resolve a `ProviderConfig { name, settings }` into a `ResolvedProvider`
 thin entry point strategy crates call: it holds an `Arc<ConnectionManager>`
 and exposes `invoke`, `invoke_with_tools`, and `invoke_structured`, all implemented through a shared
 `invoke_inner` that splits `System`-role messages out of the conversation and
-assembles a `GenerateRequest`. `invoke_with_tools` forwards native tool definitions to
-the provider request path; it does not parse native tool responses or run a tool loop.
+assembles a `GenerateRequest`. Both `Message` (`avs-core/src/memory/mod.rs`)
+and `GenerateResponse` carry `content: Vec<ContentBlock>` rather than a flat
+string — `ContentBlock` is a three-variant enum (`Text { text }`,
+`ToolUse { id, name, input }`, `ToolResult { tool_use_id, content, is_error }`)
+shared by every provider; `Message::as_text`/`GenerateResponse::as_text`
+(via the shared `content_as_text` helper) flatten it back to a string —
+`Text` verbatim, `ToolUse`/`ToolResult` as a short bracketed summary — for
+callers (guardrails, memory, logging) that only need text.
+`invoke_with_tools` forwards native tool definitions to the provider request
+path and, on the way back, surfaces every `tool_use`/`tool_calls` entry the
+provider returned as a `ContentBlock::ToolUse` value inside
+`GenerateResponse.content`; it does not itself dispatch a tool call or run a
+tool loop — that dispatch, and feeding the result back as a
+`ContentBlock::ToolResult` block on the next turn, is the strategy loop's
+job (see [Strategy](strategy.md)).
 `PromptRegistry` (in `prompt.rs`) is a separate,
 decoupled subsystem: a minijinja `Environment` pre-loaded with default
 templates (`system`, `react`, `strategies.*`, `router`), optionally extended
@@ -157,16 +177,32 @@ to build the `system` string and `Example`s they pass into a `GenerateRequest`.
    `LlmRunner::invoke_with_tools`.
 2. `invoke_inner` partitions messages as above and builds a `GenerateRequest`
    with `tools: Some(tools)` and `response_format: None`.
-3. Each provider serializes the tool definitions into its own wire format;
-   `ConnectionManager::generate` sends that request through its normal retry,
+3. Each provider serializes the tool definitions into its own wire format
+   with `strict: true` set unconditionally (`AnthropicTool`/
+   `FunctionDefinition`); any `ContentBlock::ToolUse`/`ContentBlock::ToolResult`
+   blocks already present in the conversation (from a prior turn) are
+   serialized into the same request — `AnthropicProvider` maps them 1:1 onto
+   `tool_use`/`tool_result` content blocks, `OpenAICompatible` collects
+   `ToolUse` blocks into a message's `tool_calls` array and expands each
+   `Tool`-role `ToolResult` block into its own `role: "tool"` message.
+4. `ConnectionManager::generate` sends that request through its normal retry,
    circuit-breaker, and fallback path.
-4. ReAct's normal and HITL loops use this entry point when their active tool
-   names resolve to at least one registry definition. They fall back to
-   `invoke` when no definitions resolve, preserving `tools: None` rather than
-   sending `Some([])`.
-5. The returned response remains text-only today. ReAct still uses its
-   `Thought:`/`Action:`/`Action Input:`/`Answer:` parser; parsing native
-   tool-call response payloads and dispatching them remains deferred.
+5. Each provider's `parse_response` collects every `text`/`tool_use`
+   (Anthropic) or `tool_calls` (OpenAI-compatible) entry in the response into
+   `GenerateResponse.content` as `ContentBlock::Text`/`ContentBlock::ToolUse`
+   values — a response with neither is a hard `ModelError::InvalidResponse`,
+   and a malformed `tool_use`/`tool_calls` entry (missing `id`/`name`/`input`,
+   or unparseable `arguments` JSON) is a hard error rather than silently
+   dropped, so a real tool call can't vanish and leave only an unrelated
+   final answer.
+6. ReAct's normal and HITL loops (`ReActStrategy::invoke_with_active_tools`)
+   use this entry point when their active tool names resolve to at least one
+   registry definition, falling back to `invoke` (preserving `tools: None`
+   rather than sending `Some([])`) when none resolve; they parse the returned
+   `ContentBlock::ToolUse` entries into `CycleAction::ToolCalls`. Dispatching
+   those calls to a `Tool` implementation and feeding the results back as
+   `ContentBlock::ToolResult` blocks on the next turn is owned by the ReAct
+   loop, not this crate — see [Strategy](strategy.md).
 
 **Retry, circuit breaker, and fallback inside `generate`:**
 1. Before building the request, `generate` takes the circuit breaker lock; if
@@ -188,6 +224,27 @@ to build the `system` string and `Example`s they pass into a `GenerateRequest`.
    and returns the `GenerateResponse`.
 
 ## Key Decisions
+
+### Dead `{% if tools %}`/`Action:`/`Answer:` free-text instructions dropped from default prompt templates
+- **Decision** — `DEFAULT_SYSTEM_TEMPLATE` drops its `{% if tools %}...{% else %}...{% endif %}` block (which rendered `Action:`/`Action Input:`/`Answer:` free-text-format instructions) down to three static sentences with no conditional; `DEFAULT_REACT_TEMPLATE`'s `Current conversation:`/`{{ conversation }}`/`Available tools:`/`{{ tools }}` preamble and its `Thought:`/`Action:`/`Action Input:` response-format instructions are replaced with one sentence stating that tool calls are handled natively.
+- **Context** — commit `0d675d4`'s message: "`DEFAULT_SYSTEM_TEMPLATE` no longer instructs the deleted free-text Answer:/Action: protocol on its default (no-tools-context) render path, which every agent without a custom `system.j2` hits on every invoke" — a Phase 6 final-review finding. Commit `840ed65` made the equivalent fix to `DEFAULT_REACT_TEMPLATE` and 6 example prompts, since the free-text parser these instructions targeted (`avs-react/src/parse.rs`) had already been deleted in Phase 5 — see [Strategy](strategy.md).
+- **Alternatives rejected** — none recorded.
+- **Consequences** — supersedes the "flat prompt strings" Key Decision's Consequences note below, which stated `DEFAULT_SYSTEM_TEMPLATE` gained a `{{ tools }}` block; that block existed from PR #1 until this change, and `DEFAULT_SYSTEM_TEMPLATE` no longer renders one. `DEFAULT_PLAN_AND_EXECUTE_TEMPLATE` keeps its own `{{ tools }}` block unchanged — this cleanup targeted only the two templates the deleted free-text ReAct parser consumed (`system`, `react`).
+- **Ref** — 2026-08-02, commits `840ed65` and `0d675d4` (PR #35).
+
+### `GeminiProvider` hard-errors on tool-bearing content instead of silently degrading
+- **Decision** — `GeminiProvider::build_request` now returns `ModelError::InvalidResponse` when any message contains a `ContentBlock::ToolUse`/`ContentBlock::ToolResult` block, joining its pre-existing hard error for `request.tools.is_some()`, instead of letting those blocks silently flatten through `Message::as_text` into a `[tool_use: ...]`/`[tool_result ...]` summary string sent as plain conversation text.
+- **Context** — PR #35's body: "`GeminiProvider` (out of scope for native tool calling) now hard-errors instead of silently degrading."
+- **Alternatives rejected** — none recorded.
+- **Consequences** — Gemini stays usable for text-only conversations (`invoke`, `invoke_structured`, with the latter's existing schema-not-enforced caveat below unaffected); any caller that routes a tool-bearing conversation through `GeminiProvider` now gets a request-time `ModelError` instead of a response built from a lossy text summary of tool calls the model never actually issued as free-text `Action:` output.
+- **Ref** — 2026-08-01, commit `6f9e6ed` (PR #35).
+
+### Native tool-call round-tripping: `Message`/`GenerateResponse` content becomes `Vec<ContentBlock>`; providers gain request+response tool-call serialization
+- **Decision** — `Message.content` and `GenerateResponse.content` change from `String` to `Vec<ContentBlock>` (`Text`/`ToolUse`/`ToolResult`); `AnthropicProvider` and `OpenAICompatible` send every tool definition with `strict: true`, parse native `tool_use`/`tool_calls` entries out of a provider response into `ContentBlock::ToolUse` values, and serialize `ContentBlock::ToolUse`/`ContentBlock::ToolResult` blocks already present in the conversation back onto the request instead of only ever flattening them to text.
+- **Context** — PR #35's stated root cause: the free-text `Action:` convention only rendered one level of a tool's `input_schema.properties` and never dereferenced `$ref`/`definitions`, so any tool with a nested-object parameter rendered a blank parameter description — the direct cause of the `business-report` example's crash (`Invalid arguments: missing field 'likely_weeks'`). Native tool calling sends the full JSON Schema through each provider's own strict-mode `tools` field instead, so the model never has to guess.
+- **Alternatives rejected** — a degraded free-text fallback mode for a provider/model without native tool-calling support, rejected outright per the PR body: "This is a hard requirement, no fallback... a request-time error, not a degraded text-based mode."
+- **Consequences** — a malformed `tool_use`/`tool_calls` entry (missing `id`/`name`/`input`, or unparseable `arguments` JSON) is now a hard `ModelError` in both providers rather than silently dropped; `avs-core/src/tool.rs`'s `ToolCall`/`ToolCallResult` gained a provider-issued `id: String` that must round-trip as the matching `ToolResult`'s `tool_use_id` (that file is anchored on [Tools](tools.md), not duplicated here — see Implementation Notes); `avs-react`'s free-text parser (`avs-react/src/parse.rs`) was deleted in the same PR — see [Strategy](strategy.md).
+- **Ref** — 2026-07-28, PR #35, commits `d893597`, `ba293da`, `1906e8a`, `2013387`, `0d7a306`, `b8c94e4`.
 
 ### Open `ProviderRegistry` replacing the closed `ProviderConfig` enum
 - **Decision** — `ProviderConfig` becomes `{ name: String, settings: HashMap<String, String> }` with ergonomic constructors (`::anthropic`, `::openai`, `::gemini`, `::custom`); a new `ProviderRegistry` (name-keyed table of `ProviderFactory` closures, never global state) is the single dispatch point `ConnectionManager::from_config`/`with_model` call through.
@@ -214,7 +271,7 @@ to build the `system` string and `Example`s they pass into a `GenerateRequest`.
 - **Decision** — `ModelProvider::build_request`/`parse_response` take/return structured `GenerateRequest` (`system`, `messages`, `tools`) and `GenerateResponse` (`content`, `usage`) instead of a flat `prompt: &str`; each provider applies its own caching strategy internally, invisible to callers.
 - **Context** — the flat-string design made correct Anthropic `system`-field usage and prompt caching structurally impossible, and discarded message roles before they reached the provider.
 - **Alternatives rejected** — exposing cache-control decisions to callers (rejected outright — the design's explicit goal was that "caching logic stays internal to each provider"); non-text content blocks (images, documents) — deferred as a non-goal for a later change.
-- **Consequences** — `UsageStats` (`input_tokens`, `output_tokens`, `cache_write_tokens`, `cache_read_tokens`) is added, accumulates via `AddAssign`, and is surfaced to callers through `CycleResult.total_usage`; `AnthropicProvider` places `cache_control: ephemeral` on the last tool, the system block, and the penultimate conversation message; `DEFAULT_SYSTEM_TEMPLATE` gained a `{{ tools }}` block so the cached system prefix carries the tool list too.
+- **Consequences** — `UsageStats` (`input_tokens`, `output_tokens`, `cache_write_tokens`, `cache_read_tokens`) is added, accumulates via `AddAssign`, and is surfaced to callers through `CycleResult.total_usage`; `AnthropicProvider` places `cache_control: ephemeral` on the last tool, the system block, and the penultimate conversation message; `DEFAULT_SYSTEM_TEMPLATE` gained a `{{ tools }}` block so the cached system prefix carries the tool list too. (Superseded 2026-08-02 — see "Dead `{% if tools %}`/`Action:`/`Answer:` free-text instructions dropped from default prompt templates" above: `DEFAULT_SYSTEM_TEMPLATE` no longer renders a `{{ tools }}` block.)
 - **Ref** — 2026-05-16, PR #1.
 
 ## Implementation Notes
@@ -246,6 +303,17 @@ to build the `system` string and `Example`s they pass into a `GenerateRequest`.
 - Metrics remain the core crate's maintained observability path. It creates
   OTel instruments only through `avs-core/src/metrics.rs`; binaries install
   exporters, while `avs-logging` owns `tracing` subscriber initialization.
+- `AnthropicContentBlock`'s `text()`/`cache_control()` accessors (in
+  `anthropic_provider.rs`) are gated `#[cfg(test)]` — they exist only so
+  tests can pin down the system-prompt/cache-marker wiring, not as part of
+  the provider's runtime path (commit `ad7ef31`).
+- `avs-core/src/tool.rs` defines `ToolCall`/`ToolCallResult`/`ToolHandle`
+  and the `Tool`/`ErasedTool` traits, physically inside this crate, but this
+  page does not anchor that file: [Tools](tools.md) already lists
+  `avs-core/src/tool.rs` in its own Source Anchors and documents those types
+  as part of the tool-calling contract `avs-tools`' `ToolRegistry` builds on.
+  Anchoring it in both pages would duplicate ownership of the same drift
+  contract.
 - Known follow-ups explicitly deferred out of scope (per PR #24's body):
   parsing `Retry-After` in HTTP-date form (only integer-seconds is handled
   today) and `--all-targets` on the CI clippy job. Per PR #27: registering a
@@ -262,6 +330,7 @@ to build the `system` string and `Example`s they pass into a `GenerateRequest`.
 - `avs-core/src/model/openai_compatible.rs`
 - `avs-core/src/model/gemini_provider.rs`
 - `avs-core/src/llm_runner.rs`
+- `avs-core/src/memory/mod.rs`
 - `avs-core/src/prompt.rs`
 - `avs-core/src/config.rs`
 - `avs-core/src/builder.rs`
