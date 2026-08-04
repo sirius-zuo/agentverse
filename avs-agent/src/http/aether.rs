@@ -4,7 +4,7 @@
 use super::envelope::{
     AetherApprovalDecision, Envelope, EnvelopeKind, ResumeRequest, SuspendPayload,
 };
-use crate::{Agent, AgentOutput};
+use crate::{Agent, AgentError, AgentOutput};
 use agentverse_hitl::{ApprovalDecision as HitlDecision, InterruptKind};
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -209,10 +209,12 @@ pub async fn aether_resume(
         }
         Err(e) => {
             error!(error = %e, "aether_resume failed");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e.to_string() })),
-            )
+            let status = if matches!(e, AgentError::IncompatiblePersistedInterrupt) {
+                StatusCode::CONFLICT
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            (status, Json(serde_json::json!({ "error": e.to_string() })))
         }
     }
 }
@@ -508,5 +510,63 @@ mod tests {
         });
         let res = post_json(aether_app(agent), "/aether/resume", body).await;
         assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn aether_resume_on_pre_phase4_interrupt_row_returns_409_not_500() {
+        // Mirrors avs-agent/tests/agent_test.rs's
+        // resume_on_pre_phase4_interrupt_row_fails_with_actionable_error_not_raw_json_error,
+        // but through the actual HTTP handler to confirm the status-code mapping.
+        let sessions = Arc::new(SqliteSessionMemory::new("sqlite::memory:").await.unwrap());
+        let runner = Arc::new(
+            LlmRunner::from_config(Config {
+                provider: agentverse::ProviderConfig::openai(
+                    "test".to_string(),
+                    "sk-test".to_string(),
+                    Some("http://127.0.0.1:1/v1".to_string()),
+                ),
+                max_messages: 10,
+                tools: vec![],
+                prompts_dir: None,
+                system_prompt: None,
+            })
+            .unwrap(),
+        );
+        let tools = ToolRegistry::new();
+        let prompts = Arc::new(PromptRegistry::new());
+        let strategy = build(
+            StrategyKind::React,
+            Arc::clone(&runner),
+            Arc::clone(&prompts),
+            Arc::clone(&tools),
+            3,
+        );
+        let agent = Agent::builder(runner, tools, prompts, sessions.clone(), strategy).build();
+        let session_id = agent.create_session("alice").await.unwrap();
+        let approval_id = Uuid::new_v4();
+        let old_shape_state = serde_json::json!({
+            "PendingToolCall": {
+                "approval_id": approval_id.to_string(),
+                "kind_json": serde_json::json!({"ToolApproval": {"tool_name": "wire_transfer", "args": {"amount": 100}}}).to_string(),
+                "history_json": serde_json::json!([{"role": "User", "content": "Transfer $100"}]).to_string(),
+                "pending_calls_json": serde_json::json!([{"name": "wire_transfer", "args": {"amount": 100}}]).to_string(),
+                "active_tool_names": ["wire_transfer"],
+                "skill_context_json": null
+            }
+        })
+        .to_string();
+        let manager = agentverse_session::SessionManager::new(sessions);
+        manager
+            .set_interrupted_state(session_id, Some(&old_shape_state))
+            .await
+            .unwrap();
+
+        let body = serde_json::json!({
+            "session_id": session_id.to_string(),
+            "approval_id": approval_id.to_string(),
+            "decision": { "type": "approved" }
+        });
+        let res = post_json(aether_app(agent), "/aether/resume", body).await;
+        assert_eq!(res.status(), StatusCode::CONFLICT);
     }
 }

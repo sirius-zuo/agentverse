@@ -458,3 +458,81 @@ async fn append_turn_contract_preserves_user_then_assistant_order() {
     assert_eq!(messages[0].as_text(), "hello");
     assert_eq!(messages[1].as_text(), "hi");
 }
+
+#[tokio::test]
+async fn resume_on_pre_phase4_interrupt_row_fails_with_actionable_error_not_raw_json_error() {
+    use agentverse_hitl::ApprovalDecision;
+    use agentverse_session::SessionManager;
+
+    let sessions = Arc::new(SqliteSessionMemory::new("sqlite::memory:").await.unwrap());
+    let runner = Arc::new(
+        LlmRunner::from_config(Config {
+            provider: agentverse::ProviderConfig::openai(
+                "test",
+                "sk-test",
+                Some("http://127.0.0.1:1/v1".into()),
+            ),
+            max_messages: 10,
+            tools: vec![],
+            prompts_dir: None,
+            system_prompt: None,
+        })
+        .unwrap(),
+    );
+    let tools = ToolRegistry::new();
+    tools.register(WireTransferTool);
+    let strategy = Arc::new(WireTransferStrategy {
+        tools: Arc::clone(&tools),
+    });
+    let agent = Agent::builder(
+        runner,
+        tools,
+        Arc::new(PromptRegistry::new()),
+        Arc::clone(&sessions) as Arc<dyn agentverse_session::SessionMemory>,
+        strategy,
+    )
+    .build();
+
+    let session_id = agent.create_session("alice").await.unwrap();
+
+    // Seed a pre-Phase-4-shaped `PendingToolCall` row directly, bypassing the
+    // (now native-shape-only) normal interrupt path: `history_json` here is
+    // the OLD flat-string-content `Message` shape, and the `ToolCall` in
+    // `pending_calls_json` lacks the `id` field both gained in Phase 4.
+    let approval_id = uuid::Uuid::new_v4();
+    let old_shape_state = serde_json::json!({
+            "PendingToolCall": {
+                "approval_id": approval_id.to_string(),
+                "kind_json": serde_json::json!({"ToolApproval": {"tool_name": "wire_transfer", "args": {"amount": 100}}}).to_string(),
+                "history_json": serde_json::json!([{"role": "User", "content": "Transfer $100"}]).to_string(),
+                "pending_calls_json": serde_json::json!([{"name": "wire_transfer", "args": {"amount": 100}}]).to_string(),
+                "active_tool_names": ["wire_transfer"],
+                "skill_context_json": null
+            }
+        })
+        .to_string();
+
+    let manager =
+        SessionManager::new(Arc::clone(&sessions) as Arc<dyn agentverse_session::SessionMemory>);
+    manager
+        .set_interrupted_state(session_id, Some(&old_shape_state))
+        .await
+        .unwrap();
+
+    let err = agent
+        .resume("alice", session_id, approval_id, ApprovalDecision::Approved)
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(
+            err,
+            agentverse_agent::AgentError::IncompatiblePersistedInterrupt
+        ),
+        "expected IncompatiblePersistedInterrupt, got: {err:?}"
+    );
+    assert!(
+        err.to_string().contains("cannot resume"),
+        "error message should be actionable, got: {err}"
+    );
+}

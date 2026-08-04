@@ -194,8 +194,10 @@ impl Agent {
         // persisted session data" decision — any session interrupted before this
         // deploy and not yet resumed will need to be abandoned, not silently
         // mis-resumed.
-        let history: Vec<agentverse::memory::Message> = serde_json::from_str(&history_json)?;
-        let pending: Vec<agentverse::ToolCall> = serde_json::from_str(&pending_calls_json)?;
+        let history: Vec<agentverse::memory::Message> = serde_json::from_str(&history_json)
+            .map_err(|_| AgentError::IncompatiblePersistedInterrupt)?;
+        let pending: Vec<agentverse::ToolCall> = serde_json::from_str(&pending_calls_json)
+            .map_err(|_| AgentError::IncompatiblePersistedInterrupt)?;
         let execution_tools = if self.strategy_router.is_some() {
             self.tools.restricted_to_names(&active_tool_names)
         } else {

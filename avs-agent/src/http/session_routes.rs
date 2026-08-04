@@ -89,6 +89,7 @@ pub async fn send_message(
             let status = match &e {
                 AgentError::Session(se) => store_err_status(se),
                 AgentError::Llm(_) => StatusCode::BAD_GATEWAY,
+                AgentError::IncompatiblePersistedInterrupt => StatusCode::CONFLICT,
                 AgentError::Skill(_)
                 | AgentError::Json(_)
                 | AgentError::RoutedStrategyDoesNotSupportHitl { .. } => {
@@ -150,6 +151,7 @@ pub async fn list_messages(
         Err(e) => {
             let status = match &e {
                 AgentError::Session(se) => store_err_status(se),
+                AgentError::IncompatiblePersistedInterrupt => StatusCode::CONFLICT,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             };
             (status, Json(serde_json::json!({ "error": e.to_string() })))
@@ -186,6 +188,7 @@ pub async fn get_session(
             let status = match &e {
                 AgentError::Session(se) => store_err_status(se),
                 AgentError::Llm(_) => StatusCode::BAD_GATEWAY,
+                AgentError::IncompatiblePersistedInterrupt => StatusCode::CONFLICT,
                 AgentError::Skill(_)
                 | AgentError::Json(_)
                 | AgentError::RoutedStrategyDoesNotSupportHitl { .. } => {
@@ -219,6 +222,7 @@ pub async fn end_session(
             let status = match &e {
                 AgentError::Session(se) => store_err_status(se),
                 AgentError::Llm(_) => StatusCode::BAD_GATEWAY,
+                AgentError::IncompatiblePersistedInterrupt => StatusCode::CONFLICT,
                 AgentError::Skill(_)
                 | AgentError::Json(_)
                 | AgentError::RoutedStrategyDoesNotSupportHitl { .. } => {
