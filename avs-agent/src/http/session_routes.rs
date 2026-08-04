@@ -16,6 +16,23 @@ fn store_err_status(e: &SessionMemoryError) -> StatusCode {
     }
 }
 
+/// Single source of truth for `AgentError -> StatusCode`, shared by every HTTP
+/// handler in this module and by `aether::aether_resume` (the only caller of
+/// `Agent::resume`, and so the only path that can actually produce
+/// `IncompatiblePersistedInterrupt`). Centralized so a future non-500
+/// `AgentError` variant only needs a status decision made once, not
+/// hand-copied into every match block that touches `AgentError`.
+pub(super) fn status_for_agent_error(e: &AgentError) -> StatusCode {
+    match e {
+        AgentError::Session(se) => store_err_status(se),
+        AgentError::Llm(_) => StatusCode::BAD_GATEWAY,
+        AgentError::IncompatiblePersistedInterrupt => StatusCode::CONFLICT,
+        AgentError::Skill(_)
+        | AgentError::Json(_)
+        | AgentError::RoutedStrategyDoesNotSupportHitl { .. } => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
 // ── POST /sessions ────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -86,16 +103,7 @@ pub async fn send_message(
             )
         }
         Err(e) => {
-            let status = match &e {
-                AgentError::Session(se) => store_err_status(se),
-                AgentError::Llm(_) => StatusCode::BAD_GATEWAY,
-                AgentError::IncompatiblePersistedInterrupt => StatusCode::CONFLICT,
-                AgentError::Skill(_)
-                | AgentError::Json(_)
-                | AgentError::RoutedStrategyDoesNotSupportHitl { .. } => {
-                    StatusCode::INTERNAL_SERVER_ERROR
-                }
-            };
+            let status = status_for_agent_error(&e);
             error!(error = %e, "Failed to invoke session");
             (status, Json(serde_json::json!({ "error": e.to_string() })))
         }
@@ -149,11 +157,7 @@ pub async fn list_messages(
             )
         }
         Err(e) => {
-            let status = match &e {
-                AgentError::Session(se) => store_err_status(se),
-                AgentError::IncompatiblePersistedInterrupt => StatusCode::CONFLICT,
-                _ => StatusCode::INTERNAL_SERVER_ERROR,
-            };
+            let status = status_for_agent_error(&e);
             (status, Json(serde_json::json!({ "error": e.to_string() })))
         }
     }
@@ -185,16 +189,7 @@ pub async fn get_session(
             Json(serde_json::json!({ "error": "session not found" })),
         ),
         Err(e) => {
-            let status = match &e {
-                AgentError::Session(se) => store_err_status(se),
-                AgentError::Llm(_) => StatusCode::BAD_GATEWAY,
-                AgentError::IncompatiblePersistedInterrupt => StatusCode::CONFLICT,
-                AgentError::Skill(_)
-                | AgentError::Json(_)
-                | AgentError::RoutedStrategyDoesNotSupportHitl { .. } => {
-                    StatusCode::INTERNAL_SERVER_ERROR
-                }
-            };
+            let status = status_for_agent_error(&e);
             error!(error = %e, "Failed to get session");
             (status, Json(serde_json::json!({ "error": e.to_string() })))
         }
@@ -219,16 +214,7 @@ pub async fn end_session(
             (StatusCode::NO_CONTENT, Json(serde_json::json!({})))
         }
         Err(e) => {
-            let status = match &e {
-                AgentError::Session(se) => store_err_status(se),
-                AgentError::Llm(_) => StatusCode::BAD_GATEWAY,
-                AgentError::IncompatiblePersistedInterrupt => StatusCode::CONFLICT,
-                AgentError::Skill(_)
-                | AgentError::Json(_)
-                | AgentError::RoutedStrategyDoesNotSupportHitl { .. } => {
-                    StatusCode::INTERNAL_SERVER_ERROR
-                }
-            };
+            let status = status_for_agent_error(&e);
             error!(error = %e, "Failed to end session");
             (status, Json(serde_json::json!({ "error": e.to_string() })))
         }

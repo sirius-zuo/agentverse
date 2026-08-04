@@ -4,7 +4,8 @@
 use super::envelope::{
     AetherApprovalDecision, Envelope, EnvelopeKind, ResumeRequest, SuspendPayload,
 };
-use crate::{Agent, AgentError, AgentOutput};
+use super::session_routes::status_for_agent_error;
+use crate::{Agent, AgentOutput};
 use agentverse_hitl::{ApprovalDecision as HitlDecision, InterruptKind};
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -209,11 +210,7 @@ pub async fn aether_resume(
         }
         Err(e) => {
             error!(error = %e, "aether_resume failed");
-            let status = if matches!(e, AgentError::IncompatiblePersistedInterrupt) {
-                StatusCode::CONFLICT
-            } else {
-                StatusCode::INTERNAL_SERVER_ERROR
-            };
+            let status = status_for_agent_error(&e);
             (status, Json(serde_json::json!({ "error": e.to_string() })))
         }
     }

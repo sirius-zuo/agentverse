@@ -1,8 +1,9 @@
 use axum::{response::IntoResponse, Json};
 
 pub async fn openapi_json() -> impl IntoResponse {
-    // Build the GET /sessions/{session_id}/messages response schema in
-    // parts to avoid hitting serde_json::json! recursion limits.
+    // Built in parts (rather than one deeply nested `json!` call) purely for
+    // readability — the flattened schema is easier to scan and edit as named
+    // pieces than as ~15 levels of inline nesting.
     let text_block = serde_json::json!({
         "type": "object",
         "required": ["type", "text"],
