@@ -20,12 +20,14 @@ The gates are declared entirely in `SKILL.md` frontmatter (`checkpoints`, `phase
 
 | Variable | Required | Description |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | Yes | Anthropic API key (`MODEL_API_KEY` also accepted) |
-| `MODEL_NAME` | No | Model ID (default: `claude-sonnet-4-6`) |
+| `MODEL_BASE_URL` | No | OpenAI-compatible API base URL (default: `http://localhost:9090/v1`) |
+| `MODEL_API_KEY` | No | API key |
+| `MODEL_NAME` | No | Model ID (default: `Qwen3.6-35B-A3B-GGUF`) |
 
 ```bash
-ANTHROPIC_API_KEY=sk-ant-... \
-MODEL_NAME=claude-sonnet-4-6 \
+MODEL_BASE_URL=http://localhost:9090/v1 \
+MODEL_API_KEY=<key> \
+MODEL_NAME=<model> \
 cargo run -p example-accountant-workflow
 ```
 

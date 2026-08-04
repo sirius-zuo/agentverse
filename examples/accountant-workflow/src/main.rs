@@ -15,8 +15,6 @@
 // any type implementing `agentverse_hitl::ApprovalQueue` (e.g. a Slack queue).
 //
 // Run:
-//   ANTHROPIC_API_KEY=sk-ant-... \
-//   MODEL_NAME=claude-sonnet-4-6 \
 //   cargo run -p example-accountant-workflow
 
 use agentverse::{Config, LlmRunner, PromptRegistry, ProviderConfig};
@@ -48,15 +46,15 @@ Date,Description,Amount
 async fn main() {
     avs_logging::init();
 
-    let api_key = std::env::var("ANTHROPIC_API_KEY")
-        .or_else(|_| std::env::var("MODEL_API_KEY"))
-        .unwrap_or_default();
+    let base_url =
+        std::env::var("MODEL_BASE_URL").unwrap_or_else(|_| "http://localhost:9090/v1".to_string());
+    let api_key = std::env::var("MODEL_API_KEY").unwrap_or_default();
     let model_name =
-        std::env::var("MODEL_NAME").unwrap_or_else(|_| "claude-sonnet-4-6".to_string());
+        std::env::var("MODEL_NAME").unwrap_or_else(|_| "Qwen3.6-35B-A3B-GGUF".to_string());
 
     let runner = Arc::new(
         LlmRunner::from_config(Config {
-            provider: ProviderConfig::anthropic(model_name, api_key),
+            provider: ProviderConfig::openai(model_name, api_key, Some(base_url)),
             max_messages: 50,
             tools: vec![],
             prompts_dir: None,
