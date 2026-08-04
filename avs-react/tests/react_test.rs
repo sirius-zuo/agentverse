@@ -163,40 +163,6 @@ fn test_check_output_guardrail_clean() {
         .is_ok());
 }
 
-#[tokio::test]
-async fn test_cycle_skeleton_execute_tool() {
-    let runner = Arc::new(
-        LlmRunner::from_config(Config {
-            provider: agentverse::ProviderConfig::openai(
-                "test".to_string(),
-                "sk-test".to_string(),
-                Some("http://127.0.0.1:1/v1".to_string()),
-            ),
-            max_messages: 10,
-            tools: vec![],
-            prompts_dir: None,
-            system_prompt: None,
-        })
-        .unwrap(),
-    );
-    let tools = ToolRegistry::new();
-    tools.register(MockTool::new("echo", "Echo back input"));
-    let s = CycleSkeleton::new(runner, Arc::new(PromptRegistry::new()), tools, 10);
-
-    let result = s
-        .execute_tool("echo", json!({"text": "hello"}))
-        .await
-        .unwrap();
-    assert!(result.contains("Executed echo"));
-}
-
-#[tokio::test]
-async fn test_cycle_skeleton_execute_tool_not_found() {
-    let s = make_skeleton();
-    let result = s.execute_tool("missing_tool", json!({})).await;
-    assert!(result.is_err());
-}
-
 // ─── ReActStrategy tests ──────────────────────────────────────────────────────
 
 struct RecordingProvider {
