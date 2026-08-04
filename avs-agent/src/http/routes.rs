@@ -219,6 +219,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn openapi_json_documents_messages_content_as_tagged_block_array() {
+        let agent = make_agent().await;
+        let app = make_versioned_app(agent);
+        let req = Request::get("/openapi.json").body(Body::empty()).unwrap();
+        let res = app.oneshot(req).await.unwrap();
+        let body: serde_json::Value =
+            serde_json::from_slice(&axum::body::to_bytes(res.into_body(), 4096).await.unwrap())
+                .unwrap();
+        let content_schema = &body["paths"]["/v1/sessions/{session_id}/messages"]["get"]
+            ["responses"]["200"]["content"]["application/json"]["schema"]["properties"]["messages"]
+            ["items"]["properties"]["content"];
+        assert_eq!(content_schema["type"], "array");
+        let variants = content_schema["items"]["oneOf"].as_array().unwrap();
+        assert_eq!(variants.len(), 3);
+    }
+
+    #[tokio::test]
     async fn test_rate_limited_invoke_returns_429() {
         let agent = make_agent().await;
         let limiter = Arc::new(agentverse_guardrails::RateLimiter::new(0, 60));

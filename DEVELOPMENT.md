@@ -738,18 +738,6 @@ registry.register_with_options(
 );
 ```
 
-### ActiveToolSet
-
-`ActiveToolSet` controls which tool schemas appear in the LLM prompt for a given invocation, without removing tools from the registry (they remain executable).
-
-```rust
-use agentverse_tools::ActiveToolSet;
-
-let mut active = ActiveToolSet::all(&registry);   // start with everything
-active.deactivate(&["find_tools", "web_search"]); // hide from this turn's prompt
-let schemas = active.schemas(&registry);           // filtered schema list
-```
-
 ### Parallel tool dispatch
 
 The registry executes multiple tool calls concurrently:
@@ -1504,7 +1492,7 @@ Strategy completed        iteration=3
 | `agentverse-plan` | `PlanStrategy`, `HierarchicalStrategy` |
 | `agentverse-router` | `StrategyRouter` |
 | `agentverse-guardrails` | `check_prompt`, `check_output`, `RateLimiter` |
-| `agentverse-tools` | `ToolRegistry`, `ActiveToolSet`, `ToolOptions`, `ExecutionMode`, `FindToolsTool`, `Calculator`, `DateTimeTool`, `FileSearch`, `HttpClient`, `ShellTool`, `WebSearch` |
+| `agentverse-tools` | `ToolRegistry`, `ToolOptions`, `ExecutionMode`, `FindToolsTool`, `Calculator`, `DateTimeTool`, `FileSearch`, `HttpClient`, `ShellTool`, `WebSearch` |
 | `agentverse-mcp` | `McpClient`, `McpServer`, `McpTransport`, `McpCatalogSource`, `McpLoader`, `McpServerConfig`, `McpToolAdapter`, `McpError` |
 | `agentverse-subagent` | `SubAgentExecutor`, `SubAgentSpec`, `Budget`, `ModelOverride`, `SubAgentContext`, `ResourceContent`, `SubAgentHandle`, `SubAgentResult`, `SubAgentError`, `SubAgentTool` |
 | `agentverse-integration` | `IntegrationRuntime`, `Event` |

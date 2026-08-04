@@ -92,6 +92,28 @@ impl Agent {
             ))));
         }
 
+        // Parse the persisted payload *before* clearing interrupted_state below.
+        // A pre-Phase-4 row is permanently unresumable (no migration exists —
+        // see `parse_resume_payload`), so checking that up front keeps a retry
+        // of the same resume request deterministic: it hits the same
+        // `IncompatiblePersistedInterrupt` error again, instead of losing
+        // `interrupted_state` on the first (failed) attempt and getting a
+        // confusing "session not found" on the second.
+        let resolved = match &state {
+            InterruptedState::PendingToolCall {
+                history_json,
+                pending_calls_json,
+                ..
+            } => Some(Self::parse_resume_payload(
+                history_json,
+                pending_calls_json,
+            )?),
+            InterruptedState::PendingCheckpoint { history_json, .. } => {
+                Some(Self::parse_resume_payload(history_json, "[]")?)
+            }
+            InterruptedState::PendingPhaseGate { .. } => None,
+        };
+
         self.sessions
             .set_interrupted_state(session_id, None)
             .await?;
@@ -109,10 +131,57 @@ impl Agent {
                     .await
             }
             other => {
-                self.resume_tool_call_or_checkpoint(user_id, session_id, other, decision)
-                    .await
+                let (history, pending) =
+                    resolved.expect("non-PendingPhaseGate state always resolves above");
+                self.resume_tool_call_or_checkpoint(
+                    user_id, session_id, other, decision, history, pending,
+                )
+                .await
             }
         }
+    }
+
+    /// Parse a persisted interrupt's `history_json`/`pending_calls_json` into
+    /// their typed forms.
+    ///
+    /// Deliberately not made tolerant of pre-Phase-4 rows: a HITL interrupt
+    /// persisted before `ToolCall`/`Message` gained their current shape will
+    /// fail here with a serde error ("missing field `id`" for
+    /// `pending_calls_json`, "invalid type: string, expected a sequence" for
+    /// `history_json`) — a hard runtime error, not a silent one. Unlike
+    /// session history (Task 2's avs-memory fallback), there is no safe
+    /// fallback for a missing `id`: a fabricated id would desynchronize
+    /// `tool_use_id` correlation for exactly the calls a human is trying to
+    /// resume, reproducing the bug this whole refactor exists to fix.
+    /// Accepted per this project's "no migration for persisted session data"
+    /// decision — any session interrupted before this deploy and not yet
+    /// resumed will need to be abandoned, not silently mis-resumed. The
+    /// underlying serde error is logged (not surfaced to the caller, whose
+    /// message stays the fixed, actionable one) so an operator can tell this
+    /// expected legacy-shape failure apart from a genuine new regression.
+    fn parse_resume_payload(
+        history_json: &str,
+        pending_calls_json: &str,
+    ) -> Result<(Vec<agentverse::memory::Message>, Vec<agentverse::ToolCall>), AgentError> {
+        let history: Vec<agentverse::memory::Message> = serde_json::from_str(history_json)
+            .map_err(|e| {
+                tracing::warn!(
+                    error = %e,
+                    "failed to deserialize persisted HITL history_json as the current Message \
+                     shape; treating as a pre-Phase-4 (unresumable) interrupt row"
+                );
+                AgentError::IncompatiblePersistedInterrupt
+            })?;
+        let pending: Vec<agentverse::ToolCall> =
+            serde_json::from_str(pending_calls_json).map_err(|e| {
+                tracing::warn!(
+                    error = %e,
+                    "failed to deserialize persisted HITL pending_calls_json as the current \
+                     ToolCall shape; treating as a pre-Phase-4 (unresumable) interrupt row"
+                );
+                AgentError::IncompatiblePersistedInterrupt
+            })?;
+        Ok((history, pending))
     }
 
     async fn resume_phase_gate(
@@ -154,48 +223,23 @@ impl Agent {
         session_id: SessionId,
         state: InterruptedState,
         decision: ApprovalDecision,
+        history: Vec<agentverse::memory::Message>,
+        pending: Vec<agentverse::ToolCall>,
     ) -> Result<AgentOutput, AgentError> {
-        let (history_json, pending_calls_json, active_tool_names, skill_ctx_json) = match state {
+        let (active_tool_names, skill_ctx_json) = match state {
             InterruptedState::PendingToolCall {
-                history_json,
-                pending_calls_json,
                 active_tool_names,
                 skill_context_json,
                 ..
-            } => (
-                history_json,
-                pending_calls_json,
-                active_tool_names,
-                skill_context_json,
-            ),
+            } => (active_tool_names, skill_context_json),
             InterruptedState::PendingCheckpoint {
-                history_json,
                 active_tool_names,
                 skill_context_json,
                 ..
-            } => (
-                history_json,
-                String::from("[]"),
-                active_tool_names,
-                skill_context_json,
-            ),
+            } => (active_tool_names, skill_context_json),
             InterruptedState::PendingPhaseGate { .. } => unreachable!(),
         };
 
-        // Deliberately not made tolerant of pre-Phase-4 rows: a HITL interrupt
-        // persisted before `ToolCall`/`Message` gained their current shape will
-        // fail here with a serde error ("missing field `id`" for `pending_calls_json`,
-        // "invalid type: string, expected a sequence" for `history_json`) — a hard
-        // runtime error, not a silent one. Unlike session history (Task 2's
-        // avs-memory fallback), there is no safe fallback for a missing `id`: a
-        // fabricated id would desynchronize `tool_use_id` correlation for exactly
-        // the calls a human is trying to resume, reproducing the bug this whole
-        // refactor exists to fix. Accepted per this project's "no migration for
-        // persisted session data" decision — any session interrupted before this
-        // deploy and not yet resumed will need to be abandoned, not silently
-        // mis-resumed.
-        let history: Vec<agentverse::memory::Message> = serde_json::from_str(&history_json)?;
-        let pending: Vec<agentverse::ToolCall> = serde_json::from_str(&pending_calls_json)?;
         let execution_tools = if self.strategy_router.is_some() {
             self.tools.restricted_to_names(&active_tool_names)
         } else {

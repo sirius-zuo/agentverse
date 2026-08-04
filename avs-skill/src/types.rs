@@ -29,7 +29,8 @@ pub struct SkillContext {
     pub skill_id: String,
     pub instructions: String,
     pub documents: Vec<String>,
-    /// Tool names for ActiveToolSet resolution.
+    /// Tool names this skill restricts execution to (see
+    /// `ToolRegistry::restricted_to_names`).
     pub tools: Vec<String>,
     /// max_iterations hint — parsed but not applied in v1.
     pub max_iterations: Option<usize>,

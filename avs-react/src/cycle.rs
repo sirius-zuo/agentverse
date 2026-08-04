@@ -8,7 +8,6 @@ use agentverse::{
 };
 use agentverse_guardrails::check_output;
 use agentverse_tools::ToolRegistry;
-use serde_json::Value;
 use std::sync::Arc;
 
 /// The fixed cycle skeleton that all strategies share.
@@ -139,16 +138,6 @@ impl CycleSkeleton {
             tools,
             max_iterations,
         }
-    }
-
-    /// Execute a tool by name with the given arguments.
-    pub async fn execute_tool(&self, tool_name: &str, args: Value) -> Result<String, AgentError> {
-        let result = self
-            .tools
-            .execute(tool_name, args)
-            .await
-            .map_err(AgentError::Tool)?;
-        Ok(result.to_string())
     }
 
     /// Optionally insert the ReAct preamble into a message buffer.

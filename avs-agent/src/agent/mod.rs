@@ -83,6 +83,12 @@ pub enum AgentError {
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
     #[error(
+        "cannot resume: this session's pending approval was interrupted before an incompatible \
+         upgrade to the persisted interrupt format and cannot be replayed (no migration exists \
+         for pre-upgrade rows, by design); abandon this session and start a new one"
+    )]
+    IncompatiblePersistedInterrupt,
+    #[error(
         "routed strategy `{strategy}` does not support HITL interception; only ReAct can be used with configured HITL"
     )]
     RoutedStrategyDoesNotSupportHitl { strategy: StrategyName },

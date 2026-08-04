@@ -1,4 +1,3 @@
-pub mod active;
 pub mod calculator;
 pub mod datetime;
 pub mod file_search;
@@ -10,7 +9,6 @@ pub mod shell;
 pub mod strict_schema;
 pub mod web_search;
 
-pub use active::ActiveToolSet;
 pub use calculator::Calculator;
 pub use datetime::DateTimeTool;
 pub use file_search::FileSearch;

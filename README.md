@@ -317,7 +317,6 @@ Built-in tools in `agentverse-tools`:
 
 - `Calculator`, `DateTimeTool`, `FileSearch`, `HttpClient`, `ShellTool`, `WebSearch`
 - `FindToolsTool` — auto-registered meta-tool; BM25 keyword search over the registry
-- `ActiveToolSet` — per-invocation filter controlling which tool schemas appear in the LLM prompt
 
 Tools implement the `Tool` trait with a strongly-typed `Args` struct (schema derived automatically via `schemars`). The registry stores them as `Arc<dyn ErasedTool>` for object-safe dispatch.
 
@@ -483,7 +482,7 @@ let registry = Arc::new(PromptRegistry::new());
 | `avs-react` | `agentverse-react` | ReAct strategy loop |
 | `avs-plan` | `agentverse-plan` | Plan-and-Execute and hierarchical strategies |
 | `avs-router` | `agentverse-router` | Strategy router |
-| `avs-tools` | `agentverse-tools` | Built-in tools, `ToolRegistry` with BM25 search, `ActiveToolSet`, parallel dispatch |
+| `avs-tools` | `agentverse-tools` | Built-in tools, `ToolRegistry` with BM25 search, parallel dispatch |
 | `avs-mcp` | `agentverse-mcp` | MCP client (stdio + Streamable HTTP), `McpServer`, `McpCatalogSource`, `McpLoader` |
 | `avs-subagent` | `agentverse-subagent` | Subagent runtime: `SubAgentExecutor`, `SubAgentSpec`, `Budget`, `SubAgentHandle`, `SubAgentTool` (`spawn_subagent`) |
 | `avs-memory` | `agentverse-memory` | Working (`CacheMemory`), session (`SqliteSessionMemory`), and long-term (`VectorLongtermMemory` via `Embedder`/`VectorStore`) memory tiers |
