@@ -33,10 +33,11 @@ fn interrupt_to_kind_and_prompt(kind: &InterruptKind) -> (String, String) {
             ),
         ),
         InterruptKind::SkillCheckpoint {
-            checkpoint_name, ..
+            checkpoint_name,
+            payload,
         } => (
             "skill_checkpoint".to_string(),
-            format!("Approve checkpoint `{checkpoint_name}`."),
+            format!("Approve checkpoint `{checkpoint_name}` with payload {payload}?"),
         ),
     }
 }
@@ -127,6 +128,7 @@ pub async fn aether_invoke(
         .unwrap_or_else(|| "aether".to_string());
     let input = env.payload["input"]
         .as_str()
+        .or_else(|| env.payload["output"].as_str())
         .unwrap_or_default()
         .to_string();
     let req_id = env.id;
@@ -361,11 +363,13 @@ mod tests {
         });
         assert_eq!(kind, "phase_gate");
 
-        let (kind, _) = interrupt_to_kind_and_prompt(&K::SkillCheckpoint {
+        let (kind, prompt) = interrupt_to_kind_and_prompt(&K::SkillCheckpoint {
             checkpoint_name: "cp".into(),
-            payload: serde_json::json!({}),
+            payload: serde_json::json!({"draft": "hi"}),
         });
         assert_eq!(kind, "skill_checkpoint");
+        assert!(prompt.contains("cp"));
+        assert!(prompt.contains("draft"));
     }
 
     #[tokio::test]
@@ -401,6 +405,126 @@ mod tests {
             assert_eq!(body["payload"]["output"], "aether reply");
             assert_eq!(body["metadata"], env["metadata"]);
         }
+    }
+
+    #[tokio::test]
+    async fn aether_invoke_falls_back_to_output_key_when_input_absent() {
+        let agent = make_agent_with_stub(StubOutcome::Success).await;
+        let env = serde_json::json!({
+            "id": "00000000-0000-0000-0000-000000000010",
+            "kind": "invoke",
+            "payload": {"output": "text from an upstream aether node"},
+            "metadata": {}
+        });
+        let res = post_json(aether_app(agent), "/aether/invoke", env).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_slice(&axum::body::to_bytes(res.into_body(), 1024).await.unwrap())
+                .unwrap();
+        assert_eq!(body["kind"], "result");
+    }
+
+    #[tokio::test]
+    async fn aether_invoke_prefers_input_key_over_output_when_both_present() {
+        struct EchoInputStrategy;
+        #[async_trait::async_trait]
+        impl RunStrategy for EchoInputStrategy {
+            async fn run(
+                &self,
+                messages: Vec<agentverse::memory::Message>,
+            ) -> Result<StrategyOutcome, CoreAgentError> {
+                let last = messages
+                    .last()
+                    .map(|m| agentverse::memory::content_as_text(&m.content))
+                    .unwrap_or_default();
+                Ok(StrategyOutcome::Done(last))
+            }
+        }
+        let runner = Arc::new(
+            LlmRunner::from_config(Config {
+                provider: agentverse::ProviderConfig::openai(
+                    "test".to_string(),
+                    "sk-test".to_string(),
+                    Some("http://127.0.0.1:1/v1".to_string()),
+                ),
+                max_messages: 10,
+                tools: vec![],
+                prompts_dir: None,
+                system_prompt: None,
+            })
+            .unwrap(),
+        );
+        let tools = ToolRegistry::new();
+        let prompts = Arc::new(PromptRegistry::new());
+        let session_memory = Arc::new(
+            SqliteSessionMemory::new("sqlite::memory:").await.unwrap(),
+        );
+        let strategy = Arc::new(EchoInputStrategy);
+        let agent = Agent::builder(runner, tools, prompts, session_memory, strategy).build();
+
+        let env = serde_json::json!({
+            "id": "00000000-0000-0000-0000-000000000011",
+            "kind": "invoke",
+            "payload": {"input": "explicit input", "output": "stale output"},
+            "metadata": {}
+        });
+        let res = post_json(aether_app(agent), "/aether/invoke", env).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_slice(&axum::body::to_bytes(res.into_body(), 1024).await.unwrap())
+                .unwrap();
+        assert_eq!(body["payload"]["output"], "explicit input");
+    }
+
+    #[tokio::test]
+    async fn aether_invoke_uses_output_key_when_input_absent_content_check() {
+        struct EchoInputStrategy;
+        #[async_trait::async_trait]
+        impl RunStrategy for EchoInputStrategy {
+            async fn run(
+                &self,
+                messages: Vec<agentverse::memory::Message>,
+            ) -> Result<StrategyOutcome, CoreAgentError> {
+                let last = messages
+                    .last()
+                    .map(|m| agentverse::memory::content_as_text(&m.content))
+                    .unwrap_or_default();
+                Ok(StrategyOutcome::Done(last))
+            }
+        }
+        let runner = Arc::new(
+            LlmRunner::from_config(Config {
+                provider: agentverse::ProviderConfig::openai(
+                    "test".to_string(),
+                    "sk-test".to_string(),
+                    Some("http://127.0.0.1:1/v1".to_string()),
+                ),
+                max_messages: 10,
+                tools: vec![],
+                prompts_dir: None,
+                system_prompt: None,
+            })
+            .unwrap(),
+        );
+        let tools = ToolRegistry::new();
+        let prompts = Arc::new(PromptRegistry::new());
+        let session_memory = Arc::new(
+            SqliteSessionMemory::new("sqlite::memory:").await.unwrap(),
+        );
+        let strategy = Arc::new(EchoInputStrategy);
+        let agent = Agent::builder(runner, tools, prompts, session_memory, strategy).build();
+
+        let env = serde_json::json!({
+            "id": "00000000-0000-0000-0000-000000000012",
+            "kind": "invoke",
+            "payload": {"output": "text from an upstream aether node"},
+            "metadata": {}
+        });
+        let res = post_json(aether_app(agent), "/aether/invoke", env).await;
+        let body: serde_json::Value =
+            serde_json::from_slice(&axum::body::to_bytes(res.into_body(), 1024).await.unwrap())
+                .unwrap();
+        assert_eq!(body["payload"]["output"], "text from an upstream aether node");
     }
 
     #[tokio::test]
