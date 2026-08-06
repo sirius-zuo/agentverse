@@ -113,6 +113,39 @@ async fn hitl_context_intercepts_request_checkpoint() {
 }
 
 #[tokio::test]
+async fn hitl_context_required_tool_names_reflects_policy_gate() {
+    let mut policy = HitlPolicy::new();
+    policy.skill_tool_gates.insert(
+        "reviewer".to_string(),
+        ["finalize_review".to_string()].into_iter().collect(),
+    );
+    let queue = Arc::new(InMemoryQueue::new()) as Arc<dyn agentverse_hitl::ApprovalQueue>;
+    let ctx = HitlContext::new(Uuid::new_v4(), Some("reviewer".to_string()), policy, queue);
+
+    assert_eq!(
+        ctx.required_tool_names(),
+        vec!["finalize_review".to_string()]
+    );
+}
+
+#[tokio::test]
+async fn hitl_context_new_for_resume_reports_no_required_tools() {
+    let mut policy = HitlPolicy::new();
+    policy.skill_tool_gates.insert(
+        "reviewer".to_string(),
+        ["finalize_review".to_string()].into_iter().collect(),
+    );
+    let queue = Arc::new(InMemoryQueue::new()) as Arc<dyn agentverse_hitl::ApprovalQueue>;
+    let ctx =
+        HitlContext::new_for_resume(Uuid::new_v4(), Some("reviewer".to_string()), policy, queue);
+
+    assert!(
+        ctx.required_tool_names().is_empty(),
+        "a resumed invocation already satisfied its HITL requirement before suspending"
+    );
+}
+
+#[tokio::test]
 async fn hitl_context_blocks_when_queue_submit_fails() {
     use agentverse::hitl::HitlHook;
 

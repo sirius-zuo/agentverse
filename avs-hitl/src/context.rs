@@ -11,6 +11,11 @@ pub struct HitlContext {
     pub skill_id: Option<String>,
     policy: HitlPolicy,
     queue: Arc<dyn ApprovalQueue>,
+    /// True when this context is driving a *resumed* skill invocation: the
+    /// invocation's mandatory HITL tool call already happened and was
+    /// approved before suspension, so `required_tool_names` reports none
+    /// due for the resumed call.
+    already_satisfied: bool,
 }
 
 impl HitlContext {
@@ -25,6 +30,24 @@ impl HitlContext {
             skill_id,
             policy,
             queue,
+            already_satisfied: false,
+        }
+    }
+
+    /// Build a context for a resumed skill invocation. See
+    /// `already_satisfied` for why this differs from `new`.
+    pub fn new_for_resume(
+        session_id: Uuid,
+        skill_id: Option<String>,
+        policy: HitlPolicy,
+        queue: Arc<dyn ApprovalQueue>,
+    ) -> Self {
+        Self {
+            session_id,
+            skill_id,
+            policy,
+            queue,
+            already_satisfied: true,
         }
     }
 }
@@ -67,5 +90,12 @@ impl HitlHook for HitlContext {
                 Some((uuid::Uuid::new_v4(), kind_json))
             }
         }
+    }
+
+    fn required_tool_names(&self) -> Vec<String> {
+        if self.already_satisfied {
+            return Vec::new();
+        }
+        self.policy.required_tool_names(self.skill_id.as_deref())
     }
 }

@@ -74,6 +74,28 @@ impl HitlPolicy {
     pub fn is_checkpoint_tool(tool_name: &str) -> bool {
         tool_name == "request_checkpoint"
     }
+
+    /// Tool names that must be called (and approved) before a skill
+    /// invocation is allowed to finish: its gated `hitl_tools`, plus
+    /// `request_checkpoint` if the skill declares any checkpoints.
+    pub fn required_tool_names(&self, skill_id: Option<&str>) -> Vec<String> {
+        let Some(id) = skill_id else {
+            return Vec::new();
+        };
+        let mut names: Vec<String> = self
+            .skill_tool_gates
+            .get(id)
+            .map(|gates| gates.iter().cloned().collect())
+            .unwrap_or_default();
+        if self
+            .skill_checkpoints
+            .get(id)
+            .is_some_and(|cps| !cps.is_empty())
+        {
+            names.push("request_checkpoint".to_string());
+        }
+        names
+    }
 }
 
 #[cfg(test)]
@@ -136,5 +158,34 @@ mod tests {
         assert!(!policy.requires_phase_gate(&user_skill.id));
         assert!(!policy.requires_tool_approval(Some(&user_skill.id), "user_only_tool"));
         assert!(!policy.skill_checkpoints.contains_key(&user_skill.id));
+    }
+
+    #[test]
+    fn required_tool_names_combines_hitl_tools_and_checkpoint_marker() {
+        let system_skill = skill(
+            "financial-review",
+            vec!["ledger_post"],
+            false,
+            vec!["draft_ready"],
+        );
+        let policy = HitlPolicy::from_system_skills([&system_skill]);
+
+        let mut required = policy.required_tool_names(Some("financial-review"));
+        required.sort();
+        assert_eq!(
+            required,
+            vec!["ledger_post".to_string(), "request_checkpoint".to_string()]
+        );
+    }
+
+    #[test]
+    fn required_tool_names_empty_for_skill_with_no_hitl_metadata() {
+        let system_skill = skill("plain-skill", vec![], false, vec![]);
+        let policy = HitlPolicy::from_system_skills([&system_skill]);
+
+        assert!(policy
+            .required_tool_names(Some("plain-skill"))
+            .is_empty());
+        assert!(policy.required_tool_names(None).is_empty());
     }
 }

@@ -330,7 +330,7 @@ impl Agent {
         let strategy = self.strategy_for_resume(&active_tool_names);
 
         let run_result = if let Some(ref hitl_cfg) = self.hitl {
-            let hook = std::sync::Arc::new(HitlContext::new(
+            let hook = std::sync::Arc::new(HitlContext::new_for_resume(
                 session_id,
                 skill_ctx.as_ref().map(|c| c.skill_id.clone()),
                 hitl_cfg.policy.clone(),

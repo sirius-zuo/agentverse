@@ -523,3 +523,108 @@ async fn run_hitl_returns_interrupted_with_typed_history_and_pending_calls() {
         Err(e) => panic!("expected Interrupted, got Err: {e}"),
     }
 }
+
+/// A model that answers `Done` without ever calling the skill's mandatory
+/// HITL tool must not have that answer accepted — this is exactly the bug
+/// seen live in the demo (a reviewer skill wrote its verdict as plain text
+/// instead of calling `finalize_review`, silently skipping human approval).
+/// `run_hitl` must instead nudge the model to call the required tool and
+/// loop again.
+#[tokio::test]
+async fn run_hitl_rejects_done_that_skips_a_required_tool_and_retries() {
+    use agentverse::hitl::{ApprovalId, HitlHook};
+    use agentverse::StrategyOutcome;
+    use httpmock::prelude::*;
+
+    fn is_retry_turn(req: &HttpMockRequest) -> bool {
+        let body = req
+            .body
+            .as_ref()
+            .map(|b| String::from_utf8_lossy(b).to_string())
+            .unwrap_or_default();
+        body.contains("required tool")
+    }
+
+    let server = MockServer::start_async().await;
+    server
+        .mock_async(|when, then| {
+            when.method(POST)
+                .path("/chat/completions")
+                .matches(|req: &HttpMockRequest| !is_retry_turn(req));
+            then.status(200).json_body(json!({
+                "choices": [{"message": {"role": "assistant", "content": "approved, no tool needed", "tool_calls": []}}]
+            }));
+        })
+        .await;
+    server
+        .mock_async(|when, then| {
+            when.method(POST)
+                .path("/chat/completions")
+                .matches(is_retry_turn);
+            then.status(200).json_body(json!({
+                "choices": [{"message": {"role": "assistant", "content": null, "tool_calls": [
+                    {"id": "call_1", "function": {"name": "finalize_review", "arguments": "{}"}}
+                ]}}]
+            }));
+        })
+        .await;
+
+    let runner = Arc::new(
+        LlmRunner::from_config(Config {
+            provider: agentverse::ProviderConfig::openai(
+                "test".to_string(),
+                "sk-test".to_string(),
+                Some(server.base_url()),
+            ),
+            max_messages: 10,
+            tools: vec![],
+            prompts_dir: None,
+            system_prompt: None,
+        })
+        .unwrap(),
+    );
+
+    let tools = ToolRegistry::new();
+    tools.register(MockTool::new("finalize_review", "Finalize the review"));
+
+    let strategy = ReActStrategy::new(runner, Arc::new(PromptRegistry::new()), tools, 5);
+
+    struct RequireFinalizeReviewHook;
+    #[async_trait::async_trait]
+    impl HitlHook for RequireFinalizeReviewHook {
+        async fn check_tool(
+            &self,
+            tool_name: &str,
+            _args: &serde_json::Value,
+        ) -> Option<(ApprovalId, String)> {
+            Some((
+                uuid::Uuid::new_v4(),
+                format!("{{\"tool\":\"{}\"}}", tool_name),
+            ))
+        }
+
+        fn required_tool_names(&self) -> Vec<String> {
+            vec!["finalize_review".to_string()]
+        }
+    }
+    let hook: Arc<dyn HitlHook> = Arc::new(RequireFinalizeReviewHook);
+
+    let messages = vec![Message::text(MessageRole::User, "review this")];
+
+    let result = strategy
+        .run_hitl(messages, &["finalize_review".to_string()], hook)
+        .await;
+
+    match result {
+        Ok(StrategyOutcome::Interrupted(interrupt)) => {
+            assert_eq!(
+                interrupt.pending_calls[0].name, "finalize_review",
+                "must have retried until the model actually called the required tool"
+            );
+        }
+        Ok(StrategyOutcome::Done(text)) => {
+            panic!("must not accept Done that skipped the required tool, got Done({text})")
+        }
+        Err(e) => panic!("expected Interrupted after retry, got Err: {e}"),
+    }
+}
