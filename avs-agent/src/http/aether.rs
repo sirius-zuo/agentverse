@@ -33,10 +33,11 @@ fn interrupt_to_kind_and_prompt(kind: &InterruptKind) -> (String, String) {
             ),
         ),
         InterruptKind::SkillCheckpoint {
-            checkpoint_name, ..
+            checkpoint_name,
+            payload,
         } => (
             "skill_checkpoint".to_string(),
-            format!("Approve checkpoint `{checkpoint_name}`."),
+            format!("Approve checkpoint `{checkpoint_name}` with payload {payload}?"),
         ),
     }
 }
@@ -362,11 +363,13 @@ mod tests {
         });
         assert_eq!(kind, "phase_gate");
 
-        let (kind, _) = interrupt_to_kind_and_prompt(&K::SkillCheckpoint {
+        let (kind, prompt) = interrupt_to_kind_and_prompt(&K::SkillCheckpoint {
             checkpoint_name: "cp".into(),
-            payload: serde_json::json!({}),
+            payload: serde_json::json!({"draft": "hi"}),
         });
         assert_eq!(kind, "skill_checkpoint");
+        assert!(prompt.contains("cp"));
+        assert!(prompt.contains("draft"));
     }
 
     #[tokio::test]
