@@ -42,6 +42,25 @@ pub enum AgentOutput {
         approval_id: Uuid,
         kind: InterruptKind,
     },
+    /// A `SkillCheckpoint` resumed with `ApprovalDecision::Approved`.
+    ///
+    /// `payload` is the exact value the skill passed to
+    /// `request_checkpoint(name, payload)` before suspending — already
+    /// known-good, since it's what the human approved. `narrative` is the
+    /// model's own free-text continuation after the resume (its prose
+    /// summary, per most skills' post-checkpoint instructions).
+    ///
+    /// Exists because relying solely on the model to correctly restate
+    /// `payload` inside `narrative` is unreliable: skills that ask for a
+    /// structured trailer in that continuation (e.g. a trailing `JSON:`
+    /// line) sometimes get it back reformatted, fenced, or dropped
+    /// entirely. Callers that need the checkpoint's data should read
+    /// `payload` directly rather than re-parsing `narrative`.
+    CheckpointResolved {
+        checkpoint_name: String,
+        payload: serde_json::Value,
+        narrative: String,
+    },
 }
 
 impl std::fmt::Display for AgentOutput {
@@ -54,6 +73,7 @@ impl std::fmt::Display for AgentOutput {
                     "HITL interruption: approval_id={approval_id}, kind={kind:?}"
                 )
             }
+            AgentOutput::CheckpointResolved { narrative, .. } => write!(f, "{narrative}"),
         }
     }
 }

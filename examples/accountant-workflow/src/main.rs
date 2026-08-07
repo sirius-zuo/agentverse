@@ -157,64 +157,82 @@ async fn run_loop(agent: &Arc<Agent>, session_id: Uuid, initial_input: String) {
             agent.invoke("user", session_id, &input).await
         };
 
-        match result.unwrap_or_else(|e| {
+        let text = match result.unwrap_or_else(|e| {
             eprintln!("error: {e}");
             std::process::exit(1);
         }) {
             AgentOutput::Interrupted { approval_id, kind } => {
                 let decision = prompt_approval(&kind);
                 resume_from = Some((approval_id, decision));
+                continue;
             }
 
-            AgentOutput::Done(text) => {
-                // After a phase gate resume, the phase context is already applied.
-                // Use the stored deliverable as input for the next invoke.
-                if let Some(deliverable) = pending_deliverable.take() {
-                    println!("\n── phase approved — starting next phase ─────────");
-                    input = deliverable;
-                    continue;
+            AgentOutput::Done(text) => text,
+
+            AgentOutput::CheckpointResolved {
+                checkpoint_name,
+                payload,
+                narrative,
+            } => {
+                // The checkpoint's payload is already known-good (it's what
+                // the human just approved) — print it directly rather than
+                // trusting `narrative` to have restated it correctly, then
+                // fall through to the same phase-advance handling as any
+                // other completed turn.
+                println!(
+                    "\n── checkpoint '{checkpoint_name}' resolved — payload ─────────\n{}",
+                    serde_json::to_string_pretty(&payload).unwrap_or_default()
+                );
+                narrative
+            }
+        };
+
+        // After a phase gate resume, the phase context is already applied.
+        // Use the stored deliverable as input for the next invoke.
+        if let Some(deliverable) = pending_deliverable.take() {
+            println!("\n── phase approved — starting next phase ─────────");
+            input = deliverable;
+            continue;
+        }
+
+        match agent
+            .advance_phase("user", session_id, &text)
+            .await
+            .unwrap_or_else(|e| {
+                eprintln!("error: advance_phase: {e}");
+                std::process::exit(1);
+            }) {
+            Some(PhaseAdvanceResult::Advanced(transition)) => {
+                println!(
+                    "\n── → {} ──────────────────────────────────────",
+                    transition.next_skill
+                );
+                input = transition.deliverable;
+            }
+
+            Some(PhaseAdvanceResult::Pending { approval_id }) => {
+                // Phase gate: show the deliverable for human review.
+                // Only save the deliverable when approved — a rejection lets the
+                // advance_phase None branch below handle termination cleanly.
+                let deliverable = parse_phase_transition(&text)
+                    .map(|t| t.deliverable)
+                    .unwrap_or_else(|| text.clone());
+                println!("\n══ HITL — Phase Gate ═════════════════════════");
+                println!("{deliverable}");
+                let decision = read_decision("Approve transition to next phase?");
+                if matches!(
+                    decision,
+                    ApprovalDecision::Approved | ApprovalDecision::Modified { .. }
+                ) {
+                    pending_deliverable = Some(deliverable);
                 }
+                resume_from = Some((approval_id, decision));
+            }
 
-                match agent
-                    .advance_phase("user", session_id, &text)
-                    .await
-                    .unwrap_or_else(|e| {
-                        eprintln!("error: advance_phase: {e}");
-                        std::process::exit(1);
-                    }) {
-                    Some(PhaseAdvanceResult::Advanced(transition)) => {
-                        println!(
-                            "\n── → {} ──────────────────────────────────────",
-                            transition.next_skill
-                        );
-                        input = transition.deliverable;
-                    }
-
-                    Some(PhaseAdvanceResult::Pending { approval_id }) => {
-                        // Phase gate: show the deliverable for human review.
-                        // Only save the deliverable when approved — a rejection lets the
-                        // advance_phase None branch below handle termination cleanly.
-                        let deliverable = parse_phase_transition(&text)
-                            .map(|t| t.deliverable)
-                            .unwrap_or_else(|| text.clone());
-                        println!("\n══ HITL — Phase Gate ═════════════════════════");
-                        println!("{deliverable}");
-                        let decision = read_decision("Approve transition to next phase?");
-                        if matches!(
-                            decision,
-                            ApprovalDecision::Approved | ApprovalDecision::Modified { .. }
-                        ) {
-                            pending_deliverable = Some(deliverable);
-                        }
-                        resume_from = Some((approval_id, decision));
-                    }
-
-                    None => {
-                        println!("\n── final output ──────────────────────────────");
-                        println!("{text}");
-                        return;
-                    }
-                }
+            None => {
+                println!("\n── final output ──────────────────────────────");
+                println!("{text}");
+                return;
             }
         }
     }

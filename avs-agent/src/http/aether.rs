@@ -75,6 +75,29 @@ async fn finish(
                 metadata,
             }
         }
+        AgentOutput::CheckpointResolved {
+            checkpoint_name,
+            payload,
+            narrative,
+        } => {
+            let _ = agent.end_session(owner, session_id).await; // best-effort
+            Envelope {
+                id: req_id,
+                kind: EnvelopeKind::Result,
+                // `output` stays the plain narrative text for back-compat with
+                // callers that only ever read that key. `checkpoint_payload` is
+                // additive: the exact payload the skill passed to
+                // request_checkpoint, already approved, so a caller can use it
+                // directly instead of re-parsing `output` for a structured
+                // trailer the model may not have restated correctly.
+                payload: serde_json::json!({
+                    "output": narrative,
+                    "checkpoint_name": checkpoint_name,
+                    "checkpoint_payload": payload,
+                }),
+                metadata,
+            }
+        }
         AgentOutput::Interrupted { approval_id, kind } => {
             let (kind_tag, prompt) = interrupt_to_kind_and_prompt(&kind);
             let payload = SuspendPayload {
@@ -568,6 +591,44 @@ mod tests {
         assert_eq!(env.id, req_id);
         assert_eq!(env.payload["output"], "hello");
         // session was ended (status Completed), so no longer active
+        let s = agent
+            .get_session("alice", session_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(s.status.to_string(), "completed");
+    }
+
+    #[tokio::test]
+    async fn finish_checkpoint_resolved_carries_payload_alongside_narrative_and_ends_session() {
+        let agent = make_agent().await;
+        let session_id = agent.create_session("alice").await.unwrap();
+        let req_id = Uuid::new_v4();
+        let payload = serde_json::json!({"strategy": {"recommended": "x"}});
+        let env = finish(
+            &agent,
+            "alice",
+            session_id,
+            req_id,
+            HashMap::new(),
+            AgentOutput::CheckpointResolved {
+                checkpoint_name: "draft_ready".into(),
+                payload: payload.clone(),
+                narrative: "here's my summary".into(),
+            },
+        )
+        .await;
+        assert_eq!(env.kind, EnvelopeKind::Result);
+        assert_eq!(env.id, req_id);
+        // `output` stays plain narrative text for back-compat with callers
+        // that only read that key.
+        assert_eq!(env.payload["output"], "here's my summary");
+        // The approved checkpoint payload is additive, so a caller can use
+        // it directly instead of re-parsing `output` for a structured
+        // trailer the model may not have restated correctly.
+        assert_eq!(env.payload["checkpoint_name"], "draft_ready");
+        assert_eq!(env.payload["checkpoint_payload"], payload);
+        // Same terminal handling as a plain Done: session ends.
         let s = agent
             .get_session("alice", session_id)
             .await
