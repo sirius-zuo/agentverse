@@ -226,6 +226,12 @@ impl Agent {
         history: Vec<agentverse::memory::Message>,
         pending: Vec<agentverse::ToolCall>,
     ) -> Result<AgentOutput, AgentError> {
+        // Captured only for `PendingCheckpoint` — carries the exact
+        // `InterruptKind::SkillCheckpoint { checkpoint_name, payload }` the
+        // human approved, so an `Approved` decision can report that payload
+        // back verbatim instead of trusting the model's free-text
+        // continuation below to restate it correctly.
+        let mut checkpoint_kind_json: Option<String> = None;
         let (active_tool_names, skill_ctx_json) = match state {
             InterruptedState::PendingToolCall {
                 active_tool_names,
@@ -235,8 +241,12 @@ impl Agent {
             InterruptedState::PendingCheckpoint {
                 active_tool_names,
                 skill_context_json,
+                kind_json,
                 ..
-            } => (active_tool_names, skill_context_json),
+            } => {
+                checkpoint_kind_json = Some(kind_json);
+                (active_tool_names, skill_context_json)
+            }
             InterruptedState::PendingPhaseGate { .. } => unreachable!(),
         };
 
@@ -344,7 +354,33 @@ impl Agent {
         };
 
         match run_result {
-            Ok(agentverse::StrategyOutcome::Done(text)) => Ok(AgentOutput::Done(text)),
+            Ok(agentverse::StrategyOutcome::Done(text)) => {
+                // Only an unmodified `Approved` checkpoint has a settled
+                // payload to report as-is — `Rejected` expects the skill to
+                // revise (no final answer yet) and `Modified` supplies
+                // different args than what was originally approved.
+                let resolved_checkpoint = if matches!(decision, ApprovalDecision::Approved) {
+                    checkpoint_kind_json.as_deref().and_then(|j| {
+                        match serde_json::from_str::<InterruptKind>(j).ok()? {
+                            InterruptKind::SkillCheckpoint {
+                                checkpoint_name,
+                                payload,
+                            } => Some((checkpoint_name, payload)),
+                            _ => None,
+                        }
+                    })
+                } else {
+                    None
+                };
+                Ok(match resolved_checkpoint {
+                    Some((checkpoint_name, payload)) => AgentOutput::CheckpointResolved {
+                        checkpoint_name,
+                        payload,
+                        narrative: text,
+                    },
+                    None => AgentOutput::Done(text),
+                })
+            }
             Ok(agentverse::StrategyOutcome::Interrupted(interrupt)) => {
                 self.handle_tool_interrupt(user_id, session_id, interrupt, &skill_ctx)
                     .await
@@ -436,7 +472,7 @@ mod tests {
                 assert_eq!(got_id, approval_id);
                 assert!(matches!(kind, InterruptKind::ToolApproval { .. }));
             }
-            AgentOutput::Done(text) => panic!("expected Interrupted, got Done({text})"),
+            other => panic!("expected Interrupted, got {other:?}"),
         }
 
         let state_json = agent
@@ -464,6 +500,124 @@ mod tests {
                 assert_eq!(history[0].as_text(), "please call echo");
             }
             other => panic!("expected PendingToolCall, got {other:?}"),
+        }
+    }
+
+    /// A `RunStrategy` double that always answers with a fixed narrative,
+    /// regardless of what's asked — stands in for a live LLM turn so these
+    /// tests can assert on `resume`'s own logic instead of model behavior.
+    struct FixedNarrativeStrategy {
+        narrative: String,
+    }
+
+    #[async_trait::async_trait]
+    impl agentverse::RunStrategy for FixedNarrativeStrategy {
+        async fn run(
+            &self,
+            _messages: Vec<agentverse::memory::Message>,
+        ) -> Result<agentverse::StrategyOutcome, agentverse::AgentError> {
+            Ok(agentverse::StrategyOutcome::Done(self.narrative.clone()))
+        }
+
+        async fn run_with_active_tools(
+            &self,
+            _messages: Vec<agentverse::memory::Message>,
+            _active_tool_names: &[String],
+        ) -> Result<agentverse::StrategyOutcome, agentverse::AgentError> {
+            Ok(agentverse::StrategyOutcome::Done(self.narrative.clone()))
+        }
+
+        async fn run_hitl(
+            &self,
+            _messages: Vec<agentverse::memory::Message>,
+            _active_tool_names: &[String],
+            _hook: Arc<dyn agentverse::HitlHook>,
+        ) -> Result<agentverse::StrategyOutcome, agentverse::AgentError> {
+            Ok(agentverse::StrategyOutcome::Done(self.narrative.clone()))
+        }
+    }
+
+    async fn make_agent_with_strategy(strategy: Arc<dyn agentverse::RunStrategy>) -> Arc<Agent> {
+        let runner = Arc::new(
+            LlmRunner::from_config(Config {
+                provider: agentverse::ProviderConfig::openai(
+                    "test".to_string(),
+                    "sk-test".to_string(),
+                    Some("http://127.0.0.1:1/v1".to_string()),
+                ),
+                max_messages: 10,
+                tools: vec![],
+                prompts_dir: None,
+                system_prompt: None,
+            })
+            .unwrap(),
+        );
+        let tools = ToolRegistry::new();
+        let prompts = Arc::new(PromptRegistry::new());
+        let session_memory = Arc::new(
+            agentverse_session::SqliteSessionMemory::new("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
+        Agent::builder(runner, tools, prompts, session_memory, strategy).build()
+    }
+
+    // Live symptom this guards against: a skill's post-checkpoint-approval
+    // turn is supposed to restate its already-approved payload verbatim
+    // plus a structured trailer, but models sometimes reformat, fence, or
+    // drop that trailer entirely — so a caller relying on the free-text
+    // reply alone silently loses the checkpoint's data. `resume` has that
+    // data already (it's exactly what was submitted to the human approver);
+    // this asserts it comes back on `AgentOutput::CheckpointResolved`
+    // untouched, independent of whatever the model's continuation says.
+    #[tokio::test]
+    async fn resume_approved_checkpoint_returns_the_original_payload_regardless_of_narrative() {
+        let narrative = "### final draft\n```json\n{\"garbled\": true}\n```".to_string();
+        let strategy: Arc<dyn agentverse::RunStrategy> = Arc::new(FixedNarrativeStrategy {
+            narrative: narrative.clone(),
+        });
+        let agent = make_agent_with_strategy(strategy).await;
+        let session_id = agent.create_session("alice").await.unwrap();
+
+        let approval_id = Uuid::new_v4();
+        let original_payload = serde_json::json!({"strategy": {"recommended": "x"}});
+        let interrupt = agentverse::hitl::HitlInterrupt {
+            approval_id,
+            kind_json: serde_json::json!({
+                "SkillCheckpoint": {
+                    "checkpoint_name": "draft_ready",
+                    "payload": original_payload,
+                }
+            })
+            .to_string(),
+            history: vec![agentverse::memory::Message::text(
+                agentverse::memory::MessageRole::User,
+                "draft this",
+            )],
+            pending_calls: vec![],
+            active_tool_names: vec![],
+        };
+        agent
+            .handle_tool_interrupt("alice", session_id, interrupt, &None)
+            .await
+            .unwrap();
+
+        let output = agent
+            .resume("alice", session_id, approval_id, ApprovalDecision::Approved)
+            .await
+            .unwrap();
+
+        match output {
+            AgentOutput::CheckpointResolved {
+                checkpoint_name,
+                payload,
+                narrative: got_narrative,
+            } => {
+                assert_eq!(checkpoint_name, "draft_ready");
+                assert_eq!(payload, original_payload);
+                assert_eq!(got_narrative, narrative);
+            }
+            other => panic!("expected CheckpointResolved, got {other:?}"),
         }
     }
 }

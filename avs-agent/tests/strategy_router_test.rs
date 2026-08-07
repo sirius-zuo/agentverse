@@ -407,7 +407,7 @@ async fn routed_strategy_cannot_execute_inactive_tool_after_hitl_approval() {
         .unwrap()
     {
         AgentOutput::Interrupted { approval_id, .. } => approval_id,
-        AgentOutput::Done(text) => panic!("expected HITL interrupt, got {text}"),
+        other => panic!("expected HITL interrupt, got {other:?}"),
     };
     let output = agent
         .resume("alice", session_id, approval_id, ApprovalDecision::Approved)
@@ -489,7 +489,7 @@ async fn routed_react_strategy_is_preserved_across_hitl_resume() {
         .unwrap()
     {
         AgentOutput::Interrupted { approval_id, .. } => approval_id,
-        AgentOutput::Done(text) => panic!("expected HITL interrupt, got {text}"),
+        other => panic!("expected HITL interrupt, got {other:?}"),
     };
     let output = agent
         .resume("alice", session_id, approval_id, ApprovalDecision::Approved)

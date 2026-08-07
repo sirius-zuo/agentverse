@@ -46,6 +46,7 @@ pub async fn dead_endpoint_agent() -> Arc<Agent> {
 pub fn unwrap_done(output: AgentOutput) -> String {
     match output {
         AgentOutput::Done(s) => s,
+        AgentOutput::CheckpointResolved { narrative, .. } => narrative,
         AgentOutput::Interrupted { approval_id, .. } => {
             panic!("Expected AgentOutput::Done but got Interrupted (id={approval_id})")
         }
