@@ -14,6 +14,14 @@ pub trait HitlHook: Send + Sync {
     /// Returns Some((approval_id, kind_json)) if the call is intercepted.
     /// Returns None if the tool is allowed to proceed.
     async fn check_tool(&self, tool_name: &str, args: &Value) -> Option<(ApprovalId, String)>;
+
+    /// Names of tools that must be called (and approved) at least once
+    /// before the current skill invocation is allowed to finish. Empty
+    /// means no HITL tool is mandatory for this invocation. Defaults to
+    /// empty so existing hooks don't need to opt in.
+    fn required_tool_names(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 pub struct HitlInterrupt {

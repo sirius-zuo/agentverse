@@ -134,6 +134,12 @@ impl agentverse::RunStrategy for ReActStrategy {
         let mut buf = self.skeleton.prepare_buffer(messages);
         let mut iteration = 0usize;
 
+        // Tools the skill declares as mandatory (hitl_tools / checkpoints):
+        // the model must call at least one of these before the invocation
+        // is allowed to finish. Empty means nothing is mandatory here.
+        let required_tools = hook.required_tool_names();
+        let mut required_tool_called = required_tools.is_empty();
+
         loop {
             if iteration >= self.skeleton.max_iterations() {
                 return Err(AgentError::Model(ModelError::Timeout(format!(
@@ -150,6 +156,10 @@ impl agentverse::RunStrategy for ReActStrategy {
 
             match action_from_response(&response) {
                 CycleAction::ToolCalls { calls } => {
+                    if !required_tool_called {
+                        required_tool_called =
+                            calls.iter().any(|c| required_tools.contains(&c.name));
+                    }
                     // Snapshot BEFORE pushing the assistant message so history
                     // on suspend does not contain a dangling tool-call turn
                     // with no observation.
@@ -198,6 +208,27 @@ impl agentverse::RunStrategy for ReActStrategy {
                     }
                 }
                 CycleAction::Done { answer } => {
+                    if !required_tool_called {
+                        tracing::warn!(
+                            iteration,
+                            required = ?required_tools,
+                            "Model tried to finish without calling a required HITL tool; forcing retry"
+                        );
+                        buf.push(Message {
+                            role: MessageRole::Assistant,
+                            content: response.content.clone(),
+                        });
+                        buf.push(Message::text(
+                            MessageRole::User,
+                            format!(
+                                "You did not call the required tool ({}) before answering. \
+                                 This step requires human approval — you must call it before \
+                                 you can finish. Call it now.",
+                                required_tools.join(", ")
+                            ),
+                        ));
+                        continue;
+                    }
                     info!(iteration, "Strategy completed");
                     return Ok(StrategyOutcome::Done(answer));
                 }
